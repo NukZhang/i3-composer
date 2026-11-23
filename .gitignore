@@ -1,0 +1,15 @@
+# 构建产物
+/i3-composer
+*.exe
+*.test
+*.out
+
+# 本地覆盖
+.env
+.env.local
+*.local.yml
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/

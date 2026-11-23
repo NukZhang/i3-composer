@@ -1,0 +1,22 @@
+# 事实日志 + workflow 状态共用这一个 state store。
+# actorStateStore: "true" 是 Dapr Workflow 的硬要求——workflow 引擎自己就是
+# 一组 actor，没有 actor state store 时 start/get 会直接报错。
+#
+# 本地用 Redis（宿主机已有 6379）；生产换 PostgreSQL 即可，客户端一行不动。
+# keyPrefix 把本应用的 key 与其他应用隔开，避免同库互相踩。
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+spec:
+  type: state.redis
+  version: v1
+  metadata:
+    - name: redisHost
+      value: "host.docker.internal:6379"
+    - name: redisPassword
+      value: ""
+    - name: actorStateStore
+      value: "true"
+    - name: keyPrefix
+      value: "i3-composer"

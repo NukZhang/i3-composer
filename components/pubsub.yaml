@@ -1,0 +1,14 @@
+# 事件出口。原型要的是「今天飞书、明天企微、后天内部 IM 不改进程代码」，
+# 所以换渠道只换这个组件与订阅，wf/bff 一行不动。
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: pubsub
+spec:
+  type: pubsub.redis
+  version: v1
+  metadata:
+    - name: redisHost
+      value: "host.docker.internal:6379"
+    - name: redisPassword
+      value: ""

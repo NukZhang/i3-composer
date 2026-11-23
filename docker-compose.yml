@@ -1,0 +1,53 @@
+# 本地可跑的最小 Dapr 环境：placement（workflow 的 actor 定位必需）+ sidecar。
+# Redis 复用宿主机已有的 6379（pubsub 用），不从 compose 里再起一份。
+# 不需要 dapr CLI，也不需要 dapr init。
+#
+#   docker compose up -d
+#   go run ./cmd/i3-composer
+#
+# 注意 sidecar 的 app-port 指向宿主机上的 BFF：容器访问宿主机用 host.docker.internal。
+services:
+  placement:
+    image: daprio/placement:edge
+    command: ["./placement", "--port", "50005", "--log-level", "info"]
+    ports: ["50005:50005"]
+    restart: unless-stopped
+
+  scheduler:
+    image: daprio/scheduler:edge
+    # scheduler 以非 root 运行，具名卷挂到 /data 会因权限被拒；
+    # 用 uid 覆盖 + tmpfs 只保活不持久——本地开发不需要 scheduler 数据持久化。
+    user: "65532:65532"
+    command: ["./scheduler", "--port", "50006", "--etcd-data-dir", "/data", "--log-level", "info"]
+    ports: ["50006:50006"]
+    tmpfs: ["/data"]
+    restart: unless-stopped
+
+  daprd:
+    image: daprio/daprd:edge
+    depends_on: [placement, scheduler]
+    ports:
+      - "3500:3500"   # HTTP API：BFF 只走这个
+      - "50001:50001" # gRPC：workflow work-item stream 走这个
+    command:
+      - "./daprd"
+      - "--app-id=i3-composer"
+      - "--app-port=8080"
+      # app 跑在宿主机上，sidecar 在容器里：默认探测 127.0.0.1:8080 永远不通。
+      # 这里必须显式给出宿主地址，否则 daprd 会一直 "waiting for application to listen"。
+      - "--app-channel-address=host.docker.internal"
+      - "--dapr-http-port=3500"
+      - "--dapr-grpc-port=50001"
+      - "--placement-host-address=placement:50005"
+      - "--scheduler-host-address=scheduler:50006"
+      - "--resources-path=/components"
+      - "--log-level=info"
+    volumes:
+      - "./components:/components:ro"
+      - "state-data:/tmp/i3-composer"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      # 注：pubsub 组件里的 redisHost 用 host.docker.internal:6379 指向宿主机 Redis
+
+volumes:
+  state-data:
