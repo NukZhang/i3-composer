@@ -51,98 +51,120 @@ func Units() []Unit {
 	}
 }
 
-// Run 写演示起点。可重复执行：每段都先看日志是否为空。
+// Run 写演示起点。可重复执行：每条日志各自判空，已存在的日志原样保留。
+//
+// 为什么按日志判空而不是「整体判空」：v2.1 时期只种了 fee，v2.3 新增了
+// units / agents 两条日志。整体判空会让老环境的账本永远补不上单元与 Agent，
+// 而按日志判空既能补新，又不会给已有数据重复种。
 func Run(ctx context.Context, log *store.Store) error {
-	if err := log.Ensure(ctx, "fee"); err != nil {
-		return err
-	}
-	facts, err := log.Load(ctx, "fee")
-	if err != nil {
-		return err
-	}
-	if len(facts) > 0 {
-		return nil
-	}
-
-	// 单元与 Agent 是项目级资产：先落它们，PBC 自己的日志才有东西可引用。
-	if err := seedUnits(ctx, log); err != nil {
+	// 项目级资产：单元、BRD、Agent 是 PBC 引用的目标，先落。
+	if err := seedProject(ctx, log); err != nil {
 		return err
 	}
 	if err := seedAgents(ctx, log); err != nil {
 		return err
 	}
-	if err := seedBRD(ctx, log); err != nil {
-		return err
-	}
 
 	// fee：完整的制品基线 + 三条工作项（与 v2.1 的种子一致）。
-	if _, err := log.Append(ctx, "fee", store.FactPBCCreated, "PA", map[string]string{"name": "悦府物业 · 收费与工单"}); err != nil {
-		return err
-	}
-	if err := seedBaseline(ctx, log, "fee", "收费与工单基线", "基线：PRD 手动上传 + 三件制品生成", "sha256:baseline"); err != nil {
-		return err
-	}
-	items := []store.Item{
-		{ID: "US-01", Title: "业主账单自助查询与支付", PT: 5, St: "done", Owner: "DA",
-			Kind: "Story", PBC: "fee", Type: "new", Mode: "guided", Env: "test",
-			Run: "published", Version: "1.0.2", Tag: "v1.0.0", By: "BA"},
-		{ID: "US-02", Title: "管家批量生成缴费单", PT: 3, St: "doing", Owner: "DA",
-			Kind: "Story", PBC: "fee", Type: "feature", Mode: "fast", Env: "test",
-			Run: "waiting", Step: 6, By: "PA"},
-		{ID: "US-03", Title: "报修工单 SLA 超时提醒", PT: 3, St: "todo", Owner: "BA",
-			Kind: "Story", PBC: "fee", Type: "feature", Mode: "fast", Env: "test",
-			Run: "idea", By: "BA"},
-	}
-	if err := seedItems(ctx, log, "fee", items); err != nil {
+	if err := seedPBC(ctx, log, "fee", "悦府物业 · 收费与工单", pbcSpec{
+		prdNote: "收费与工单基线", msg: "基线：PRD 手动上传 + 三件制品生成", digest: "sha256:baseline",
+		items: []store.Item{
+			{ID: "US-01", Title: "业主账单自助查询与支付", PT: 5, St: "done", Owner: "DA",
+				Kind: "Story", PBC: "fee", Type: "new", Mode: "guided", Env: "test",
+				Run: "published", Version: "1.0.2", Tag: "v1.0.0", By: "BA"},
+			{ID: "US-02", Title: "管家批量生成缴费单", PT: 3, St: "doing", Owner: "DA",
+				Kind: "Story", PBC: "fee", Type: "feature", Mode: "fast", Env: "test",
+				Run: "waiting", Step: 6, By: "PA"},
+			{ID: "US-03", Title: "报修工单 SLA 超时提醒", PT: 3, St: "todo", Owner: "BA",
+				Kind: "Story", PBC: "fee", Type: "feature", Mode: "fast", Env: "test",
+				Run: "idea", By: "BA"},
+		},
+	}); err != nil {
 		return err
 	}
 
 	// ticket：另一个纯 PBC，只有基线。
-	if _, err := log.Append(ctx, "ticket", store.FactPBCCreated, "PA", map[string]string{"name": "客服工单"}); err != nil {
-		return err
-	}
-	if err := seedBaseline(ctx, log, "ticket", "报修受理与派单", "基线：工单 PBC 初始化", ""); err != nil {
+	if err := seedPBC(ctx, log, "ticket", "客服工单", pbcSpec{
+		prdNote: "报修受理与派单", msg: "基线：工单 PBC 初始化",
+	}); err != nil {
 		return err
 	}
 
 	// qa：Agent 单元。制品树照样齐全——Agent 也要走五阶段。
-	if _, err := log.Append(ctx, "qa", store.FactPBCCreated, "PA", map[string]string{"name": "交付质检 Agent"}); err != nil {
-		return err
-	}
-	if err := seedBaseline(ctx, log, "qa", "质检范围：话术合规 / 承诺一致性 / 情绪风险",
-		"基线：质检 Agent 定义为可执行规格", "sha256:4d7b18"); err != nil {
-		return err
-	}
-	if err := seedTag(ctx, log, "qa", "v1.0.0"); err != nil {
+	if err := seedPBC(ctx, log, "qa", "交付质检 Agent", pbcSpec{
+		prdNote: "质检范围：话术合规 / 承诺一致性 / 情绪风险",
+		msg:     "基线：质检 Agent 定义为可执行规格", digest: "sha256:4d7b18", tag: "v1.0.0",
+	}); err != nil {
 		return err
 	}
 
 	// dun：组合单元。服务侧验收 20/22 —— 故意不是全过：
 	// 组合项最怕「服务验完就发」，一个全绿的面板演示不出来这件事。
-	if _, err := log.Append(ctx, "dun", store.FactPBCCreated, "PA", map[string]string{"name": "智能催缴"}); err != nil {
-		return err
-	}
-	if err := seedBaseline(ctx, log, "dun",
-		"催缴策略服务 + 催缴 Agent 组合交付：服务管什么时候催，Agent 管怎么说",
-		"基线：催缴服务与催缴 Agent 一起交付", "sha256:2f9c60"); err != nil {
-		return err
-	}
-	if _, err := log.Append(ctx, "dun", store.FactSvcVerified, "x-qa", domain.SvcVerify{
-		Pass: 20, Total: 22,
-		Fails: []domain.FailGroup{
+	return seedPBC(ctx, log, "dun", "智能催缴", pbcSpec{
+		prdNote: "催缴策略服务 + 催缴 Agent 组合交付：服务管什么时候催，Agent 管怎么说",
+		msg:     "基线：催缴服务与催缴 Agent 一起交付", digest: "sha256:2f9c60", tag: "v2.0.0",
+		svc: &domain.SvcVerify{Pass: 20, Total: 22, Fails: []domain.FailGroup{
 			{N: "逾期 1-3 天误催", C: 1, Ex: "逾期 2 天仍进入催告模板"},
 			{N: "频次控制边界", C: 1, Ex: "7 天内第 4 次触达未被拦截"},
-		},
-	}); err != nil {
-		return err
-	}
-	if err := seedTag(ctx, log, "dun", "v2.0.0"); err != nil {
-		return err
-	}
-	return nil
+		}},
+	})
 }
 
-func seedUnits(ctx context.Context, log *store.Store) error {
+// pbcSpec 是一个 PBC 的种子内容。零值即「只有 pbc.created」。
+type pbcSpec struct {
+	prdNote string
+	msg     string
+	digest  string
+	tag     string
+	svc     *domain.SvcVerify
+	items   []store.Item
+}
+
+// empty 判定某条日志是否还没有任何事实。日志不存在也算空。
+func empty(ctx context.Context, log *store.Store, pbc string) (bool, error) {
+	if err := log.Ensure(ctx, pbc); err != nil {
+		return false, err
+	}
+	facts, err := log.Load(ctx, pbc)
+	if err != nil {
+		return false, err
+	}
+	return len(facts) == 0, nil
+}
+
+func seedPBC(ctx context.Context, log *store.Store, pbc, name string, spec pbcSpec) error {
+	ok, err := empty(ctx, log, pbc)
+	if err != nil || !ok {
+		return err
+	}
+	if _, err := log.Append(ctx, pbc, store.FactPBCCreated, "PA", map[string]string{"name": name}); err != nil {
+		return err
+	}
+	if spec.msg == "" {
+		return nil
+	}
+	if err := seedBaseline(ctx, log, pbc, spec.prdNote, spec.msg, spec.digest); err != nil {
+		return err
+	}
+	if spec.svc != nil {
+		if _, err := log.Append(ctx, pbc, store.FactSvcVerified, "x-qa", *spec.svc); err != nil {
+			return err
+		}
+	}
+	if spec.tag != "" {
+		if err := seedTag(ctx, log, pbc, spec.tag); err != nil {
+			return err
+		}
+	}
+	return seedItems(ctx, log, pbc, spec.items)
+}
+
+// seedProject 写交付单元登记与 BRD 版本线（同一条 units 日志）。
+func seedProject(ctx context.Context, log *store.Store) error {
+	ok, err := empty(ctx, log, "units")
+	if err != nil || !ok {
+		return err
+	}
 	for _, u := range Units() {
 		op := "seed/unit/" + u.ID
 		if _, err := log.AppendOp(ctx, "units", op, store.FactUnitCreated, "PA", map[string]any{
@@ -151,10 +173,14 @@ func seedUnits(ctx context.Context, log *store.Store) error {
 			return err
 		}
 	}
-	return nil
+	return seedBRD(ctx, log)
 }
 
 func seedAgents(ctx context.Context, log *store.Store) error {
+	ok, err := empty(ctx, log, "agents")
+	if err != nil || !ok {
+		return err
+	}
 	as, err := Agents()
 	if err != nil {
 		return err
@@ -180,6 +206,7 @@ func seedAgents(ctx context.Context, log *store.Store) error {
 }
 
 // seedBRD 是原型 BRD_MD 的起点：v1.2 草稿，§4 待补。
+// 只在 units 日志刚建好时调用（见 seedProject）。
 func seedBRD(ctx context.Context, log *store.Store) error {
 	text := `# 悦府物业 · 收费与工单数字化 BRD
 

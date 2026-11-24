@@ -117,11 +117,6 @@ func TestStateExposesAgentGatesForAgentUnit(t *testing.T) {
 	if err := h.st.Ensure(ctx, "qa"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.st.Append(ctx, "qa", store.FactUnitCreated, "PA", map[string]any{
-		"name": "质检", "kind": "agent", "agentId": "x-fe",
-	}); err != nil {
-		t.Fatal(err)
-	}
 
 	_, out := h.do(t, http.MethodGet, "/api/state?pbc=qa", nil, RoleBA)
 	if out["kind"] != "agent" {
@@ -158,11 +153,7 @@ func TestHybridUnitNeedsSvcVerifyAndEval(t *testing.T) {
 	if err := h.st.Ensure(ctx, "dun"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.st.Append(ctx, "dun", store.FactUnitCreated, "PA", map[string]any{
-		"name": "催缴", "kind": "hybrid", "agentId": "x-fe",
-	}); err != nil {
-		t.Fatal(err)
-	}
+
 	seedCommit(t, h.st, "dun")
 
 	// 没验过服务侧 → svc-verify 闸红。
@@ -360,5 +351,53 @@ func seedCommit(t *testing.T, st *store.Store, pbc string) {
 		Type: "new", TreeSHA: domain.TreeSHA(tree), Digest: "sha256:seed"}
 	if _, err := st.Append(ctx, pbc, store.FactCommitCreated, "i3-pipeline", c); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSaveDraftCreatesNewVersionWithContent(t *testing.T) {
+	h := newHarness(t)
+	seedCommit(t, h.st, "fee") // v1.0.1 全树 accepted
+	// BA 写 PRD：允许。
+	resp, out := h.do(t, http.MethodPost, "/api/artifacts",
+		map[string]any{"artifact": "prd", "text": "# 新需求", "note": "补 §4"}, RoleBA)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("BA 存 PRD 应 201，实际 %d %v", resp.StatusCode, out)
+	}
+	if out["version"] != "1.0.2" {
+		t.Fatalf("新草稿应是 1.0.2，实际 %v", out["version"])
+	}
+	// DA 写 PRD：拒绝（没有产品侧动作）。
+	resp, _ = h.do(t, http.MethodPost, "/api/artifacts",
+		map[string]any{"artifact": "prd", "text": "# x"}, RoleDA)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("DA 存 PRD 应 403，实际 %d", resp.StatusCode)
+	}
+	// 空内容：拒绝。
+	resp, _ = h.do(t, http.MethodPost, "/api/artifacts",
+		map[string]any{"artifact": "prd", "text": "  "}, RoleBA)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("空内容应 400，实际 %d", resp.StatusCode)
+	}
+	// 内容随版本进投影：GET /api/state 能读到 md。
+	_, st := h.do(t, http.MethodGet, "/api/state?pbc=fee", nil, RoleBA)
+	prd := st["versions"].(map[string]any)["prd"].([]any)
+	last := prd[len(prd)-1].(map[string]any)
+	if last["md"] != "# 新需求" || last["st"] != "draft" {
+		t.Fatalf("草稿内容必须进投影：%v", last)
+	}
+}
+
+func TestSaveCodeDraftKeepsFiles(t *testing.T) {
+	h := newHarness(t)
+	seedCommit(t, h.st, "fee")
+	resp, out := h.do(t, http.MethodPost, "/api/artifacts",
+		map[string]any{"artifact": "code", "files": map[string]string{"a.go": "package a"}}, RoleDA)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("DA 存代码草稿应 201，实际 %d %v", resp.StatusCode, out)
+	}
+	resp, _ = h.do(t, http.MethodPost, "/api/artifacts",
+		map[string]any{"artifact": "code"}, RoleDA)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("没有 files 应 400，实际 %d", resp.StatusCode)
 	}
 }

@@ -83,6 +83,18 @@ type stateView struct {
 
 func (s *Server) stateWithAgent(ctx context.Context, v *store.View) (stateView, error) {
 	sv := stateView{View: v}
+	// 单元构成以 units 日志（注册表）为准：PBC 自己的日志可能早于 v2.3，
+	// 里面没有 unit.created；这时不能把 Agent 单元当成纯 PBC 来判。
+	if uv, err := s.loadUnits(ctx); err != nil {
+		return sv, err
+	} else {
+		for _, u := range uv.Units {
+			if u.ID == v.PBC {
+				v.Kind, v.AgentID = u.Kind, u.AgentID
+				break
+			}
+		}
+	}
 	if v.AgentID == "" {
 		sv.Gates.All = pbcGates(v)
 		return sv, nil
@@ -596,6 +608,128 @@ func (s *Server) svcVerify(w http.ResponseWriter, r *http.Request, c reqCtx) err
 	s.publish(c.ItemID, "svc.verified", map[string]any{"pass": in.Pass, "total": in.Total})
 	writeJSON(w, http.StatusCreated, in)
 	return nil
+}
+
+// facts 是右栏「运行时」的数据源：真实的事实流，不是模拟日志。
+// 只给 seq/at/type/actor，不带 payload——运行时面板要的是「谁在什么时候做了什么」。
+func (s *Server) facts(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	facts, err := s.Log.Load(r.Context(), c.PBC)
+	if err != nil {
+		return err
+	}
+	out := make([]map[string]any, 0, len(facts))
+	for _, f := range facts {
+		out = append(out, map[string]any{"seq": f.Seq, "at": f.At, "type": f.Type, "actor": f.Actor})
+	}
+	// 新的在前：和运行时日志的阅读顺序一致。
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pbc": c.PBC, "facts": out})
+	return nil
+}
+
+// ---------- 制品草稿 ----------
+
+// 制品草稿：文档（prd/proto/ad/at/backlog）存 md，代码存文件树。
+// 保存即新版本（source=手动编辑），进工作区；提交由 workflow 决定，
+// 所以这里只落到 draft 态，绝不直接改 HEAD。
+var artKinds = map[domain.Artifact]bool{
+	domain.PRD: true, domain.Proto: true, domain.AD: true,
+	domain.AT: true, domain.Backlog: true, domain.Code: true,
+}
+
+func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	// 编辑制品是「产品确认」动作：PA 有 acceptProto/pbc，BA 有 brd/acceptAT。
+	// 统一到 ActPbc（PA 专属）会挡住 BA 写 PRD，所以按制品类型判。
+	var in struct {
+		Artifact string            `json:"artifact"`
+		Text     string            `json:"text"`
+		Files    map[string]string `json:"files"`
+		Note     string            `json:"note"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&in); err != nil {
+		return fmt.Errorf("%w：%v", errBadRequest, err)
+	}
+	t := domain.Artifact(in.Artifact)
+	if !artKinds[t] {
+		return fmt.Errorf("%w：未知制品 %q", errBadRequest, in.Artifact)
+	}
+	// 编辑权按制品类型落到真正负责它的角色：
+	//   prd / at → BA（brd / acceptAT）
+	//   proto / ad → PA（acceptProto / pbc）
+	//   backlog → BA（backlog）
+	//   code → DA（build）——代码是交付物，不是产品文档
+	if err := Require(c.Role, actFor(t)); err != nil {
+		return err
+	}
+	if t == domain.Code {
+		if len(in.Files) == 0 {
+			return fmt.Errorf("%w：代码草稿必须给出 files", errBadRequest)
+		}
+	} else if strings.TrimSpace(in.Text) == "" {
+		return fmt.Errorf("%w：内容为空，不能保存", errBadRequest)
+	}
+
+	v, err := s.load(r, c.PBC)
+	if err != nil {
+		return err
+	}
+	latest := func(x domain.Artifact) string { return domain.Latest(v.Versions, x) }
+	cur := latest(t)
+	nv, err := domain.NextVersion(cur)
+	if err != nil {
+		return fmt.Errorf("%w：%v", errBadRequest, err)
+	}
+	// 同制品已有草稿时，新草稿取代它（superseded 由投影处理）。
+	ver := domain.Version{
+		T: t, V: nv, At: time.Now().Format("01-02 15:04"), By: workerFor(t),
+		Source: "手动编辑", DF: domain.DeriveRefs(t, latest), St: domain.StDraft,
+		Note: strings.TrimSpace(in.Note),
+	}
+	if ver.Note == "" {
+		ver.Note = "人工编辑"
+	}
+	if t == domain.Code {
+		ver.Files = in.Files
+	} else {
+		ver.MD = in.Text
+	}
+	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactArtifactDrafted, c.Role.String(), ver); err != nil {
+		return err
+	}
+	s.publish(c.PBC, "artifact.drafted", map[string]any{"artifact": string(t), "version": nv})
+	writeJSON(w, http.StatusCreated, map[string]any{"artifact": t, "version": nv})
+	return nil
+}
+
+// actFor 是制品编辑权对应的动作名。前端只做展示，真正的判定在这里。
+func actFor(t domain.Artifact) Act {
+	switch t {
+	case domain.PRD:
+		return ActBrd
+	case domain.AT, domain.Backlog:
+		return ActAcceptAT
+	case domain.Code:
+		return ActBuild
+	default: // proto / ad
+		return ActAcceptProto
+	}
+}
+
+// workerFor 是制品 → 负责的 X worker，与原型 ART_WORKER 一致。
+func workerFor(t domain.Artifact) string {
+	switch t {
+	case domain.PRD, domain.Backlog:
+		return "x-ba"
+	case domain.Proto:
+		return "x-ui"
+	case domain.AD, domain.Code:
+		return "x-fe"
+	case domain.AT:
+		return "x-qa"
+	}
+	return "x-fe"
 }
 
 // ---------- 批注 ----------

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	path "path"
 	"strings"
 	"sync"
 	"time"
@@ -61,9 +62,11 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/agents/{id}/rollout", s.wrap(s.agentRollout))
 	m.HandleFunc("POST /api/agents/{id}/rollback", s.wrap(s.agentRollback))
 	m.HandleFunc("POST /api/annotations", s.wrap(s.addAnnotation))
+	m.HandleFunc("POST /api/artifacts", s.wrap(s.saveDraft))
+	m.HandleFunc("GET /api/facts", s.wrap(s.facts))
 	// ServeMux 里 /api/... 比 / 更具体，优先匹配，静态兜底不会抢接口。
 	// web/dist 是 Vite 构建产物：必须从仓库根起跑（见 docs/SPEC-frontend-wiring.md）。
-	m.Handle("/", http.FileServer(http.Dir("web/dist")))
+	m.Handle("/", spa(http.Dir("web/dist")))
 	return m
 }
 
@@ -109,6 +112,29 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// spa 托管 Vite 产物，并对「前端路由」回落到 index.html。
+//
+// 为什么需要回落：页面路由（/plan、/verify 等）在服务端没有对应文件，
+// 直接 404 会让刷新页面变成白屏。判据是「路径里有扩展名」——
+// 有扩展名的是静态资源，没有的是前端路由。
+func spa(root http.FileSystem) http.Handler {
+	files := http.FileServer(root)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if p == "/" || p == "/index.html" || strings.Contains(path.Ext(p), ".") {
+			files.ServeHTTP(w, r)
+			return
+		}
+		idx, err := root.Open("index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer idx.Close()
+		http.ServeContent(w, r, "index.html", time.Time{}, idx)
+	})
 }
 
 // ---------- 视图 ----------
