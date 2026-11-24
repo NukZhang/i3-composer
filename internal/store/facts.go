@@ -64,6 +64,25 @@ const (
 	FactAgentRollout  = "agent.rollout"
 	FactAgentRollback = "agent.rollback"
 	FactAgentBaseline = "agent.baseline"
+
+	// v2.6：Agent 编排（流程图）、构建、试跑与「沉淀为评测用例」。
+	// 编排改了但没构建，digest 就对不上——gate 会红，旧评测也不能给新版本背书。
+	FactAgentFlowSaved = "agent.flow.saved"
+	FactAgentBuilt     = "agent.built"
+	FactAgentTrial     = "agent.trial.run"
+	FactAgentCase      = "agent.case.added"
+	FactAgentRetired   = "agent.retired"
+	FactKBIssue        = "kb.issue.dispatched"
+
+	// v2.5/v2.6：真人验收台。清单、判定、bug 与验收对话全部进账本，
+	// 因为「验过了」本身就是一条事实，不能只活在前端内存里。
+	FactCheckDefined = "check.defined"
+	FactCheckDecided = "check.decided"
+	FactDefect       = "defect.created"
+	FactVerifyChat   = "verify.chat"
+
+	// v2.4：客服工单 PBC 与收费缴费重复，从演示项目里删除。
+	FactUnitRemoved = "unit.removed"
 )
 
 // Fact 是一条不可变事实。

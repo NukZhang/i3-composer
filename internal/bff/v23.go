@@ -390,6 +390,11 @@ func (s *Server) agentEval(w http.ResponseWriter, r *http.Request, c reqCtx) err
 	if a == nil {
 		return fmt.Errorf("%w：Agent %s", errNotFound, c.ItemID)
 	}
+	a.EnsureDigest()
+	// 评测必须跑在当前构建产物上：编排改了没构建，先构建再评测。
+	if a.BuiltDigest == "" || a.BuiltDigest != a.Digest {
+		return fmt.Errorf("%w：%s 有未构建改动，先「构建」再评测", errBadRequest, a.ID)
+	}
 	var in struct {
 		Pass  int               `json:"pass"`
 		Total int               `json:"total"`
@@ -413,6 +418,7 @@ func (s *Server) agentEval(w http.ResponseWriter, r *http.Request, c reqCtx) err
 	run := domain.EvalRun{
 		ID: fmt.Sprintf("exp-%04d", time.Now().Unix()%10000), At: time.Now().Format("01-02 15:04"),
 		Ver: ver, Pass: in.Pass, Total: in.Total, Cost: in.Cost, P50: in.P50, P95: in.P95, Tok: in.Tok,
+		Digest: a.BuiltDigest,
 	}
 	if _, err := s.Log.Append(r.Context(), agentsLog, store.FactAgentEvalRun, c.Role.String(), map[string]any{
 		"agentId": a.ID, "run": run,

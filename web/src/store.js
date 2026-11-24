@@ -32,6 +32,13 @@ export const S = reactive({
   loading: false,
   newTask: '',
 
+  // v2.5 真人验收台：当前验收项、bug 表单是否展开。
+  vIdx: 0,
+  vBugOpen: false,
+  // v2.6 编排工作台：选中的节点、是否跑过一条。
+  agNode: null,
+  agRan: false,
+
   // 投影（全部来自 /api/*，不持有第二份真相）
   state: null,      // /api/state
   units: [],        // /api/units

@@ -26,7 +26,10 @@ const mp = [
   ['测试报告', 'workflow 的 test 步骤', '直接复用', 't-ok'],
   ['通知 / 卡片', '/api/notifications（事实派生）', '已实现', 't-ok'],
   ['四角色与权限', 'bff.Role.Can()', '已实现', 't-ok'],
-  [' Agent 定义 / 评测 / 灰度', '/api/agents/*', '已实现', 't-ok'],
+  ['Agent 编排（流程图 → digest）', 'PUT /api/agents/{id}/flow + POST .../build', '已实现', 't-ok'],
+  ['知识库依赖与准确度', 'agent.kb + 失败归因 / 问题单', '已实现', 't-ok'],
+  ['真人验收台（AC 判定 / 提 bug）', 'POST /api/checks/{id}/decide + defect.created', '已实现', 't-ok'],
+  ['Agent 评测 / 灰度', '/api/agents/*', '已实现', 't-ok'],
 ];
 </script>
 

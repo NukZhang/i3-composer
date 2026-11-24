@@ -80,8 +80,81 @@ export const WORKER_NAME = {
   'x-ui': 'X-UI设计师',
   'x-ops': 'X-运维工程师',
   'x-ba': 'X-业务分析员',
+  'x-qc': 'X-质检员',
   'x-dun': 'X-催缴专员',
 };
+
+// ---------- Agent 编排（v2.6） ----------
+
+// 七种节点的展示信息，与原型 AG_T 一致。
+export const NODE_TYPE = {
+  start: { n: '开始', col: 'var(--tx-9)', ic: 'play' },
+  tool: { n: '工具', col: 'var(--info)', ic: 'box' },
+  kb: { n: '知识库', col: 'var(--ok)', ic: 'doc' },
+  llm: { n: '模型', col: 'var(--purple)', ic: 'cpu' },
+  branch: { n: '分支', col: 'var(--warn)', ic: 'git' },
+  hitl: { n: '人工', col: 'var(--err)', ic: 'users' },
+  end: { n: '结束', col: 'var(--tx-7)', ic: 'check' },
+};
+
+export function nodeType(t) {
+  return NODE_TYPE[t] || NODE_TYPE.tool;
+}
+
+// 画布坐标：与原型 agX / agY 同规则。
+export function agX(n) {
+  return 12 + n.c * 112;
+}
+export function agY(n) {
+  return 14 + n.r * 98;
+}
+
+// 节点耗时：原型里 ms>1000 显示秒。
+export function msText(ms) {
+  if (!ms) return '—';
+  return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
+}
+export function tokText(tok) {
+  if (!tok) return '—';
+  return tok >= 1000 ? (tok / 1000).toFixed(1) + 'k' : String(tok);
+}
+
+// toolWiring 从节点配置里反查每个白名单工具用在哪。
+// 白名单给了但流程里没接线，是一个有用的信号：要么流程漏了一步，要么权限该收回去。
+export function toolWiring(agent) {
+  const tools = (agent && agent.tools) || [];
+  const nodes = (agent && agent.flow && agent.flow.nodes) || [];
+  return tools.map((t) => {
+    const used = nodes
+      .filter((n) => {
+        const c = n.cfg || {};
+        if (c.tool === t) return true;
+        if (Array.isArray(c.tools) && c.tools.indexOf(t) >= 0) return true;
+        if (typeof c.pre === 'string' && c.pre.indexOf(t) >= 0) return true;
+        return false;
+      })
+      .map((n) => n.n);
+    return { tool: t, nodes: used, wired: used.length > 0 };
+  });
+}
+
+// 编排整体统计：一轮多久、花多少 token。
+export function flowStats(flow) {
+  const nodes = (flow && flow.nodes) || [];
+  return {
+    nodes: nodes.length,
+    edges: (flow && flow.edges ? flow.edges.length : 0),
+    ms: nodes.reduce((a, n) => a + (n.ms || 0), 0),
+    tok: nodes.reduce((a, n) => a + (n.tok || 0), 0),
+    llm: nodes.filter((n) => n.t === 'llm').length,
+  };
+}
+
+// 知识库问题单里待修的条数。
+export function kbIssueTotal(kb) {
+  if (!kb || !kb.issues) return 0;
+  return kb.issues.reduce((a, x) => a + (x.c || 0), 0);
+}
 
 export function scoreColor(s) {
   return s >= 0.9 ? 'var(--ok)' : s >= 0.7 ? 'var(--warn)' : 'var(--err)';

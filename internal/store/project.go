@@ -23,6 +23,19 @@ type View struct {
 	Items     map[string]*Item                     `json:"items"`
 	Annos     []Anno                               `json:"annos"`
 	SvcVerify *domain.SvcVerify                    `json:"svcVerify,omitempty"`
+
+	// v2.5/v2.6：真人验收台的清单、判定、bug 与对话。
+	Checks  []domain.Check  `json:"checks,omitempty"`
+	Defects []domain.Defect `json:"defects,omitempty"`
+	Chats   []VerifyChat    `json:"chats,omitempty"`
+}
+
+// VerifyChat 是验收台里「你来当那个客户」的一段对话。
+type VerifyChat struct {
+	Who  string `json:"who"` // me | ai
+	Text string `json:"t"`
+	At   string `json:"at"`
+	By   string `json:"by,omitempty"`
 }
 
 type Deploy struct {
@@ -361,6 +374,60 @@ func apply(v *View, f Fact) error {
 	case FactBRDSaved:
 		// BRD 是项目级制品，不进 PBC 的版本树；这里只保留「最近一次保存」的指针，
 		// 完整版本线在 ProjectBRD 里。
+
+	case FactCheckDefined:
+		var p struct {
+			Items []domain.Check `json:"items"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		for _, c := range p.Items {
+			if c.ST == "" {
+				c.ST = domain.CheckTodo
+			}
+			replaced := false
+			for i := range v.Checks {
+				if v.Checks[i].ID == c.ID {
+					v.Checks[i] = c
+					replaced = true
+				}
+			}
+			if !replaced {
+				v.Checks = append(v.Checks, c)
+			}
+		}
+
+	case FactCheckDecided:
+		var p struct {
+			ID string `json:"id"`
+			ST string `json:"st"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		out, err := domain.DecideCheck(v.Checks, p.ID, p.ST)
+		if err != nil {
+			return err
+		}
+		v.Checks = out
+
+	case FactDefect:
+		var d domain.Defect
+		if err := dec(&d); err != nil {
+			return err
+		}
+		if d.PBC == "" {
+			d.PBC = v.PBC
+		}
+		v.Defects = append(v.Defects, d)
+
+	case FactVerifyChat:
+		var p VerifyChat
+		if err := dec(&p); err != nil {
+			return err
+		}
+		v.Chats = append(v.Chats, p)
 	}
 	return nil
 }

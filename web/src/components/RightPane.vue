@@ -18,14 +18,18 @@ const IMPL = {
     ['事实', 'annotation.added → 随提交落库'],
   ],
   build: [
+    ['编排', 'PUT /api/agents/{id}/flow {flow}'],
+    ['构建', 'POST /api/agents/{id}/build（换 digest 与版本号）'],
+    ['试跑', 'POST /api/agents/{id}/trial'],
+    ['用例', 'POST /api/agents/{id}/cases（沉淀为评测用例）'],
     ['草稿', 'POST /api/artifacts {artifact:"code",files}'],
     ['执行', 'POST /api/items/{id}/run'],
-    ['事实', 'item.step.done / build.succeeded / deploy.succeeded'],
   ],
   verify: [
+    ['判定', 'POST /api/checks/{id}/decide {st,title,sev,steps}'],
+    ['对话', 'POST /api/units/{id}/chat {text}'],
     ['门禁', 'GET /api/state → gates'],
     ['评测', 'POST /api/agents/{id}/eval'],
-    ['验收', 'POST /api/units/{id}/svcverify'],
   ],
   release: [
     ['发布', 'POST /api/agents/{id}/publish（SA）'],
@@ -34,8 +38,10 @@ const IMPL = {
   ],
   agent: [
     ['定义', 'GET /api/agents/{id}'],
+    ['编排', 'GET /api/agents/{id} → flow / kb'],
     ['评测', 'POST /api/agents/{id}/eval'],
     ['基线', 'POST /api/agents/{id}/baseline {runId}'],
+    ['问题单', 'POST /api/agents/{id}/kb/{idx}/dispatch'],
   ],
 };
 

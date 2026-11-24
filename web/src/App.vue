@@ -124,7 +124,7 @@ onUnmounted(() => closeStream && closeStream());
         @click="setRole(id)"
       >{{ id }}</button>
       <button class="rolebtn x" @click="S.view = 'workers'">
-        <span v-html="icon('robot', 12)" /> Agent 工厂 {{ S.agents.filter((a) => a.published).length }}
+        <span v-html="icon('robot', 12)" /> Agent 工厂 {{ S.agents.filter((a) => (a.st || []).includes('doing')).length }}
       </button>
     </div>
     <div class="avatar">{{ (S.roleName || 'BA').slice(0, 2) }}</div>

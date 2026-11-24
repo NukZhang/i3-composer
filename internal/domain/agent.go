@@ -3,6 +3,7 @@ package domain
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 )
 
@@ -49,17 +50,21 @@ func (k UnitKind) Label() string {
 }
 
 // EvalRun 是一次评测运行的摘要。通过率是 Agent 的发布判据。
+//
+// Digest 记的是「这次评测跑在哪一版定义上」：改过编排/提示词但没重跑，
+// 分数就不能拿来给新版本背书。
 type EvalRun struct {
-	ID    string `json:"id"`
-	At    string `json:"at"`
-	Ver   string `json:"ver"`
-	Pass  int    `json:"pass"`
-	Total int    `json:"total"`
-	Cost  string `json:"cost"`
-	P50   string `json:"p50"`
-	P95   string `json:"p95"`
-	Tok   string `json:"tok"`
-	Base  bool   `json:"base,omitempty"` // 对比基线
+	ID     string `json:"id"`
+	At     string `json:"at"`
+	Ver    string `json:"ver"`
+	Pass   int    `json:"pass"`
+	Total  int    `json:"total"`
+	Cost   string `json:"cost"`
+	P50    string `json:"p50"`
+	P95    string `json:"p95"`
+	Tok    string `json:"tok"`
+	Base   bool   `json:"base,omitempty"`   // 对比基线
+	Digest string `json:"digest,omitempty"` // 评测所针对的定义 digest
 }
 
 // EvalCase 是评测集里的一条用例（原型 v2.3 的 evCases）。
@@ -113,7 +118,21 @@ type Agent struct {
 	Trace []TraceStep `json:"trace"`
 	Cases []EvalCase  `json:"cases"`
 
-	Digest     string `json:"digest"`
+	// v2.6：Agent 的构建产物是一张编排，不是一份 YAML。
+	// Flow 决定它在什么情况下查库、调工具、找人确认；KB 是它引用的知识库
+	// （库版本进 digest）；Trial 是原型阶段「试跑这一条」的样例。
+	Flow     *Flow  `json:"flow,omitempty"`
+	KB       *KB    `json:"kb,omitempty"`
+	Trial    *Trial `json:"trial,omitempty"`
+	TrialRun *Trial `json:"trialRun,omitempty"`
+	TrialAt  string `json:"trialAt,omitempty"`
+	TrialBy  string `json:"trialBy,omitempty"`
+
+	Digest string `json:"digest"`
+	// BuiltDigest 是最后一次「构建」落下的 digest。它和 Digest 不一致，
+	// 说明编排改了但没构建——gate 会红，上一轮评测也不能再给新版本背书。
+	BuiltDigest string `json:"builtDigest,omitempty"`
+
 	Published  bool   `json:"published"`
 	Rollout    int    `json:"rollout"`              // 10 / 50 / 100，0 表示未放量
 	RollbackTo string `json:"rollbackTo,omitempty"` // 最近一次回滚目标版本
@@ -127,23 +146,39 @@ func (a *Agent) Rate() float64 {
 	return float64(a.Eval[0]) / float64(a.Eval[1])
 }
 
-// EnsureDigest 在摘要为空时按定义算一个。改提示词/工具/模型/版本都会换 digest。
+// EnsureDigest 按当前定义重算 digest。改节点、提示词、工具、模型或库版本都会变。
 func (a *Agent) EnsureDigest() {
-	if a.Digest != "" {
-		return
-	}
 	a.Digest = AgentDigest(*a)
 }
 
-// AgentDigest 是 Agent 产物的树摘要。字段顺序固定，保证可回放。
+// LatestRun 返回最近一次评测运行；没有则返回 nil。
+func (a *Agent) LatestRun() *EvalRun {
+	if a == nil || len(a.Runs) == 0 {
+		return nil
+	}
+	return &a.Runs[0]
+}
+
+// AgentDigest 是 Agent 产物的摘要。字段顺序固定，保证可回放。
+//
+// 刻意不包含版本号：版本是 digest 变化的结果，不是它的输入；
+// 包含它会变成「构建一次变一次」，永远对不上。
 func AgentDigest(a Agent) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "ver=%s\nmodel=%s\nprompt=%s\n", a.Ver, a.Model, a.Prompt)
+	fmt.Fprintf(h, "model=%s\nprompt=%s\n", a.Model, a.Prompt)
 	for _, t := range a.Tools {
 		fmt.Fprintf(h, "tool=%s\n", t)
 	}
 	if len(a.Cases) > 0 {
 		fmt.Fprintf(h, "evalset=%d\n", len(a.Cases))
+	}
+	if a.Flow != nil {
+		b, _ := json.Marshal(a.Flow)
+		fmt.Fprintf(h, "flow=%s\n", b)
+	}
+	if kb := a.KB.Ref(); kb != "" {
+		fmt.Fprintf(h, "kb=%s\n", kb)
+		fmt.Fprintf(h, "kbcfg=%d/%.3f/%t\n", a.KB.TopK, a.KB.Thr, a.KB.Rerank)
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))[:12]
 }
@@ -175,7 +210,15 @@ func AgentGates(a *Agent) []Gate {
 	}
 	closed := a.Ver != "" && a.Prompt != "" && len(a.Stages) == 5
 	detail := "方案 / 原型 / 构建 / 验证 / 发布 齐"
-	if !closed {
+	if closed && a.Flow != nil {
+		if err := a.Flow.Valid(); err != nil {
+			closed = false
+			detail = "编排不可执行：" + err.Error()
+		} else {
+			detail += fmt.Sprintf(" · %d 节点 / %d 连线", len(a.Flow.Nodes), len(a.Flow.Edges))
+		}
+	}
+	if !closed && detail == "方案 / 原型 / 构建 / 验证 / 发布 齐" {
 		detail = "定义链不完整"
 	}
 	toolsOK := len(a.Tools) > 0
@@ -184,15 +227,20 @@ func AgentGates(a *Agent) []Gate {
 		toolsDetail = "没有工具白名单"
 	}
 	a.EnsureDigest()
-	digestOK := a.Digest != ""
-	digestDetail := a.Digest
-	if !digestOK {
+	digestOK := a.BuiltDigest != "" && a.BuiltDigest == a.Digest
+	digestDetail := a.BuiltDigest
+	if a.BuiltDigest == "" {
 		digestDetail = "未构建，无 digest"
+	} else if !digestOK {
+		digestDetail = "编排改了但没构建（当前 " + a.Digest + "）"
 	}
 	evalOK := a.Eval[1] > 0 && a.Rate() >= 0.95
 	evalDetail := fmt.Sprintf("%d/%d", a.Eval[0], a.Eval[1])
 	if a.Eval[1] == 0 {
 		evalDetail = "无评测集"
+	} else if run := a.LatestRun(); run != nil && run.Digest != "" && a.BuiltDigest != "" && run.Digest != a.BuiltDigest {
+		evalOK = false
+		evalDetail += " · 评测针对旧版本，需重跑"
 	}
 	return []Gate{
 		{Key: "agent-closure", Label: "上游闭合", OK: closed, Detail: detail},

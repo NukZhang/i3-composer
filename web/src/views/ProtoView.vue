@@ -1,6 +1,8 @@
 <script setup>
 import { computed, ref } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
+import ProtoAgentReview from '../components/ProtoAgentReview.vue';
+import ProtoDunConsole from '../components/ProtoDunConsole.vue';
 import { S, unitKind, currentAgent, toast, refresh } from '../store.js';
 import { icon } from '../icons.js';
 import { api } from '../api.js';
@@ -11,9 +13,6 @@ const kind = computed(() => unitKind());
 const proto = computed(() => latest(versions.value, 'proto') || {});
 const annos = computed(() => (S.state && S.state.annos) || []);
 const agent = computed(() => currentAgent());
-const trace = computed(() => (agent.value && agent.value.trace) || []);
-const totalMs = computed(() => trace.value.reduce((a, x) => a + x.ms, 0));
-const totalTok = computed(() => trace.value.reduce((a, x) => a + x.tok, 0));
 const stale = computed(() => staleList(versions.value).find((x) => x.t === 'proto'));
 
 const annoOn = ref(false);
@@ -80,10 +79,12 @@ async function saveAnno() {
   <PageHeader
     :title="'原型 <span class=&quot;mono&quot; style=&quot;color:var(--purple);font-size:13px&quot;>' + (proto.v || '—') + '</span>'"
     :sub="kind === 'agent'
-      ? 'Agent 没有页面可比，原型是「拿一件真事跑一遍」：能看见它每一步做了什么、花了多少、最后给了什么。'
-      : '线框与批注都来自账本：批注是 annotation.added 事实，坐标归一化存储，可定位。'"
+      ? 'Agent 交付的是一屏工具：它的产出（判定 / 草稿）在这里被人看、被人改、被人拍板。就这一屏，没有别的。'
+      : kind === 'hybrid'
+        ? '组合项交付的是一套业务系统：策略、任务、话术三块，Agent 只负责第三块的话术生成。'
+        : '线框与批注都来自账本：批注是 annotation.added 事实，坐标归一化存储，可定位。'"
   >
-    <button v-if="kind !== 'agent'" class="btn small" :class="{ primary: annoOn }" @click="annoOn = !annoOn">
+    <button v-if="kind === 'pbc'" class="btn small" :class="{ primary: annoOn }" @click="annoOn = !annoOn">
       <span v-html="icon('layout', 12)" /> {{ annoOn ? '框选中…（点此退出）' : '框选批注' }}
     </button>
     <button class="btn small" @click="S.view = 'plan'"><span v-html="icon('doc', 12)" /> 回方案页</button>
@@ -97,38 +98,38 @@ async function saveAnno() {
   </div>
 
   <template v-if="kind === 'agent'">
+    <ProtoAgentReview :agent="agent" />
     <div class="card">
-      <div class="ch"><span v-html="icon('box')" /><h3>这一轮领到的活</h3><span class="spacer" /><span class="small muted">{{ agent && agent.n }} · 依据 {{ (proto.df || []).map((d) => d.t.toUpperCase() + ' ' + d.v).join(' · ') || '—' }}</span></div>
-      <div class="tree-box" style="margin: 0">
-        <div class="tree-line"><span class="k">任务</span><span class="v">{{ (S.inbox.find((x) => x.pbc === S.pbcId) || {}).t || '按当前 backlog 执行' }}</span></div>
-        <div class="tree-line"><span class="k">上下文</span><span class="v">tree.at {{ (latest(versions, 'at') || {}).v }} · tree.prd {{ (latest(versions, 'prd') || {}).v }} · 只读访问</span></div>
-        <div class="tree-line"><span class="k">约束</span><span class="v">只出草稿不发送 · 红线词强制升级 · 单客户 7 天 ≤ 3 次</span></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="ch"><span v-html="icon('cpu')" /><h3>执行轨迹</h3><span class="spacer" /><span class="small muted">{{ trace.length }} 步 · 共 {{ totalMs }}ms · {{ totalTok }} token</span></div>
-      <div v-for="(t, i) in trace" :key="i" class="row" style="padding: 6px 0; border-bottom: 1px solid var(--line-e); align-items: flex-start; gap: 9px">
-        <span class="mono small" style="width: 16px; color: var(--tx-12); padding-top: 1px">{{ i + 1 }}</span>
-        <div style="flex: 1; min-width: 0">
-          <div class="row" style="gap: 7px; align-items: baseline">
-            <span style="font-size: 11.5px; font-weight: 600; color: var(--tx-2)">{{ t.n }}</span>
-            <span class="mono small" style="color: var(--tx-11)">{{ t.d }}</span>
-          </div>
-          <div class="small muted" style="margin-top: 2px">占本轮 {{ Math.round((t.ms / Math.max(1, totalMs)) * 100) }}% 耗时</div>
+      <div class="ch"><span v-html="icon('list')" /><h3>评审批注（{{ annos.length }}）</h3><span class="spacer" /><span class="small muted">坐标归一化，可定位</span></div>
+      <div v-if="!annos.length" class="small muted">暂无批注。</div>
+      <div v-for="(a, i) in annos" :key="i" class="anno-item">
+        <div class="anno-idx">{{ i + 1 }}</div>
+        <div style="flex: 1">
+          {{ a.text }}
+          <div class="small muted mono">x {{ a.x.toFixed(2) }} y {{ a.y.toFixed(2) }} w {{ a.w.toFixed(2) }} h {{ a.h.toFixed(2) }} · {{ a.by }}</div>
         </div>
-        <span class="mono small muted" style="white-space: nowrap">{{ t.ms }}ms · {{ t.tok }} tok</span>
       </div>
-      <div class="small muted" style="margin-top: 8px">轨迹本身就是排查材料：慢在哪一步、token 花在哪一步，一眼能看出来。</div>
     </div>
     <div class="card">
-      <div class="ch">
-        <span v-html="icon('doc')" /><h3>产出 · 草稿</h3><span class="spacer" />
-        <span class="tag" :class="agent && agent.cases && agent.cases[0] && agent.cases[0].ok ? 't-ok' : 't-err'" style="font-size: 9px">
-          {{ agent && agent.cases && agent.cases[0] ? (agent.cases[0].ok ? '自检通过' : '自检有风险') : '—' }}
-        </span>
+      <div class="ch"><span v-html="icon('git')" /><h3>原型版本线</h3></div>
+      <div v-for="x in (versions.proto || []).slice().reverse()" :key="x.v" class="row" style="padding: 4px 0; border-bottom: 1px solid var(--line-e); font-size: 11.5px">
+        <span class="mono" style="color: var(--purple); width: 52px">{{ x.v }}</span>
+        <span class="tag" :class="x.st === 'draft' ? 't-warn' : 't-ok'" style="font-size: 9px">{{ x.st === 'draft' ? '草稿' : '已接受' }}</span>
+        <span class="muted" style="flex: 1">{{ x.note || '' }}</span>
+        <span class="small muted">{{ x.by }} · {{ x.at }}</span>
       </div>
-      <div class="pv" style="border: 1px solid var(--line-1); border-radius: 8px; padding: 11px 14px; font-size: 12px; line-height: 1.85">
-        {{ (agent && agent.cases && agent.cases[0] && agent.cases[0].out) || '（本轮没有产出）' }}
+    </div>
+  </template>
+
+  <template v-else-if="kind === 'hybrid'">
+    <ProtoDunConsole :agent="agent" />
+    <div class="card">
+      <div class="ch"><span v-html="icon('git')" /><h3>原型版本线</h3></div>
+      <div v-for="x in (versions.proto || []).slice().reverse()" :key="x.v" class="row" style="padding: 4px 0; border-bottom: 1px solid var(--line-e); font-size: 11.5px">
+        <span class="mono" style="color: var(--purple); width: 52px">{{ x.v }}</span>
+        <span class="tag" :class="x.st === 'draft' ? 't-warn' : 't-ok'" style="font-size: 9px">{{ x.st === 'draft' ? '草稿' : '已接受' }}</span>
+        <span class="muted" style="flex: 1">{{ x.note || '' }}</span>
+        <span class="small muted">{{ x.by }} · {{ x.at }}</span>
       </div>
     </div>
   </template>

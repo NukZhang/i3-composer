@@ -64,6 +64,15 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/annotations", s.wrap(s.addAnnotation))
 	m.HandleFunc("POST /api/artifacts", s.wrap(s.saveDraft))
 	m.HandleFunc("GET /api/facts", s.wrap(s.facts))
+	// v2.6：Agent 编排、构建、试跑、沉淀用例；知识库问题单
+	m.HandleFunc("PUT /api/agents/{id}/flow", s.wrap(s.agentFlow))
+	m.HandleFunc("POST /api/agents/{id}/build", s.wrap(s.agentBuild))
+	m.HandleFunc("POST /api/agents/{id}/trial", s.wrap(s.agentTrial))
+	m.HandleFunc("POST /api/agents/{id}/cases", s.wrap(s.agentCase))
+	m.HandleFunc("POST /api/agents/{id}/kb/{idx}/dispatch", s.wrap(s.kbDispatch))
+	// v2.5：真人验收台
+	m.HandleFunc("POST /api/checks/{id}/decide", s.wrap(s.checkDecide))
+	m.HandleFunc("POST /api/units/{id}/chat", s.wrap(s.verifyChat))
 	// ServeMux 里 /api/... 比 / 更具体，优先匹配，静态兜底不会抢接口。
 	// web/dist 是 Vite 构建产物：必须从仓库根起跑（见 docs/SPEC-frontend-wiring.md）。
 	m.Handle("/", spa(http.Dir("web/dist")))
@@ -278,11 +287,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		in.Mode = "fast"
 	}
 
-	v, err := s.load(r, c.PBC)
-	if err != nil {
-		return err
-	}
-	id, err := nextItemID(v.Items)
+	// 编号在全项目范围内取：需求池是各单元工作项合起来看的，
+	// 各单元各自从 US-01 开始会出现两个 US-01，谁也说不清指哪一条。
+	id, err := s.nextGlobalItemID(r, c.PBC)
 	if err != nil {
 		return err
 	}

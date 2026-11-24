@@ -10,7 +10,10 @@ import (
 	"github.com/zhangkun/i3-composer/internal/store"
 )
 
-// seedAgent 往 agents 日志里写一条定义 + 一次评测，让四闸有据可判。
+// seedAgent 往 agents 日志里写一条定义 + 一次构建 + 一次评测，让四闸有据可判。
+//
+// v2.6 起「digest 一致」的含义是：当前定义算出的 digest 与最后一次构建
+// 落下的 digest 相等；评测也必须跑在那个 digest 上。所以夹具先构建再评测。
 func seedAgent(t *testing.T, st *store.Store, a domain.Agent, pass, total int) {
 	t.Helper()
 	ctx := t.Context()
@@ -18,8 +21,13 @@ func seedAgent(t *testing.T, st *store.Store, a domain.Agent, pass, total int) {
 	if _, err := st.Append(ctx, agentsLog, store.FactAgentDefined, "PA", a); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := st.Append(ctx, agentsLog, store.FactAgentBuilt, "DA", map[string]any{
+		"agentId": a.ID, "ver": a.Ver, "digest": a.Digest,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.Append(ctx, agentsLog, store.FactAgentEvalRun, "x-qa", map[string]any{
-		"agentId": a.ID, "run": domain.EvalRun{ID: "exp-1", Ver: a.Ver, Pass: pass, Total: total},
+		"agentId": a.ID, "run": domain.EvalRun{ID: "exp-1", Ver: a.Ver, Pass: pass, Total: total, Digest: a.Digest},
 	}); err != nil {
 		t.Fatal(err)
 	}

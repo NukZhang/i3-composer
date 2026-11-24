@@ -1,17 +1,33 @@
 <script setup>
 import { computed } from 'vue';
+import EvalWorkbench from '../components/EvalWorkbench.vue';
+import KbAccuracy from '../components/KbAccuracy.vue';
 import { S, toast, refresh } from '../store.js';
 import { api } from '../api.js';
 import { icon } from '../icons.js';
-import { evCur, evBase, evPct, evRate } from '../derive.js';
+import { evCur, evBase, evPct, evRate, nodeType, flowStats, toolWiring } from '../derive.js';
 
 const STAGES = ['方案', '原型', '构建', '验证', '发布'];
-const TABS = ['方案 · Agent 定义', '原型 · 用真实任务试跑', '构建 · Dapr Agent 定义', '验证 · 评测集', '发布 · 版本线'];
+const TABS = ['方案 · Agent 定义', '原型 · 用真实任务试跑', '构建 · 编排摘要', '验证 · 评测集', '发布 · 版本线'];
 
 const a = computed(() => S.agents.find((x) => x.id === S.agentId) || S.agents[0] || null);
 const tab = computed(() => String(S.agTab || '0'));
 const cur = computed(() => evCur(a.value));
 const base = computed(() => evBase(a.value));
+const stats = computed(() => flowStats(a.value && a.value.flow));
+const wiring = computed(() => toolWiring(a.value));
+
+// 去编排页：这个 Agent 挂在哪个交付单元上，就去那个单元的「Agent 编排」tab。
+function goStudio() {
+  const u = (S.units || []).find((x) => x.agentId === (a.value && a.value.id));
+  if (!u) {
+    toast('这个 Agent 还没挂到交付单元上', 'warn');
+    return;
+  }
+  S.pbcId = u.id;
+  S.bpTab = 'agentdef';
+  S.view = 'build';
+}
 
 async function publish() {
   try {
@@ -75,45 +91,49 @@ function stageColor(s) {
 
     <template v-else-if="tab === '2'">
       <div class="card">
-        <div class="ch"><span v-html="icon('cpu')" /><h3>构建 · Dapr Agent 定义</h3><span class="spacer" /><span class="mono small">agents/{{ a.id }}.yaml</span></div>
-        <div class="tree-box" style="font-size: 11px">
-          <div class="tree-line"><span class="k">apiVersion</span><span class="v">dapr.io/v1alpha1</span></div>
-          <div class="tree-line"><span class="k">kind</span><span class="v">Agent</span></div>
-          <div class="tree-line"><span class="k">actor</span><span class="v">agent-{{ a.id }}　（一个 Agent 一个 actor，同一时刻只跑一轮）</span></div>
-          <div class="tree-line"><span class="k">model</span><span class="v">{{ a.model }}</span></div>
-          <div class="tree-line"><span class="k">harness</span><span class="v">dsh · session 续跑，超时 900s</span></div>
-          <div class="tree-line"><span class="k">tools</span><span class="v">{{ (a.tools || []).join(' · ') }}</span></div>
-          <div class="tree-line"><span class="k">workflow</span><span class="v">agent-lifecycle（方案→原型→构建→验证→发布）</span></div>
-          <div class="tree-line"><span class="k">state</span><span class="v">statestore · key=session/{actorId}</span></div>
-          <div class="tree-line"><span class="k">digest</span><span class="v">{{ a.digest }}</span></div>
+        <div class="ch"><span v-html="icon('cpu')" /><h3>构建 · 编排摘要</h3><span class="spacer" />
+          <span class="mono small" style="color: var(--info)">digest {{ a.digest }}</span>
+          <button class="btn small" style="margin-left: 8px" @click="goStudio"><span v-html="icon('git', 11)" /> 去编排页</button>
         </div>
-        <div class="small muted" style="margin-top: 8px">构建产物不是一个进程，是一份声明 + 一个 actor 类型。改工具或改提示词都会换 digest。</div>
+        <div class="tree-box" style="font-size: 11px">
+          <div class="tree-line"><span class="k">flow</span><span class="v">{{ stats.nodes }} 节点 · {{ stats.edges }} 条边</span></div>
+          <div class="tree-line"><span class="k">llm</span><span class="v">{{ stats.llm }} 个模型节点</span></div>
+          <div class="tree-line"><span class="k">tools</span><span class="v">{{ (a.tools || []).join(' · ') }}</span></div>
+          <div class="tree-line"><span class="k">actor</span><span class="v">agent-{{ a.id }}　（一个 Agent 一个 actor，同一时刻只跑一轮）</span></div>
+          <div class="tree-line"><span class="k">harness</span><span class="v">dsh · session 续跑，超时 900s</span></div>
+          <div class="tree-line"><span class="k">workflow</span><span class="v">agent-lifecycle（方案→原型→构建→验证→发布）</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="ch"><span v-html="icon('layers')" /><h3>节点一览</h3><span class="spacer" /><span class="small muted">编排的骨架；细节去编排页改</span></div>
+        <div class="row wrap" style="gap: 5px">
+          <span v-for="n in (a.flow && a.flow.nodes) || []" :key="n.id" class="achip">
+            <b :style="{ color: nodeType(n.t).col }">{{ n.n }}</b>
+            <span style="color: var(--tx-11); margin-left: 5px">{{ nodeType(n.t).n }}</span>
+          </span>
+        </div>
+        <div class="small muted" style="margin-top: 9px">构建产物不是一个进程，是一份编排 + 一个 actor 类型。改节点、改提示词、改工具都会换 digest。</div>
+      </div>
+      <div class="card">
+        <div class="ch"><span v-html="icon('lock')" /><h3>工具权限</h3><span class="spacer" /><span class="small muted">白名单之外一律拒绝</span></div>
+        <table class="tb">
+          <thead><tr><th style="width: 150px">工具</th><th>用在哪</th></tr></thead>
+          <tbody>
+            <tr v-for="u in wiring" :key="u.tool">
+              <td class="mono small" style="color: var(--info)">{{ u.tool }}</td>
+              <td class="small muted">
+                <span v-if="u.wired">接到 {{ u.nodes.join(' / ') }}</span>
+                <span v-else style="color: var(--warn)">白名单给了，流程里没接线</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </template>
 
     <template v-else-if="tab === '3'">
-      <div class="ev-metrics">
-        <div class="ev-m"><div class="ev-k">通过率</div><div class="ev-v">{{ cur ? evPct(evRate(cur)) : '—' }}</div><div class="ev-s">本轮</div></div>
-        <div class="ev-m"><div class="ev-k">用例</div><div class="ev-v">{{ a.eval[0] }}/{{ a.eval[1] }}</div><div class="ev-s">通过 / 总数</div></div>
-        <div class="ev-m"><div class="ev-k">总成本</div><div class="ev-v" style="color: var(--warn)">{{ (cur && cur.cost) || '—' }}</div><div class="ev-s">本轮累计</div></div>
-        <div class="ev-m"><div class="ev-k">P95</div><div class="ev-v">{{ (cur && cur.p95) || '—' }}</div><div class="ev-s">P50 {{ (cur && cur.p50) || '—' }}</div></div>
-        <div class="ev-m"><div class="ev-k">基线</div><div class="ev-v">v{{ (base && base.ver) || '—' }}</div><div class="ev-s">对比对象</div></div>
-      </div>
-      <div class="card">
-        <div class="ch"><span v-html="icon('check')" /><h3>评测集</h3><span class="spacer" /><span class="tag" :class="a.eval[0] === a.eval[1] ? 't-ok' : 't-warn'">{{ a.eval[0] }}/{{ a.eval[1] }} 通过</span></div>
-        <table class="tb">
-          <thead><tr><th>用例</th><th style="width: 150px">期望</th><th style="width: 46px">结果</th><th style="width: 58px">耗时</th><th style="width: 54px">token</th></tr></thead>
-          <tbody>
-            <tr v-for="(c, i) in a.cases" :key="i">
-              <td class="small">{{ c.v }}</td>
-              <td class="small muted">{{ c.exp }}</td>
-              <td><span class="ev-score" :style="'color:' + (c.score >= 0.9 ? 'var(--ok)' : c.score >= 0.7 ? 'var(--warn)' : 'var(--err)')">{{ c.score.toFixed(2) }}</span></td>
-              <td class="mono small muted">{{ c.ms }}</td><td class="mono small muted">{{ c.tok }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="small muted" style="margin-top: 8px">评测集是带期望输出的固定用例；不过的用例挂在回执里，改完要重跑；通过率一旦比上一版低，就不许发布。</div>
-      </div>
+      <EvalWorkbench :agent="a" />
+      <KbAccuracy :agent="a" :kb="a && a.kb" />
     </template>
 
     <template v-else>

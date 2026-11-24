@@ -79,6 +79,40 @@ export const api = {
       body: JSON.stringify({ pct }),
     }),
   agentRollback: (id) => request('/api/agents/' + encodeURIComponent(id) + '/rollback', { method: 'POST' }),
+
+  // v2.6：编排工作台。保存编排 → digest 变；构建 → 换版本号；
+  // 试跑 → 记录一轮；沉淀 → 进评测集。
+  agentFlow: (id, flow) =>
+    request('/api/agents/' + encodeURIComponent(id) + '/flow', {
+      method: 'PUT',
+      body: JSON.stringify({ flow }),
+    }),
+  agentBuild: (id) => request('/api/agents/' + encodeURIComponent(id) + '/build', { method: 'POST' }),
+  agentTrial: (id, body) =>
+    request('/api/agents/' + encodeURIComponent(id) + '/trial', {
+      method: 'POST',
+      body: JSON.stringify(body || {}),
+    }),
+  agentCase: (id, cse) =>
+    request('/api/agents/' + encodeURIComponent(id) + '/cases', {
+      method: 'POST',
+      body: JSON.stringify(cse || {}),
+    }),
+  kbDispatch: (id, idx) =>
+    request('/api/agents/' + encodeURIComponent(id) + '/kb/' + idx + '/dispatch', { method: 'POST' }),
+
+  // v2.5：真人验收台
+  checkDecide: (id, body, pbc) =>
+    request('/api/checks/' + encodeURIComponent(id) + '/decide' + q(pbc), {
+      method: 'POST',
+      body: JSON.stringify(body || {}),
+    }),
+  verifyChat: (unit, text) =>
+    request('/api/units/' + encodeURIComponent(unit) + '/chat', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
   addAnnotation: (body) => request('/api/annotations', { method: 'POST', body: JSON.stringify(body) }),
   saveDraft: (pbc, body) =>
     request('/api/artifacts' + q(pbc), { method: 'POST', body: JSON.stringify(body) }),

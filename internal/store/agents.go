@@ -90,6 +90,20 @@ func ProjectUnits(facts []Fact) (*UnitsView, error) {
 			}
 			seen[p.ID] = true
 			v.Units = append(v.Units, u)
+
+		case FactUnitRemoved:
+			var p struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(f.Payload, &p); err != nil {
+				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
+			}
+			for i := range v.Units {
+				if v.Units[i].ID == p.ID {
+					v.Units = append(v.Units[:i], v.Units[i+1:]...)
+					break
+				}
+			}
 		}
 	}
 	return v, nil
@@ -145,6 +159,14 @@ func ProjectAgents(facts []Fact) (*AgentsView, error) {
 			if a.ID == "" {
 				return nil, fmt.Errorf("agent 事缺少 id")
 			}
+			// 定义升级（例如原型 v2.6 换了编排）只覆盖定义本身，
+			// 不抹掉已经发生的发布/灰度/构建：那些是事件，不是配置。
+			if old := v.Agents[a.ID]; old != nil {
+				a.Published, a.Rollout, a.RollbackTo = old.Published, old.Rollout, old.RollbackTo
+				if a.BuiltDigest == "" {
+					a.BuiltDigest = old.BuiltDigest
+				}
+			}
 			a.EnsureDigest()
 			if _, ok := v.Agents[a.ID]; !ok {
 				v.Order = append(v.Order, a.ID)
@@ -168,7 +190,9 @@ func ProjectAgents(facts []Fact) (*AgentsView, error) {
 			if p.Run.Total > 0 {
 				a.Eval = [2]int{p.Run.Pass, p.Run.Total}
 			}
-			if p.Run.Ver != "" {
+			// 版本只前进不后退：构建定版本，评测只报告「评的是哪一版」。
+			// 拿旧版本的评测结果回来，不该把刚构建出来的版本号退回去。
+			if p.Run.Ver != "" && verNewer(p.Run.Ver, a.Ver) {
 				a.Ver = p.Run.Ver
 			}
 			a.EnsureDigest()
@@ -233,9 +257,115 @@ func ProjectAgents(facts []Fact) (*AgentsView, error) {
 					a.Runs[i].Base = a.Runs[i].ID == p.RunID
 				}
 			}
+
+		case FactAgentFlowSaved:
+			var p struct {
+				AgentID string       `json:"agentId"`
+				Flow    *domain.Flow `json:"flow"`
+			}
+			if err := json.Unmarshal(f.Payload, &p); err != nil {
+				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
+			}
+			if a := v.Agents[p.AgentID]; a != nil && p.Flow != nil {
+				// 编排进定义，digest 立即变；BuiltDigest 留在上一次构建上，
+				// 于是「改了没构建」这件事在闸门里是可见的。
+				a.Flow = p.Flow
+				a.EnsureDigest()
+			}
+
+		case FactAgentBuilt:
+			var p struct {
+				AgentID string `json:"agentId"`
+				Ver     string `json:"ver"`
+				Digest  string `json:"digest"`
+			}
+			if err := json.Unmarshal(f.Payload, &p); err != nil {
+				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
+			}
+			if a := v.Agents[p.AgentID]; a != nil {
+				if p.Ver != "" {
+					a.Ver = p.Ver
+				}
+				a.BuiltDigest = p.Digest
+				a.EnsureDigest()
+			}
+
+		case FactAgentTrial:
+			var p struct {
+				AgentID string        `json:"agentId"`
+				Trial   *domain.Trial `json:"trial"`
+				At      string        `json:"at"`
+				By      string        `json:"by"`
+			}
+			if err := json.Unmarshal(f.Payload, &p); err != nil {
+				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
+			}
+			if a := v.Agents[p.AgentID]; a != nil && p.Trial != nil {
+				a.TrialRun = p.Trial
+				a.TrialAt, a.TrialBy = p.At, p.By
+			}
+
+		case FactAgentCase:
+			var p struct {
+				AgentID string          `json:"agentId"`
+				Case    domain.EvalCase `json:"case"`
+			}
+			if err := json.Unmarshal(f.Payload, &p); err != nil {
+				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
+			}
+			if a := v.Agents[p.AgentID]; a != nil {
+				a.Cases = append(a.Cases, p.Case)
+				// 评测集变了，digest 也变：新用例必须先被评测过才算数。
+				a.EnsureDigest()
+			}
+
+		case FactKBIssue:
+			var p struct {
+				AgentID string `json:"agentId"`
+				Idx     int    `json:"idx"`
+			}
+			if err := json.Unmarshal(f.Payload, &p); err != nil {
+				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
+			}
+			if a := v.Agents[p.AgentID]; a != nil && a.KB != nil && p.Idx >= 0 && p.Idx < len(a.KB.Issues) {
+				a.KB.Issues[p.Idx].Dispatched = true
+			}
+
+		case FactAgentRetired:
+			// 撤下某个已发布的版本：流量归零、不再作为在跑版本。
+			var p struct {
+				AgentID string `json:"agentId"`
+			}
+			if err := json.Unmarshal(f.Payload, &p); err != nil {
+				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
+			}
+			if a := v.Agents[p.AgentID]; a != nil {
+				a.Published = false
+				a.Rollout = 0
+				a.RollbackTo = ""
+			}
 		}
 	}
 	return v, nil
 }
 
 func validRollout(p int) bool { return p == 10 || p == 50 || p == 100 }
+
+// verNewer 判断版本 a 是否比 b 新（major.minor.patch 逐段比）。
+// 无法解析时一律返回 false：宁可不动版本，也不要把版本号写坏。
+func verNewer(a, b string) bool {
+	var am, an, ap, bm, bn, bp int
+	if _, err := fmt.Sscanf(a, "%d.%d.%d", &am, &an, &ap); err != nil {
+		return false
+	}
+	if _, err := fmt.Sscanf(b, "%d.%d.%d", &bm, &bn, &bp); err != nil {
+		return false
+	}
+	if am != bm {
+		return am > bm
+	}
+	if an != bn {
+		return an > bn
+	}
+	return ap > bp
+}

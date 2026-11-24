@@ -1,13 +1,6 @@
 [
  {
-  "id": "x-fe",
-  "n": "X-全栈工程师",
-  "role": "开发_worker",
-  "spe": "代码生成 / 修 bug / 单元测试",
-  "task": "T-012 支付回调与幂等",
   "ver": "1.4.2",
-  "model": "deepseek-v3 · DSH",
-  "cost": "¥0.42/次",
   "st": [
    "done",
    "done",
@@ -19,6 +12,8 @@
    46,
    50
   ],
+  "cost": "¥0.42/次",
+  "model": "deepseek-v3 · DSH",
   "tools": [
    "repo.read",
    "repo.write",
@@ -163,17 +158,177 @@
     "tok": "2.2k",
     "why": "去重键与账务流水一致，重放三次只产生一条"
    }
-  ]
+  ],
+  "id": "x-fe",
+  "n": "X-全栈工程师",
+  "role": "开发_worker",
+  "spe": "代码生成 / 修 bug / 单元测试",
+  "task": "T-012 支付回调与幂等",
+  "flow": {
+   "nodes": [
+    {
+     "id": "n1",
+     "n": "任务进入",
+     "t": "start",
+     "c": 0,
+     "r": 1,
+     "sub": "由 backlog 派",
+     "ms": 0,
+     "tok": 0,
+     "cfg": {
+      "vars": [
+       [
+        "taskId",
+        "string",
+        "必填",
+        "调度器"
+       ],
+       [
+        "payload",
+        "object",
+        "选填",
+        "上游制品"
+       ]
+      ]
+     }
+    },
+    {
+     "id": "n2",
+     "n": "取上下文",
+     "t": "tool",
+     "c": 1,
+     "r": 1,
+     "sub": "repo.read · 只读",
+     "ms": 620,
+     "tok": 410,
+     "cfg": {
+      "tool": "repo.read",
+      "tools": [
+       "repo.read",
+       "repo.write",
+       "shell.exec",
+       "test.run",
+       "git.commit"
+      ],
+      "in": "payload → 上游制品正文",
+      "approve": "不需要（只读）"
+     }
+    },
+    {
+     "id": "n3",
+     "n": "检索",
+     "t": "kb",
+     "c": 2,
+     "r": 1,
+     "sub": "按 KB 配置",
+     "ms": 740,
+     "tok": 520,
+     "cfg": {
+      "out": "chunks[]（带出处）"
+     }
+    },
+    {
+     "id": "n4",
+     "n": "生成",
+     "t": "llm",
+     "c": 3,
+     "r": 1,
+     "sub": "按方案提示词",
+     "ms": 2400,
+     "tok": 1600,
+     "cfg": {
+      "temp": 0.2,
+      "out": "result{}",
+      "prompt": "（这个节点用方案阶段定稿的系统提示词，没有单独覆写。）"
+     }
+    },
+    {
+     "id": "n5",
+     "n": "输出",
+     "t": "end",
+     "c": 4,
+     "r": 1,
+     "sub": "写回制品 / 通知",
+     "ms": 120,
+     "tok": 60,
+     "cfg": {
+      "outs": [
+       [
+        "taskId",
+        "继承"
+       ],
+       [
+        "result",
+        "n4"
+       ]
+      ]
+     }
+    }
+   ],
+   "edges": [
+    [
+     "n1",
+     "n2",
+     ""
+    ],
+    [
+     "n2",
+     "n3",
+     ""
+    ],
+    [
+     "n3",
+     "n4",
+     ""
+    ],
+    [
+     "n4",
+     "n5",
+     ""
+    ]
+   ]
+  },
+  "kb": {
+   "libs": [
+    {
+     "n": "技术规范库",
+     "docs": 64,
+     "v": "2026.10.28",
+     "sync": "手动",
+     "owner": "技术"
+    },
+    {
+     "n": "历史缺陷库",
+     "docs": 310,
+     "v": "2026.11.4",
+     "sync": "T+1",
+     "owner": "技术"
+    }
+   ],
+   "topK": 4,
+   "thr": 0.7,
+   "rerank": false,
+   "recall": 0.93,
+   "mrr": 0.86,
+   "faithful": 0.94,
+   "cite": 0.96,
+   "attr": {
+    "notFound": 2,
+    "wrongGen": 2
+   },
+   "issues": []
+  },
+  "trial": {
+   "in": "taskId = T-20261124-0031\npayload = tree.at 1.0.2",
+   "out": [
+    "产出 1 份结果，已写回制品树",
+    "耗时 3.9s · 2.6k token"
+   ],
+   "raw": "{\n  \"status\": \"ok\",\n  \"artifacts\": [\"result.json\"]\n}"
+  }
  },
  {
-  "id": "x-qa",
-  "n": "X-测试工程师",
-  "role": "测试_worker",
-  "spe": "BDD 验收 / 测试报告 / 还原对比",
-  "task": "6 条验收清单执行",
   "ver": "1.3.0",
-  "model": "deepseek-v3 · DSH",
-  "cost": "¥0.11/次",
   "st": [
    "done",
    "done",
@@ -185,6 +340,8 @@
    61,
    64
   ],
+  "cost": "¥0.11/次",
+  "model": "deepseek-v3 · DSH",
   "tools": [
    "test.run",
    "proto.screenshot",
@@ -317,17 +474,221 @@
     "tok": "2.6k",
     "why": "状态与 URL 同步，刷新后保持"
    }
-  ]
+  ],
+  "id": "x-qa",
+  "n": "X-测试工程师",
+  "role": "测试_worker",
+  "spe": "BDD 验收 / 测试报告 / 还原对比",
+  "task": "6 条验收清单执行",
+  "flow": {
+   "nodes": [
+    {
+     "id": "n1",
+     "n": "阶段进入",
+     "t": "start",
+     "c": 0,
+     "r": 1,
+     "sub": "commit 1.0.3",
+     "ms": 0,
+     "tok": 0,
+     "cfg": {
+      "vars": [
+       [
+        "commit",
+        "string",
+        "必填",
+        "构建完成"
+       ],
+       [
+        "atVersion",
+        "string",
+        "必填",
+        "tree.at"
+       ],
+       [
+        "env",
+        "string",
+        "必填",
+        "test"
+       ]
+      ]
+     }
+    },
+    {
+     "id": "n2",
+     "n": "执行用例",
+     "t": "tool",
+     "c": 1,
+     "r": 1,
+     "sub": "test.run · 6 条",
+     "ms": 38200,
+     "tok": 6120,
+     "cfg": {
+      "tool": "test.run",
+      "in": "atVersion → 6 条 Given/When/Then，逐条跑",
+      "approve": "不需要（只读执行）"
+     }
+    },
+    {
+     "id": "n3",
+     "n": "截运行态",
+     "t": "tool",
+     "c": 2,
+     "r": 1,
+     "sub": "proto.screenshot",
+     "ms": 2400,
+     "tok": 320,
+     "cfg": {
+      "tool": "proto.screenshot",
+      "in": "env=test → 三屏 6 张，含空态与错误态",
+      "approve": "不需要（只读）"
+     }
+    },
+    {
+     "id": "n4",
+     "n": "差异比对",
+     "t": "tool",
+     "c": 3,
+     "r": 1,
+     "sub": "diff.compare",
+     "ms": 1630,
+     "tok": 980,
+     "cfg": {
+      "tool": "diff.compare",
+      "in": "运行态截图 vs tree.proto → 逐项差异",
+      "approve": "不需要（只读）"
+     }
+    },
+    {
+     "id": "n5",
+     "n": "出测试报告",
+     "t": "tool",
+     "c": 4,
+     "r": 1,
+     "sub": "report.write",
+     "ms": 410,
+     "tok": 340,
+     "cfg": {
+      "tool": "report.write",
+      "in": "用例结果 + 差异坐标 → 报告，绑代码版本",
+      "approve": "不需要（写自有库）"
+     }
+    },
+    {
+     "id": "n6",
+     "n": "回执入库",
+     "t": "end",
+     "c": 5,
+     "r": 1,
+     "sub": "进验证阶段待办",
+     "ms": 0,
+     "tok": 0,
+     "cfg": {
+      "outs": [
+       [
+        "commit",
+        "继承"
+       ],
+       [
+        "passRate",
+        "n2"
+       ],
+       [
+        "diffs",
+        "n4"
+       ],
+       [
+        "reportUrl",
+        "n5"
+       ]
+      ]
+     }
+    }
+   ],
+   "edges": [
+    [
+     "n1",
+     "n2",
+     ""
+    ],
+    [
+     "n2",
+     "n3",
+     ""
+    ],
+    [
+     "n3",
+     "n4",
+     ""
+    ],
+    [
+     "n4",
+     "n5",
+     ""
+    ],
+    [
+     "n5",
+     "n6",
+     ""
+    ]
+   ]
+  },
+  "kb": {
+   "libs": [
+    {
+     "n": "验收用例库",
+     "docs": 286,
+     "v": "2026.11.2",
+     "sync": "T+1",
+     "owner": "测试"
+    },
+    {
+     "n": "历史缺陷库",
+     "docs": 310,
+     "v": "2026.11.4",
+     "sync": "T+1",
+     "owner": "技术"
+    },
+    {
+     "n": "技术规范库",
+     "docs": 64,
+     "v": "2026.10.28",
+     "sync": "手动",
+     "owner": "技术"
+    }
+   ],
+   "topK": 4,
+   "thr": 0.7,
+   "rerank": false,
+   "recall": 0.93,
+   "mrr": 0.86,
+   "faithful": 0.94,
+   "cite": 0.96,
+   "attr": {
+    "notFound": 2,
+    "wrongGen": 1
+   },
+   "issues": [
+    {
+     "n": "空态用例缺示例",
+     "c": 1,
+     "ex": "用例库里没有「列表为空」的样例，Agent 不会主动覆盖"
+    }
+   ]
+  },
+  "trial": {
+   "in": "commit    = 1.0.3\natVersion = 1.0.2\nenv       = test",
+   "out": [
+    "6 条用例：5 过 1 不过（空态无引导）",
+    "差异 2 处：批量按钮缺失、金额格式不一致",
+    "产物：测试报告已绑 commit 1.0.3",
+    "耗时 42.6s · 7.8k token"
+   ],
+   "raw": "{\n  \"pass\": 5, \"total\": 6,\n  \"failed\": [\"空状态无引导文案\"],\n  \"diffs\": [\"批量按钮缺失\", \"金额格式不一致\"],\n  \"report\": \"rpt-1.0.3-42f1\"\n}"
+  }
  },
  {
-  "id": "x-ui",
-  "n": "X-UI设计师",
-  "role": "原型_worker",
-  "spe": "原型生成 / 按批注重生成",
-  "task": "等待 PA 原型确认",
   "ver": "1.1.6",
-  "model": "deepseek-v3 · DSH",
-  "cost": "¥0.28/次",
   "st": [
    "done",
    "done",
@@ -339,6 +700,8 @@
    12,
    14
   ],
+  "cost": "¥0.28/次",
+  "model": "deepseek-v3 · DSH",
   "tools": [
    "proto.read",
    "proto.write",
@@ -443,17 +806,175 @@
     "tok": "1.4k",
     "why": "没有空态设计，与批注第 2 条冲突"
    }
-  ]
+  ],
+  "id": "x-ui",
+  "n": "X-UI设计师",
+  "role": "原型_worker",
+  "spe": "原型生成 / 按批注重生成",
+  "task": "等待 PA 原型确认",
+  "flow": {
+   "nodes": [
+    {
+     "id": "n1",
+     "n": "任务进入",
+     "t": "start",
+     "c": 0,
+     "r": 1,
+     "sub": "由 backlog 派",
+     "ms": 0,
+     "tok": 0,
+     "cfg": {
+      "vars": [
+       [
+        "taskId",
+        "string",
+        "必填",
+        "调度器"
+       ],
+       [
+        "payload",
+        "object",
+        "选填",
+        "上游制品"
+       ]
+      ]
+     }
+    },
+    {
+     "id": "n2",
+     "n": "取上下文",
+     "t": "tool",
+     "c": 1,
+     "r": 1,
+     "sub": "proto.read · 只读",
+     "ms": 620,
+     "tok": 410,
+     "cfg": {
+      "tool": "proto.read",
+      "tools": [
+       "proto.read",
+       "proto.write",
+       "style.token",
+       "asset.pick"
+      ],
+      "in": "payload → 上游制品正文",
+      "approve": "不需要（只读）"
+     }
+    },
+    {
+     "id": "n3",
+     "n": "检索",
+     "t": "kb",
+     "c": 2,
+     "r": 1,
+     "sub": "按 KB 配置",
+     "ms": 740,
+     "tok": 520,
+     "cfg": {
+      "out": "chunks[]（带出处）"
+     }
+    },
+    {
+     "id": "n4",
+     "n": "生成",
+     "t": "llm",
+     "c": 3,
+     "r": 1,
+     "sub": "按方案提示词",
+     "ms": 2400,
+     "tok": 1600,
+     "cfg": {
+      "temp": 0.2,
+      "out": "result{}",
+      "prompt": "（这个节点用方案阶段定稿的系统提示词，没有单独覆写。）"
+     }
+    },
+    {
+     "id": "n5",
+     "n": "输出",
+     "t": "end",
+     "c": 4,
+     "r": 1,
+     "sub": "写回制品 / 通知",
+     "ms": 120,
+     "tok": 60,
+     "cfg": {
+      "outs": [
+       [
+        "taskId",
+        "继承"
+       ],
+       [
+        "result",
+        "n4"
+       ]
+      ]
+     }
+    }
+   ],
+   "edges": [
+    [
+     "n1",
+     "n2",
+     ""
+    ],
+    [
+     "n2",
+     "n3",
+     ""
+    ],
+    [
+     "n3",
+     "n4",
+     ""
+    ],
+    [
+     "n4",
+     "n5",
+     ""
+    ]
+   ]
+  },
+  "kb": {
+   "libs": [
+    {
+     "n": "组件库文档",
+     "docs": 158,
+     "v": "2026.11.2",
+     "sync": "T+1",
+     "owner": "设计"
+    }
+   ],
+   "topK": 3,
+   "thr": 0.68,
+   "rerank": false,
+   "recall": 0.95,
+   "mrr": 0.88,
+   "faithful": 0.93,
+   "cite": 0.95,
+   "attr": {
+    "notFound": 1,
+    "wrongGen": 1
+   },
+   "issues": [
+    {
+     "n": "空态组件文档缺示例",
+     "c": 1,
+     "ex": "只有 API 说明，没有推荐用法，模型不会主动用"
+    }
+   ]
+  },
+  "trial": {
+   "in": "taskId = T-20261124-0031\npayload = tree.at 1.0.2",
+   "out": [
+    "产出 1 份结果，已写回制品树",
+    "耗时 3.9s · 2.6k token"
+   ],
+   "raw": "{\n  \"status\": \"ok\",\n  \"artifacts\": [\"result.json\"]\n}"
+  }
  },
  {
-  "id": "x-ops",
-  "n": "X-运维工程师",
-  "role": "交付_worker",
-  "spe": "镜像构建 / 部署 / 健康检查",
-  "task": "等待 tag 交付",
   "ver": "1.2.1",
-  "model": "deepseek-v3 · DSH",
-  "cost": "¥0.06/次",
   "st": [
    "done",
    "done",
@@ -465,6 +986,8 @@
    18,
    18
   ],
+  "cost": "¥0.06/次",
+  "model": "deepseek-v3 · DSH",
   "tools": [
    "image.build",
    "k8s.apply",
@@ -558,17 +1081,169 @@
     "tok": "1.2k",
     "why": "回滚脚本执行 2 分 12 秒，服务恢复"
    }
-  ]
+  ],
+  "id": "x-ops",
+  "n": "X-运维工程师",
+  "role": "交付_worker",
+  "spe": "镜像构建 / 部署 / 健康检查",
+  "task": "等待 tag 交付",
+  "flow": {
+   "nodes": [
+    {
+     "id": "n1",
+     "n": "任务进入",
+     "t": "start",
+     "c": 0,
+     "r": 1,
+     "sub": "由 backlog 派",
+     "ms": 0,
+     "tok": 0,
+     "cfg": {
+      "vars": [
+       [
+        "taskId",
+        "string",
+        "必填",
+        "调度器"
+       ],
+       [
+        "payload",
+        "object",
+        "选填",
+        "上游制品"
+       ]
+      ]
+     }
+    },
+    {
+     "id": "n2",
+     "n": "取上下文",
+     "t": "tool",
+     "c": 1,
+     "r": 1,
+     "sub": "image.build · 只读",
+     "ms": 620,
+     "tok": 410,
+     "cfg": {
+      "tool": "image.build",
+      "tools": [
+       "image.build",
+       "k8s.apply",
+       "health.check",
+       "rollback"
+      ],
+      "in": "payload → 上游制品正文",
+      "approve": "不需要（只读）"
+     }
+    },
+    {
+     "id": "n3",
+     "n": "检索",
+     "t": "kb",
+     "c": 2,
+     "r": 1,
+     "sub": "按 KB 配置",
+     "ms": 740,
+     "tok": 520,
+     "cfg": {
+      "out": "chunks[]（带出处）"
+     }
+    },
+    {
+     "id": "n4",
+     "n": "生成",
+     "t": "llm",
+     "c": 3,
+     "r": 1,
+     "sub": "按方案提示词",
+     "ms": 2400,
+     "tok": 1600,
+     "cfg": {
+      "temp": 0.2,
+      "out": "result{}",
+      "prompt": "（这个节点用方案阶段定稿的系统提示词，没有单独覆写。）"
+     }
+    },
+    {
+     "id": "n5",
+     "n": "输出",
+     "t": "end",
+     "c": 4,
+     "r": 1,
+     "sub": "写回制品 / 通知",
+     "ms": 120,
+     "tok": 60,
+     "cfg": {
+      "outs": [
+       [
+        "taskId",
+        "继承"
+       ],
+       [
+        "result",
+        "n4"
+       ]
+      ]
+     }
+    }
+   ],
+   "edges": [
+    [
+     "n1",
+     "n2",
+     ""
+    ],
+    [
+     "n2",
+     "n3",
+     ""
+    ],
+    [
+     "n3",
+     "n4",
+     ""
+    ],
+    [
+     "n4",
+     "n5",
+     ""
+    ]
+   ]
+  },
+  "kb": {
+   "libs": [
+    {
+     "n": "运维手册",
+     "docs": 52,
+     "v": "2026.11.1",
+     "sync": "手动",
+     "owner": "技术"
+    }
+   ],
+   "topK": 4,
+   "thr": 0.7,
+   "rerank": false,
+   "recall": 0.97,
+   "mrr": 0.92,
+   "faithful": 0.96,
+   "cite": 0.97,
+   "attr": {
+    "notFound": 0,
+    "wrongGen": 0
+   },
+   "issues": []
+  },
+  "trial": {
+   "in": "taskId = T-20261124-0031\npayload = tree.at 1.0.2",
+   "out": [
+    "产出 1 份结果，已写回制品树",
+    "耗时 3.9s · 2.6k token"
+   ],
+   "raw": "{\n  \"status\": \"ok\",\n  \"artifacts\": [\"result.json\"]\n}"
+  }
  },
  {
-  "id": "x-ba",
-  "n": "X-业务分析员",
-  "role": "业务_worker",
-  "spe": "BRD 续写 / backlog 拆解建议",
-  "task": "BRD §4 账期规则续写",
   "ver": "1.0.9",
-  "model": "deepseek-v3 · DSH",
-  "cost": "¥0.19/次",
   "st": [
    "done",
    "done",
@@ -580,6 +1255,8 @@
    23,
    26
   ],
+  "cost": "¥0.19/次",
+  "model": "deepseek-v3 · DSH",
   "tools": [
    "doc.read",
    "doc.write",
@@ -684,17 +1361,606 @@
     "tok": "1.2k",
     "why": "只落草稿，没有越过 BA 提交"
    }
-  ]
+  ],
+  "id": "x-ba",
+  "n": "X-业务分析员",
+  "role": "业务_worker",
+  "spe": "BRD 续写 / backlog 拆解建议",
+  "task": "BRD §4 账期规则续写",
+  "flow": {
+   "nodes": [
+    {
+     "id": "n1",
+     "n": "任务进入",
+     "t": "start",
+     "c": 0,
+     "r": 1,
+     "sub": "由 backlog 派",
+     "ms": 0,
+     "tok": 0,
+     "cfg": {
+      "vars": [
+       [
+        "taskId",
+        "string",
+        "必填",
+        "调度器"
+       ],
+       [
+        "payload",
+        "object",
+        "选填",
+        "上游制品"
+       ]
+      ]
+     }
+    },
+    {
+     "id": "n2",
+     "n": "取上下文",
+     "t": "tool",
+     "c": 1,
+     "r": 1,
+     "sub": "doc.read · 只读",
+     "ms": 620,
+     "tok": 410,
+     "cfg": {
+      "tool": "doc.read",
+      "tools": [
+       "doc.read",
+       "doc.write",
+       "brd.outline",
+       "backlog.split"
+      ],
+      "in": "payload → 上游制品正文",
+      "approve": "不需要（只读）"
+     }
+    },
+    {
+     "id": "n3",
+     "n": "检索",
+     "t": "kb",
+     "c": 2,
+     "r": 1,
+     "sub": "按 KB 配置",
+     "ms": 740,
+     "tok": 520,
+     "cfg": {
+      "out": "chunks[]（带出处）"
+     }
+    },
+    {
+     "id": "n4",
+     "n": "生成",
+     "t": "llm",
+     "c": 3,
+     "r": 1,
+     "sub": "按方案提示词",
+     "ms": 2400,
+     "tok": 1600,
+     "cfg": {
+      "temp": 0.2,
+      "out": "result{}",
+      "prompt": "（这个节点用方案阶段定稿的系统提示词，没有单独覆写。）"
+     }
+    },
+    {
+     "id": "n5",
+     "n": "输出",
+     "t": "end",
+     "c": 4,
+     "r": 1,
+     "sub": "写回制品 / 通知",
+     "ms": 120,
+     "tok": 60,
+     "cfg": {
+      "outs": [
+       [
+        "taskId",
+        "继承"
+       ],
+       [
+        "result",
+        "n4"
+       ]
+      ]
+     }
+    }
+   ],
+   "edges": [
+    [
+     "n1",
+     "n2",
+     ""
+    ],
+    [
+     "n2",
+     "n3",
+     ""
+    ],
+    [
+     "n3",
+     "n4",
+     ""
+    ],
+    [
+     "n4",
+     "n5",
+     ""
+    ]
+   ]
+  },
+  "kb": {
+   "libs": [
+    {
+     "n": "业务术语表",
+     "docs": 96,
+     "v": "2026.10.30",
+     "sync": "手动",
+     "owner": "业务"
+    },
+    {
+     "n": "历史 BRD",
+     "docs": 44,
+     "v": "2026.11.3",
+     "sync": "T+1",
+     "owner": "业务"
+    }
+   ],
+   "topK": 5,
+   "thr": 0.71,
+   "rerank": true,
+   "recall": 0.87,
+   "mrr": 0.79,
+   "faithful": 0.9,
+   "cite": 0.92,
+   "attr": {
+    "notFound": 2,
+    "wrongGen": 1
+   },
+   "issues": [
+    {
+     "n": "「账期」一词在两份文档里定义不同",
+     "c": 1,
+     "ex": "术语表按自然月，历史 BRD 里有按账单日"
+    }
+   ]
+  },
+  "trial": {
+   "in": "taskId = T-20261124-0031\npayload = tree.at 1.0.2",
+   "out": [
+    "产出 1 份结果，已写回制品树",
+    "耗时 3.9s · 2.6k token"
+   ],
+   "raw": "{\n  \"status\": \"ok\",\n  \"artifacts\": [\"result.json\"]\n}"
+  }
  },
  {
-  "id": "x-dun",
-  "n": "X-催缴专员",
-  "role": "业务_worker",
-  "spe": "逾期分层 / 催缴话术草稿",
-  "task": "智能催缴 · 分层话术 v0.9",
-  "ver": "0.9.3",
+  "ver": "1.2.0",
+  "st": [
+   "done",
+   "done",
+   "done",
+   "done",
+   "doing"
+  ],
+  "eval": [
+   61,
+   64
+  ],
+  "cost": "¥0.09/次",
   "model": "deepseek-v3 · DSH",
-  "cost": "¥0.16/次",
+  "tools": [
+   "session.read",
+   "order.read",
+   "report.write",
+   "guard.check"
+  ],
+  "prompt": "你是质检员。读会话原文与检索到的口径，逐条判断：是否承诺疗效、是否用绝对化用语、说的与口径是否一致、客户负面情绪有没有被接住。\n只出判定与证据（引用哪条规则、原话在哪），不做处罚决定。出现医疗承诺、退费纠纷、投诉升级，一律转人工。",
+  "runs": [
+   {
+    "id": "exp-0418",
+    "at": "11-23 21:10",
+    "ver": "1.2.0",
+    "pass": 61,
+    "total": 64,
+    "cost": "¥5.76",
+    "p50": "5.2s",
+    "p95": "9.8s",
+    "tok": "56.8k"
+   },
+   {
+    "id": "exp-0413",
+    "at": "11-22 20:30",
+    "ver": "1.1.6",
+    "pass": 60,
+    "total": 64,
+    "cost": "¥5.61",
+    "p50": "5.0s",
+    "p95": "9.4s",
+    "tok": "55.2k",
+    "base": true
+   },
+   {
+    "id": "exp-0407",
+    "at": "11-21 19:15",
+    "ver": "1.1.2",
+    "pass": 58,
+    "total": 64,
+    "cost": "¥5.40",
+    "p50": "4.9s",
+    "p95": "9.1s",
+    "tok": "53.6k"
+   }
+  ],
+  "fails": [
+   {
+    "n": "擦边承诺漏判",
+    "c": 2,
+    "ex": "「可以帮您申请减免」属擦边承诺，未命中 R-07"
+   },
+   {
+    "n": "口径引用旧版本",
+    "c": 1,
+    "ex": "引用了 2026.06 价目表，与现行口径不一致"
+   }
+  ],
+  "trace": [
+   {
+    "n": "读会话",
+    "d": "session.read · 12 轮对话",
+    "ms": 840,
+    "tok": 620
+   },
+   {
+    "n": "检索口径",
+    "d": "3 库 · 命中 5 段",
+    "ms": 1240,
+    "tok": 820
+   },
+   {
+    "n": "合规判定",
+    "d": "逐条比对 R-03 / R-07 / R-11",
+    "ms": 3260,
+    "tok": 1420
+   },
+   {
+    "n": "出报告",
+    "d": "report.write · 绑定会话与版本",
+    "ms": 410,
+    "tok": 340
+   }
+  ],
+  "cases": [
+   {
+    "v": "承诺疗效",
+    "in": "「保证三个月见效，无效退款」",
+    "out": "risk=high · 命中 R-03 承诺疗效",
+    "exp": "判 high 并引用原话",
+    "score": 0.94,
+    "ok": true,
+    "ms": "5.6s",
+    "tok": "1.8k",
+    "why": "原话引用准确，规则编号对"
+   },
+   {
+    "v": "绝对化用语",
+    "in": "「这是最安全的技术」",
+    "out": "risk=high · 命中 R-05 绝对化",
+    "exp": "判 high",
+    "score": 0.91,
+    "ok": true,
+    "ms": "4.8s",
+    "tok": "1.5k",
+    "why": "「最安全」属禁用词，判定正确"
+   },
+   {
+    "v": "报价与口径不一致",
+    "in": "客服报 3800，口径字典 4200",
+    "out": "risk=high · 命中 R-11 口径不一致",
+    "exp": "判 high 并给出正确价",
+    "score": 0.88,
+    "ok": true,
+    "ms": "6.1s",
+    "tok": "2.1k",
+    "why": "检索到现行价目，指出了差额"
+   },
+   {
+    "v": "客户情绪未接住",
+    "in": "客户说「我很担心」，客服直接报价",
+    "out": "risk=normal · 附情绪提示",
+    "exp": "标情绪风险但不判 high",
+    "score": 0.79,
+    "ok": true,
+    "ms": "5.2s",
+    "tok": "1.6k",
+    "why": "判定正确，但提示语偏模板化"
+   },
+   {
+    "v": "擦边承诺",
+    "in": "「可以帮您申请减免」",
+    "out": "risk=normal · 未命中",
+    "exp": "判 high（擦边承诺）",
+    "score": 0.38,
+    "ok": false,
+    "ms": "5.9s",
+    "tok": "1.9k",
+    "why": "R-07 要求在意图层判断，「申请」被当成流程词放过"
+   },
+   {
+    "v": "引用旧版口径",
+    "in": "客服说「按 6 月价目是 3800」",
+    "out": "risk=normal · 未命中",
+    "exp": "判 high（口径过期）",
+    "score": 0.31,
+    "ok": false,
+    "ms": "6.4s",
+    "tok": "2.0k",
+    "why": "检索到旧版文档片段，未校验文档版本"
+   },
+   {
+    "v": "正常会话",
+    "in": "确认项目、价格、到店时间，无承诺",
+    "out": "risk=normal · 无命中",
+    "exp": "判 normal",
+    "score": 0.96,
+    "ok": true,
+    "ms": "4.4s",
+    "tok": "1.3k",
+    "why": "无误报，证据为空时明确写 none"
+   }
+  ],
+  "id": "x-qc",
+  "n": "X-质检员",
+  "role": "质检_worker",
+  "spe": "会话质检 / 合规判定 / 质检报告",
+  "task": "待复核 5 条风险会话",
+  "flow": {
+   "nodes": [
+    {
+     "id": "n1",
+     "n": "会话进入",
+     "t": "start",
+     "c": 0,
+     "r": 1,
+     "sub": "badcase 回流 / 抽检",
+     "ms": 0,
+     "tok": 0,
+     "cfg": {
+      "vars": [
+       [
+        "sessionId",
+        "string",
+        "必填",
+        "调度器"
+       ],
+       [
+        "orderId",
+        "string",
+        "必填",
+        "会话元数据"
+       ],
+       [
+        "agentId",
+        "string",
+        "选填",
+        "会话元数据"
+       ]
+      ]
+     }
+    },
+    {
+     "id": "n2",
+     "n": "读会话",
+     "t": "tool",
+     "c": 1,
+     "r": 1,
+     "sub": "session.read",
+     "ms": 840,
+     "tok": 620,
+     "cfg": {
+      "tool": "session.read",
+      "tools": [
+       "session.read",
+       "order.read"
+      ],
+      "in": "sessionId → 会话原文 + 轮次；orderId → 订单与项目",
+      "approve": "不需要（只读）"
+     }
+    },
+    {
+     "id": "n3",
+     "n": "检索口径",
+     "t": "kb",
+     "c": 2,
+     "r": 1,
+     "sub": "3 库 · topK 5",
+     "ms": 1240,
+     "tok": 820,
+     "cfg": {
+      "out": "chunks[]（带出处与文档版本）"
+     }
+    },
+    {
+     "id": "n4",
+     "n": "合规判定",
+     "t": "llm",
+     "c": 3,
+     "r": 1,
+     "sub": "deepseek-v3 · t=0",
+     "ms": 3260,
+     "tok": 1420,
+     "cfg": {
+      "temp": 0,
+      "out": "verdict{risk, hits[]}",
+      "prompt": "你是质检员。读会话原文与检索到的口径，逐条检查：\n1) 是否出现承诺疗效、绝对化用语\n2) 说的与口径字典是否一致\n3) 客户负面情绪是否被接住\n\n输出 JSON：{\"risk\":\"high|normal\",\"hits\":[{\"rule\":\"R-03\",\"quote\":\"...\",\"why\":\"...\"}]}\n没有依据就写 unknown，不要猜。"
+     }
+    },
+    {
+     "id": "n5",
+     "n": "风险分级",
+     "t": "branch",
+     "c": 4,
+     "r": 1,
+     "sub": "risk == high ?",
+     "ms": 12,
+     "tok": 0,
+     "cfg": {
+      "pre": "先跑 guard.check：医疗承诺 / 疗效保证 / 退费承诺 三类红线",
+      "conds": [
+       [
+        "risk == \"high\"",
+        "转人工复核"
+       ],
+       [
+        "else",
+        "出报告入库"
+       ]
+      ]
+     }
+    },
+    {
+     "id": "n6",
+     "n": "转人工",
+     "t": "hitl",
+     "c": 5,
+     "r": 0,
+     "sub": "质检员 · 4h",
+     "ms": 0,
+     "tok": 0,
+     "cfg": {
+      "who": "质检员（人工）",
+      "timeout": "4 小时",
+      "onTimeout": "升级给质检组长，不出自动结论"
+     }
+    },
+    {
+     "id": "n7",
+     "n": "回执入库",
+     "t": "end",
+     "c": 5,
+     "r": 2,
+     "sub": "report.write + 流水",
+     "ms": 410,
+     "tok": 340,
+     "cfg": {
+      "tool": "report.write",
+      "outs": [
+       [
+        "sessionId",
+        "继承"
+       ],
+       [
+        "verdict",
+        "n4"
+       ],
+       [
+        "reportUrl",
+        "report.write"
+       ]
+      ]
+     }
+    }
+   ],
+   "edges": [
+    [
+     "n1",
+     "n2",
+     ""
+    ],
+    [
+     "n2",
+     "n3",
+     ""
+    ],
+    [
+     "n3",
+     "n4",
+     ""
+    ],
+    [
+     "n4",
+     "n5",
+     ""
+    ],
+    [
+     "n5",
+     "n6",
+     "high"
+    ],
+    [
+     "n5",
+     "n7",
+     "常规"
+    ],
+    [
+     "n6",
+     "n7",
+     ""
+    ]
+   ]
+  },
+  "kb": {
+   "libs": [
+    {
+     "n": "产品口径字典",
+     "docs": 412,
+     "v": "2026.11.1",
+     "sync": "T+1",
+     "owner": "市场"
+    },
+    {
+     "n": "医美合规规则库",
+     "docs": 86,
+     "v": "2026.10.20",
+     "sync": "手动",
+     "owner": "法务"
+    },
+    {
+     "n": "历史质检样本",
+     "docs": 1240,
+     "v": "2026.11.3",
+     "sync": "T+1",
+     "owner": "客服"
+    }
+   ],
+   "topK": 5,
+   "thr": 0.72,
+   "rerank": true,
+   "recall": 0.884,
+   "mrr": 0.81,
+   "faithful": 0.912,
+   "cite": 0.94,
+   "attr": {
+    "notFound": 2,
+    "wrongGen": 1
+   },
+   "issues": [
+    {
+     "n": "缺「热玛吉维持期」口径",
+     "c": 1,
+     "ex": "口径字典只有项目介绍，没有维持期区间，模型只能凭印象说"
+    },
+    {
+     "n": "价格口径过期",
+     "c": 1,
+     "ex": "2026.06 版价格未更新，与现行价目表不一致"
+    }
+   ]
+  },
+  "trial": {
+   "in": "sessionId = S-20261124-0912\norderId   = ORD-88213",
+   "out": [
+    "判定：风险高（high）",
+    "命中 1 条：R-03 承诺疗效",
+    "处置：转人工复核，未出自动结论",
+    "耗时 5.4s · 3.2k token"
+   ],
+   "raw": "{\n  \"risk\": \"high\",\n  \"hits\": [\n    {\"rule\":\"R-03\",\"quote\":\"保证三个月见效\",\"why\":\"承诺疗效，属禁用话术\"}\n  ],\n  \"next\": \"hitl\"\n}"
+  }
+ },
+ {
+  "ver": "0.9.3",
   "st": [
    "done",
    "done",
@@ -706,11 +1972,14 @@
    35,
    38
   ],
+  "cost": "¥0.16/次",
+  "model": "deepseek-v3 · DSH",
   "tools": [
-   "customer.read",
    "bill.read",
+   "customer.read",
    "strategy.read",
-   "msg.draft"
+   "msg.draft",
+   "guard.check"
   ],
   "prompt": "你按逾期天数与客户分层生成催缴话术草稿。只出草稿，不直接发送；出现减免、投诉、法务、起诉这类词，一律升级给人处理。",
   "runs": [
@@ -882,6 +2151,260 @@
     "tok": "680",
     "why": "查了支付状态，正确跳过"
    }
-  ]
+  ],
+  "id": "x-dun",
+  "n": "X-催缴专员",
+  "role": "业务_worker",
+  "spe": "逾期分层 / 催缴话术草稿",
+  "task": "智能催缴 · 分层话术 v0.9",
+  "flow": {
+   "nodes": [
+    {
+     "id": "n1",
+     "n": "派发任务",
+     "t": "start",
+     "c": 0,
+     "r": 1,
+     "sub": "策略引擎按天派",
+     "ms": 0,
+     "tok": 0,
+     "cfg": {
+      "vars": [
+       [
+        "taskId",
+        "string",
+        "必填",
+        "策略引擎"
+       ],
+       [
+        "customerId",
+        "string",
+        "必填",
+        "策略引擎"
+       ],
+       [
+        "attempt",
+        "int",
+        "必填",
+        "策略引擎"
+       ],
+       [
+        "amount",
+        "decimal",
+        "必填",
+        "账单"
+       ]
+      ]
+     }
+    },
+    {
+     "id": "n2",
+     "n": "读账单",
+     "t": "tool",
+     "c": 1,
+     "r": 1,
+     "sub": "bill.read",
+     "ms": 1240,
+     "tok": 780,
+     "cfg": {
+      "tool": "bill.read",
+      "tools": [
+       "bill.read",
+       "customer.read",
+       "strategy.read"
+      ],
+      "in": "customerId → 欠费金额 / 逾期天数 / 客户分层 / 第几次触达",
+      "approve": "不需要（只读）"
+     }
+    },
+    {
+     "id": "n3",
+     "n": "检索话术",
+     "t": "kb",
+     "c": 2,
+     "r": 1,
+     "sub": "3 库 · topK 6",
+     "ms": 980,
+     "tok": 640,
+     "cfg": {
+      "out": "chunks[]（带出处与文档版本）"
+     }
+    },
+    {
+     "id": "n4",
+     "n": "生成话术",
+     "t": "llm",
+     "c": 3,
+     "r": 1,
+     "sub": "deepseek-v3 · t=0.3",
+     "ms": 3180,
+     "tok": 1420,
+     "cfg": {
+      "temp": 0.3,
+      "tool": "msg.draft",
+      "out": "draft{text, escalate, reason}",
+      "prompt": "你是催缴话术员。按逾期天数、欠费金额、客户分层写一版催缴草稿。\n硬约束：\n- 只出草稿，不承诺减免，不说「已帮您申请」\n- 出现「减免 / 投诉 / 法务 / 起诉」直接 escalate\n- 欠费 > 5 万或高价值客户，直接 escalate\n输出 JSON：{\"draft\":\"...\",\"escalate\":true|false,\"reason\":\"...\"}"
+     }
+    },
+    {
+     "id": "n5",
+     "n": "要人工吗",
+     "t": "branch",
+     "c": 4,
+     "r": 1,
+     "sub": "红线 / 大额 / 投诉",
+     "ms": 418,
+     "tok": 180,
+     "cfg": {
+      "pre": "先跑 guard.check：无减免承诺 / 无投诉词 / 金额一致 / 未超频次",
+      "conds": [
+       [
+        "escalate || hits.length > 0",
+        "转人工处理"
+       ],
+       [
+        "else",
+        "出稿等发送"
+       ]
+      ]
+     }
+    },
+    {
+     "id": "n6",
+     "n": "转人工",
+     "t": "hitl",
+     "c": 5,
+     "r": 0,
+     "sub": "管家 · 2h",
+     "ms": 0,
+     "tok": 0,
+     "cfg": {
+      "who": "管家（人工）",
+      "timeout": "2 小时",
+      "onTimeout": "退回队列并标记「未处置」，不自动发"
+     }
+    },
+    {
+     "id": "n7",
+     "n": "出稿待发",
+     "t": "end",
+     "c": 5,
+     "r": 2,
+     "sub": "进「待发送」列表",
+     "ms": 80,
+     "tok": 40,
+     "cfg": {
+      "outs": [
+       [
+        "taskId",
+        "继承"
+       ],
+       [
+        "draft",
+        "n4"
+       ],
+       [
+        "hits",
+        "n5.pre"
+       ],
+       [
+        "status",
+        "pending_send"
+       ]
+      ]
+     }
+    }
+   ],
+   "edges": [
+    [
+     "n1",
+     "n2",
+     ""
+    ],
+    [
+     "n2",
+     "n3",
+     ""
+    ],
+    [
+     "n3",
+     "n4",
+     ""
+    ],
+    [
+     "n4",
+     "n5",
+     ""
+    ],
+    [
+     "n5",
+     "n6",
+     "需确认"
+    ],
+    [
+     "n5",
+     "n7",
+     "直接出稿"
+    ],
+    [
+     "n6",
+     "n7",
+     "人处理后"
+    ]
+   ]
+  },
+  "kb": {
+   "libs": [
+    {
+     "n": "催缴策略手册",
+     "docs": 34,
+     "v": "2026.11.2",
+     "sync": "手动",
+     "owner": "运营"
+    },
+    {
+     "n": "话术模板库",
+     "docs": 120,
+     "v": "2026.11.5",
+     "sync": "T+1",
+     "owner": "运营"
+    },
+    {
+     "n": "产品口径字典",
+     "docs": 412,
+     "v": "2026.11.1",
+     "sync": "T+1",
+     "owner": "市场"
+    }
+   ],
+   "topK": 6,
+   "thr": 0.75,
+   "rerank": true,
+   "recall": 0.902,
+   "mrr": 0.83,
+   "faithful": 0.876,
+   "cite": 0.91,
+   "attr": {
+    "notFound": 1,
+    "wrongGen": 2
+   },
+   "issues": [
+    {
+     "n": "大额客户处置规则分散在两份文档",
+     "c": 1,
+     "ex": "《策略手册》说\"超 5 万转人工\"，《升级指引》说\"超 8 万\"，检索时常只命中一份"
+    }
+   ]
+  },
+  "trial": {
+   "in": "taskId     = T-20261124-0087\ncustomerId = C-40912\nattempt    = 2\namount     = 4600",
+   "out": [
+    "判定：可自动出稿（escalate = false）",
+    "红线自检 4 条全过",
+    "产物：进「待发送」列表，等管家点发送",
+    "耗时 5.8s · 2.4k token"
+   ],
+   "raw": "{\n  \"draft\": \"您名下账单已逾期 32 天，金额 ¥4,600，请于 3 日内处理…\",\n  \"escalate\": false,\n  \"hits\": []\n}"
+  }
  }
 ]

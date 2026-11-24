@@ -6,7 +6,9 @@ import { api } from '../api.js';
 import { icon } from '../icons.js';
 
 const busy = computed(() => S.agents.filter((a) => (a.st || []).includes('doing')).length);
+// 「已发布」以账本为准（published 是发布事实），不用阶段标记推断。
 const published = computed(() => S.agents.filter((a) => a.published).length);
+const live = computed(() => S.agents.filter((a) => a.published).length);
 const ev = computed(() => S.agents.reduce((a, x) => a + (x.eval ? x.eval[0] : 0), 0));
 const en = computed(() => S.agents.reduce((a, x) => a + (x.eval ? x.eval[1] : 0), 0));
 const STAGES = ['方案', '原型', '构建', '验证', '发布'];
