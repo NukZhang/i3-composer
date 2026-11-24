@@ -133,3 +133,128 @@ func TestTreeSHAIsOrderIndependent(t *testing.T) {
 		t.Error("树内容不同，摘要必须不同")
 	}
 }
+
+func TestAgentGatesRequireNinetyFivePercent(t *testing.T) {
+	base := func() *Agent {
+		a := &Agent{ID: "x-fe", Ver: "1.0.0", Prompt: "p", Model: "m",
+			Stages: []string{"done", "done", "done", "done", "todo"},
+			Tools:  []string{"repo.read"}, Eval: [2]int{19, 20}}
+		// 构建过一次：BuiltDigest 与当前定义算出的 digest 相同。
+		a.Digest = AgentDigest(*a)
+		a.BuiltDigest = a.Digest
+		return a
+	}
+	if gs := AgentGates(base()); !GatesPass(gs) {
+		t.Fatalf("19/20 = 95%% 应全过，实际 %+v", gs)
+	}
+	a := base()
+	a.Eval = [2]int{18, 20}
+	gs := AgentGates(a)
+	if GatesPass(gs) {
+		t.Fatal("18/20 = 90% 不许发布")
+	}
+	if gs[3].OK || gs[3].Key != "agent-eval" {
+		t.Fatalf("应该是评测闸不过：%+v", gs[3])
+	}
+}
+
+func TestAgentGatesRejectUnbuiltOrStaleEval(t *testing.T) {
+	// 定义改过但没构建：digest 对不上，闸必须红。
+	a := &Agent{ID: "x", Ver: "1.0.0", Prompt: "p", Model: "m", BuiltDigest: "sha256:old",
+		Stages: []string{"done", "done", "done", "done", "done"},
+		Tools:  []string{"t"}, Eval: [2]int{10, 10}}
+	gs := AgentGates(a)
+	if gs[2].OK {
+		t.Fatalf("编排改了没构建，digest 闸应红：%+v", gs[2])
+	}
+	// 评测跑在旧 digest 上：旧分数不能给新版本背书。
+	a.BuiltDigest = a.Digest
+	a.Runs = []EvalRun{{ID: "e1", Pass: 10, Total: 10, Digest: "sha256:other"}}
+	if gs := AgentGates(a); gs[3].OK {
+		t.Fatalf("评测针对旧版本时评测闸应红：%+v", gs[3])
+	}
+	// 同一 digest 的评测才算数。
+	a.Runs[0].Digest = a.BuiltDigest
+	if gs := AgentGates(a); !GatesPass(gs) {
+		t.Fatalf("同 digest 的评测应全过：%+v", gs)
+	}
+}
+
+func TestFlowValidAndToolWiring(t *testing.T) {
+	f := &Flow{
+		Nodes: []FlowNode{
+			{ID: "n1", N: "任务进入", T: NodeStart},
+			{ID: "n2", N: "读会话", T: NodeTool, Cfg: map[string]any{"tool": "session.read"}},
+			{ID: "n3", N: "判定", T: NodeLLM},
+			{ID: "n4", N: "回执", T: NodeEnd},
+		},
+		Edges: [][3]string{{"n1", "n2", ""}, {"n2", "n3", ""}, {"n3", "n4", ""}},
+	}
+	if err := f.Valid(); err != nil {
+		t.Fatalf("合法编排被拒：%v", err)
+	}
+	a := &Agent{Tools: []string{"session.read", "report.write"}, Flow: f}
+	w := ToolWiring(a)
+	if !w[0].Wired || w[1].Wired {
+		t.Fatalf("接线检查不对：%+v", w)
+	}
+
+	bad := &Flow{Nodes: []FlowNode{{ID: "a", N: "x", T: NodeEnd}}, Edges: nil}
+	if bad.Valid() == nil {
+		t.Fatal("没有开始节点必须被判为不可执行")
+	}
+	if (&Flow{Nodes: []FlowNode{{ID: "a", N: "s", T: NodeStart}}, Edges: [][3]string{{"a", "zz", ""}}}).Valid() == nil {
+		t.Fatal("悬空连线必须被判为不可执行")
+	}
+}
+
+func TestAgentGatesRejectIncompleteDefinition(t *testing.T) {
+	// 没有工具白名单：即使评测全过也不许发。
+	a := &Agent{ID: "x", Ver: "1.0.0", Prompt: "p",
+		Stages: []string{"done", "done", "done", "done", "done"}, Eval: [2]int{10, 10}}
+	if GatesPass(AgentGates(a)) {
+		t.Fatal("没有工具白名单必须拒绝")
+	}
+	if AgentGates(nil)[0].OK {
+		t.Fatal("没有 Agent 定义时四闸必须全红")
+	}
+}
+
+func TestAgentDigestChangesWithDefinition(t *testing.T) {
+	a := Agent{Ver: "1.0.0", Model: "m", Prompt: "p", Tools: []string{"repo.read"}}
+	d1 := AgentDigest(a)
+	a.Prompt = "p2"
+	if AgentDigest(a) == d1 {
+		t.Fatal("改提示词必须换 digest")
+	}
+	a.Prompt = "p"
+	a.Tools = []string{"repo.read", "shell.exec"}
+	if AgentDigest(a) == d1 {
+		t.Fatal("改工具白名单必须换 digest")
+	}
+}
+
+func TestSvcVerifyZeroTotalIsNotPass(t *testing.T) {
+	if (SvcVerify{}).OK() {
+		t.Fatal("没验过不等于通过")
+	}
+	if !(SvcVerify{Pass: 22, Total: 22}).OK() {
+		t.Fatal("22/22 应通过")
+	}
+}
+
+func TestHybridGatesBothSidesMustPass(t *testing.T) {
+	pbc := []Gate{{Key: "a", OK: true}, {Key: "b", OK: true}, {Key: "c", OK: true}}
+	agAgent := &Agent{ID: "x", Ver: "1.0.0", Prompt: "p", Model: "m",
+		Stages: []string{"done", "done", "done", "done", "done"},
+		Tools:  []string{"t"}, Eval: [2]int{10, 10}}
+	agAgent.Digest = AgentDigest(*agAgent)
+	agAgent.BuiltDigest = agAgent.Digest
+	ag := AgentGates(agAgent)
+	if HybridCanRelease(HybridGates(pbc, SvcVerify{Pass: 20, Total: 22}, ag)) {
+		t.Fatal("服务侧 20/22 未全过，组合项不许发布")
+	}
+	if !HybridCanRelease(HybridGates(pbc, SvcVerify{Pass: 22, Total: 22}, ag)) {
+		t.Fatal("两侧全过应可发布")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	path "path"
 	"strings"
 	"sync"
 	"time"
@@ -31,11 +32,14 @@ func NewServer(log *store.Store, d *dapr.Client, sess *Sessions, comp string) *S
 		subs: map[chan string]struct{}{}}
 }
 
-// Handler 装路由。全部以 /api 开头，静态页由 main 单独挂。
+// Handler 装路由。业务接口全部以 /api 开头；其余路径交给静态页（web/）。
 func (s *Server) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/health", s.health)
+	m.HandleFunc("GET /api/state", s.wrap(s.state))
 	m.HandleFunc("GET /api/overview", s.wrap(s.overview))
+	m.HandleFunc("GET /api/inbox", s.wrap(s.inbox))
+	m.HandleFunc("GET /api/notifications", s.wrap(s.notifications))
 	m.HandleFunc("GET /api/tasks", s.wrap(s.tasks))
 	m.HandleFunc("POST /api/tasks", s.wrap(s.createTask))
 	m.HandleFunc("GET /api/items/{id}", s.wrap(s.getItem))
@@ -43,6 +47,35 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/items/{id}/answer", s.wrap(s.answer))
 	m.HandleFunc("POST /api/role", s.wrap(s.setRole))
 	m.HandleFunc("GET /api/timeline/stream", s.stream)
+
+	// v2.3：交付单元 / BRD / Agent / 服务验收 / 批注
+	m.HandleFunc("GET /api/units", s.wrap(s.units))
+	m.HandleFunc("POST /api/units", s.wrap(s.createUnit))
+	m.HandleFunc("POST /api/units/{id}/svcverify", s.wrap(s.svcVerify))
+	m.HandleFunc("GET /api/brd", s.wrap(s.brd))
+	m.HandleFunc("POST /api/brd", s.wrap(s.saveBRD))
+	m.HandleFunc("GET /api/agents", s.wrap(s.agents))
+	m.HandleFunc("GET /api/agents/{id}", s.wrap(s.agent))
+	m.HandleFunc("POST /api/agents/{id}/eval", s.wrap(s.agentEval))
+	m.HandleFunc("POST /api/agents/{id}/baseline", s.wrap(s.agentBaseline))
+	m.HandleFunc("POST /api/agents/{id}/publish", s.wrap(s.agentPublish))
+	m.HandleFunc("POST /api/agents/{id}/rollout", s.wrap(s.agentRollout))
+	m.HandleFunc("POST /api/agents/{id}/rollback", s.wrap(s.agentRollback))
+	m.HandleFunc("POST /api/annotations", s.wrap(s.addAnnotation))
+	m.HandleFunc("POST /api/artifacts", s.wrap(s.saveDraft))
+	m.HandleFunc("GET /api/facts", s.wrap(s.facts))
+	// v2.6：Agent 编排、构建、试跑、沉淀用例；知识库问题单
+	m.HandleFunc("PUT /api/agents/{id}/flow", s.wrap(s.agentFlow))
+	m.HandleFunc("POST /api/agents/{id}/build", s.wrap(s.agentBuild))
+	m.HandleFunc("POST /api/agents/{id}/trial", s.wrap(s.agentTrial))
+	m.HandleFunc("POST /api/agents/{id}/cases", s.wrap(s.agentCase))
+	m.HandleFunc("POST /api/agents/{id}/kb/{idx}/dispatch", s.wrap(s.kbDispatch))
+	// v2.5：真人验收台
+	m.HandleFunc("POST /api/checks/{id}/decide", s.wrap(s.checkDecide))
+	m.HandleFunc("POST /api/units/{id}/chat", s.wrap(s.verifyChat))
+	// ServeMux 里 /api/... 比 / 更具体，优先匹配，静态兜底不会抢接口。
+	// web/dist 是 Vite 构建产物：必须从仓库根起跑（见 docs/SPEC-frontend-wiring.md）。
+	m.Handle("/", spa(http.Dir("web/dist")))
 	return m
 }
 
@@ -90,6 +123,29 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// spa 托管 Vite 产物，并对「前端路由」回落到 index.html。
+//
+// 为什么需要回落：页面路由（/plan、/verify 等）在服务端没有对应文件，
+// 直接 404 会让刷新页面变成白屏。判据是「路径里有扩展名」——
+// 有扩展名的是静态资源，没有的是前端路由。
+func spa(root http.FileSystem) http.Handler {
+	files := http.FileServer(root)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if p == "/" || p == "/index.html" || strings.Contains(path.Ext(p), ".") {
+			files.ServeHTTP(w, r)
+			return
+		}
+		idx, err := root.Open("index.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer idx.Close()
+		http.ServeContent(w, r, "index.html", time.Time{}, idx)
+	})
+}
+
 // ---------- 视图 ----------
 
 // Task 是 backlog 行在前端的样子。字段名沿用原型，前端布局不用改。
@@ -131,6 +187,15 @@ func (s *Server) load(r *http.Request, pbc string) (*store.View, error) {
 		return nil, err
 	}
 	return store.Project(pbc, facts)
+}
+
+// state 与 Agent 相关的读取在 v23.go：同一条 /api/state 路由，
+// 但 v2.3 起还要把交付单元构成与门禁结论一并带上。
+
+// NotifyChange 由事实日志在每次成功落链后回调，把「某个 PBC 变了」推给 SSE。
+// 它不携带账本内容：订阅者收到后重新 GET 全量投影。
+func (s *Server) NotifyChange(pbc string) {
+	s.publish(pbc, "fact.appended", nil)
 }
 
 // overview 是工作台首页：待办 / 待确认 / 我发起的 + 项目进度。
@@ -222,11 +287,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		in.Mode = "fast"
 	}
 
-	v, err := s.load(r, c.PBC)
-	if err != nil {
-		return err
-	}
-	id, err := nextItemID(v.Items)
+	// 编号在全项目范围内取：需求池是各单元工作项合起来看的，
+	// 各单元各自从 US-01 开始会出现两个 US-01，谁也说不清指哪一条。
+	id, err := s.nextGlobalItemID(r, c.PBC)
 	if err != nil {
 		return err
 	}

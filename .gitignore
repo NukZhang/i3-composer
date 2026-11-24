@@ -13,3 +13,7 @@
 .DS_Store
 .idea/
 .vscode/
+
+# 前端：依赖与 Vite 构建产物（由 npm run build 生成）
+/web/node_modules/
+/web/dist/

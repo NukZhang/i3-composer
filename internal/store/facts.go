@@ -51,6 +51,38 @@ const (
 	FactPublishDecided   = "publish.decided"
 	FactAnnotationAdded  = "annotation.added"
 	FactRoleSwitch       = "role.switch"
+
+	// v2.3：交付单元、BRD、服务验收与 Agent 生命周期。
+	// Agent 的定义与评测走独立的 agent 日志（见 ProjectAgents），
+	// 因为它属于「数字员工」而不是某个 PBC。
+	FactUnitCreated   = "unit.created"
+	FactBRDSaved      = "brd.saved"
+	FactSvcVerified   = "svc.verified"
+	FactAgentDefined  = "agent.defined"
+	FactAgentEvalRun  = "agent.eval.run"
+	FactAgentPublish  = "agent.published"
+	FactAgentRollout  = "agent.rollout"
+	FactAgentRollback = "agent.rollback"
+	FactAgentBaseline = "agent.baseline"
+
+	// v2.6：Agent 编排（流程图）、构建、试跑与「沉淀为评测用例」。
+	// 编排改了但没构建，digest 就对不上——gate 会红，旧评测也不能给新版本背书。
+	FactAgentFlowSaved = "agent.flow.saved"
+	FactAgentBuilt     = "agent.built"
+	FactAgentTrial     = "agent.trial.run"
+	FactAgentCase      = "agent.case.added"
+	FactAgentRetired   = "agent.retired"
+	FactKBIssue        = "kb.issue.dispatched"
+
+	// v2.5/v2.6：真人验收台。清单、判定、bug 与验收对话全部进账本，
+	// 因为「验过了」本身就是一条事实，不能只活在前端内存里。
+	FactCheckDefined = "check.defined"
+	FactCheckDecided = "check.decided"
+	FactDefect       = "defect.created"
+	FactVerifyChat   = "verify.chat"
+
+	// v2.4：客服工单 PBC 与收费缴费重复，从演示项目里删除。
+	FactUnitRemoved = "unit.removed"
 )
 
 // Fact 是一条不可变事实。
@@ -78,6 +110,11 @@ type Store struct {
 	state    string     // state store 组件名
 	mu       sync.Mutex // 进程内降噪；跨副本靠 etag CAS
 	maxRetry int
+
+	// Notify 在一条事实真正落链后回调，用于把「有变化了」推给 BFF 的 SSE 订阅者。
+	// 它只做通知，不携带账本内容；进程重启后自行丢失也无妨——下一次读取仍是全量。
+	// 必须在开始服务前一次性赋值；之后只读，故不需要额外同步。
+	Notify func(pbc string)
 }
 
 func New(c *dapr.Client, stateStore string) *Store {
@@ -219,6 +256,10 @@ func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, pa
 	if _, err := s.c.SetState(ctx, s.state, headKey(pbc),
 		head{Seq: f.Seq, Hash: f.Hash}, etag); err != nil {
 		return Fact{}, err
+	}
+	// 只在 head 推进成功后通知：没落链的事实不算「有变化」。
+	if s.Notify != nil {
+		s.Notify(pbc)
 	}
 	return f, nil
 }

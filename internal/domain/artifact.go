@@ -63,6 +63,10 @@ type Version struct {
 	Note   string   `json:"note"`
 	// Digest 仅代码制品在构建后被回写，用于「镜像与树一致」闸。
 	Digest string `json:"digest,omitempty"`
+	// MD / Files 是制品内容：文档类存 md，代码类存文件树。
+	// 它们随版本一起进日志，所以「保存草稿」是一件真实的事，不是前端内存。
+	MD    string            `json:"md,omitempty"`
+	Files map[string]string `json:"files,omitempty"`
 }
 
 // Tree 是一棵制品树的快照：制品 → 版本号。
