@@ -10,16 +10,19 @@ import (
 // View 是投影：把事实日志折叠成一个可渲染的状态。
 // 任何时候都可以从日志重放得到同一个 View —— 这是「投影可重建」的含义。
 type View struct {
-	PBC      string                               `json:"pbc"`
-	Name     string                               `json:"name"`
-	Seq      int                                  `json:"seq"`
-	Versions map[domain.Artifact][]domain.Version `json:"versions"`
-	Commits  []domain.Commit                      `json:"commits"`
-	Tags     []string                             `json:"tags"`
-	Builds   map[string]string                    `json:"builds"` // commitNo → digest
-	Deploys  []Deploy                             `json:"deploys"`
-	Items    map[string]*Item                     `json:"items"`
-	Annos    []Anno                               `json:"annos"`
+	PBC       string                               `json:"pbc"`
+	Name      string                               `json:"name"`
+	Kind      string                               `json:"kind"`              // pbc | agent | hybrid
+	AgentID   string                               `json:"agentId,omitempty"` // kind != pbc 时关联的 Agent
+	Seq       int                                  `json:"seq"`
+	Versions  map[domain.Artifact][]domain.Version `json:"versions"`
+	Commits   []domain.Commit                      `json:"commits"`
+	Tags      []string                             `json:"tags"`
+	Builds    map[string]string                    `json:"builds"` // commitNo → digest
+	Deploys   []Deploy                             `json:"deploys"`
+	Items     map[string]*Item                     `json:"items"`
+	Annos     []Anno                               `json:"annos"`
+	SvcVerify *domain.SvcVerify                    `json:"svcVerify,omitempty"`
 }
 
 type Deploy struct {
@@ -94,6 +97,7 @@ func StepPlan(env string) []Step {
 func Project(pbc string, facts []Fact) (*View, error) {
 	v := &View{
 		PBC:      pbc,
+		Kind:     string(domain.KindPBC),
 		Seq:      len(facts),
 		Versions: map[domain.Artifact][]domain.Version{},
 		Builds:   map[string]string{},
@@ -326,6 +330,37 @@ func apply(v *View, f Fact) error {
 
 	case FactRoleSwitch:
 		// 不影响投影状态：角色是会话级的，不写进账本。
+
+	case FactUnitCreated:
+		// 交付单元构成：pbc / agent / hybrid。一条事实定终身，不允许改——
+		// 「同一个 PBC 从 pbc 变 hybrid」在账本里就是两个不同的交付物。
+		var p struct {
+			Kind    string `json:"kind"`
+			AgentID string `json:"agentId"`
+			Name    string `json:"name"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		k := domain.ParseKind(p.Kind)
+		if !k.Valid() {
+			return fmt.Errorf("unit 事的 kind 非法：%q", p.Kind)
+		}
+		v.Kind, v.AgentID = k.String(), p.AgentID
+		if p.Name != "" {
+			v.Name = p.Name
+		}
+
+	case FactSvcVerified:
+		var sv domain.SvcVerify
+		if err := dec(&sv); err != nil {
+			return err
+		}
+		v.SvcVerify = &sv
+
+	case FactBRDSaved:
+		// BRD 是项目级制品，不进 PBC 的版本树；这里只保留「最近一次保存」的指针，
+		// 完整版本线在 ProjectBRD 里。
 	}
 	return nil
 }

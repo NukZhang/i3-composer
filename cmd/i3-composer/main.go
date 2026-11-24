@@ -29,6 +29,7 @@ import (
 	"github.com/zhangkun/i3-composer/internal/bff"
 	"github.com/zhangkun/i3-composer/internal/dapr"
 	"github.com/zhangkun/i3-composer/internal/domain"
+	"github.com/zhangkun/i3-composer/internal/seed"
 	"github.com/zhangkun/i3-composer/internal/store"
 	"github.com/zhangkun/i3-composer/internal/wf"
 )
@@ -96,11 +97,10 @@ func run() error {
 	}()
 
 	if seedDemo {
-		if err := seed(context.Background(), log); err != nil {
+		if err := seed.Run(context.Background(), log); err != nil {
 			slog.Warn("种子数据写入失败", "err", err)
 		}
 	}
-
 	srv := bff.NewServer(log, dc, bff.NewSessions([]byte(sessKey)), wfComp)
 	// 每一次事实落链（包括 workflow activity 写的）都通知 SSE：前端收到后重拉全量投影。
 	// 这样「页面自动推进」不依赖某个 handler 是否记得调 publish。
@@ -141,108 +141,6 @@ type mockBuilder struct{}
 
 func (mockBuilder) Build(_ context.Context, pbc, commit string, tree domain.Tree) (string, error) {
 	return "sha256:" + domain.TreeSHA(tree)[7:] + "-" + commit + "@" + pbc, nil
-}
-
-// seed 给一个可演示的起点：一个 PBC、一条已发布的工作项、一条停在发布闸的。
-// 只在日志为空时写，保证可重复执行不产生重复事实。
-func seed(ctx context.Context, log *store.Store) error {
-	// Ensure 必须在任何 Append 之前：空日志没有 etag，并发写会互相覆盖。
-	if err := log.Ensure(ctx, "fee"); err != nil {
-		return err
-	}
-	facts, err := log.Load(ctx, "fee")
-	if err != nil {
-		return err
-	}
-	if len(facts) > 0 {
-		return nil
-	}
-	if _, err := log.Append(ctx, "fee", store.FactPBCCreated, "PA", map[string]string{"name": "悦府物业 · 收费与工单"}); err != nil {
-		return err
-	}
-
-	// 制品基线与基线提交：原型里 fee 这个 PBC 是有历史的（v1.0.1 起就已入树），
-	// 所以一个 feature 变更只需重算受影响的那几件，其余沿用树里的版本。
-	// 少了这段基线，任何一次提交都会因「backlog 未入树」被引用闭合闸拒绝——
-	// 这是闸的正确行为，不是 bug。
-	if err := seedBaseline(ctx, log, "fee"); err != nil {
-		return err
-	}
-
-	items := []store.Item{
-		{ID: "US-01", Title: "业主账单自助查询与支付", PT: 5, St: "done", Owner: "DA",
-			Kind: "Story", PBC: "fee", Type: "new", Mode: "guided", Env: "test",
-			Run: "published", Version: "1.0.2", Tag: "v1.0.0", By: "BA"},
-		{ID: "US-02", Title: "管家批量生成缴费单", PT: 3, St: "doing", Owner: "DA",
-			Kind: "Story", PBC: "fee", Type: "feature", Mode: "fast", Env: "test",
-			Run: "waiting", Step: 6, By: "PA"},
-		{ID: "US-03", Title: "报修工单 SLA 超时提醒", PT: 3, St: "todo", Owner: "BA",
-			Kind: "Story", PBC: "fee", Type: "feature", Mode: "fast", Env: "test",
-			Run: "idea", By: "BA"},
-	}
-	for _, it := range items {
-		if it.Steps == nil {
-			it.Steps = store.StepPlan(it.Env)
-		}
-		for i := range it.Steps {
-			switch it.Run {
-			case "published":
-				it.Steps[i].St = "done"
-				it.Steps[i].At = "11-22 15:18"
-			case "waiting":
-				if i < 6 {
-					it.Steps[i].St = "done"
-					it.Steps[i].At = "11-22 15:18"
-				}
-			}
-		}
-		if _, err := log.Append(ctx, "fee", store.FactItemCreated, it.By, it); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// seedBaseline 写 v1.0.1 的制品线与基线提交，对应原型 PBC.fee 的历史。
-//
-// 为什么必须有它：交付链路的「引用闭合」闸要求树里六件制品齐备，且每件的
-// 衍生引用都指向树里同一版本。树是从版本线取 latest 得来的，所以没有基线版本
-// 的制品在树上就是空串 → 闸拒绝。同时 Commit 用「有无草稿」判定要不要提交，
-// 基线已 accepted，不会被误当成新变更。
-func seedBaseline(ctx context.Context, log *store.Store, pbc string) error {
-	const at = "11-20 17:20"
-	vers := []domain.Version{
-		{T: domain.PRD, V: "1.0.1", At: at, By: "BA", Source: "手动", St: domain.StAccepted, Note: "收费与工单基线"},
-		{T: domain.Proto, V: "1.0.1", At: at, By: "x-ui", Source: "生成", St: domain.StAccepted,
-			DF: []domain.Ref{{T: domain.PRD, V: "1.0.1"}}, Note: "账单列表与缴费页"},
-		{T: domain.AD, V: "1.0.1", At: at, By: "x-fe", Source: "生成", St: domain.StAccepted,
-			DF: []domain.Ref{{T: domain.PRD, V: "1.0.1"}, {T: domain.Proto, V: "1.0.1"}}, Note: "单库设计"},
-		{T: domain.AT, V: "1.0.1", At: at, By: "x-qa", Source: "生成", St: domain.StAccepted,
-			DF: []domain.Ref{{T: domain.PRD, V: "1.0.1"}, {T: domain.AD, V: "1.0.1"}}, Note: "4 条验收用例"},
-		{T: domain.Backlog, V: "1.0.1", At: at, By: "x-ba", Source: "生成", St: domain.StAccepted,
-			DF: []domain.Ref{{T: domain.AT, V: "1.0.1"}}, Note: "3 story / 9 task"},
-		{T: domain.Code, V: "1.0.1", At: at, By: "x-fe", Source: "生成", St: domain.StAccepted,
-			DF: []domain.Ref{{T: domain.AT, V: "1.0.1"}, {T: domain.Backlog, V: "1.0.1"}}, Note: "基线代码"},
-	}
-	for _, v := range vers {
-		op := "seed/baseline/" + v.T.String()
-		if _, err := log.AppendOp(ctx, pbc, op, store.FactArtifactDrafted, v.By, v); err != nil {
-			return err
-		}
-	}
-
-	tree := domain.Tree{}
-	for _, t := range domain.Order {
-		tree[t] = "1.0.1"
-	}
-	c := domain.Commit{
-		No: "1.0.1", Tree: tree, By: "张昆", At: at,
-		Msg: "基线：PRD 手动上传 + 三件制品生成", Type: "new",
-		TreeSHA: domain.TreeSHA(tree),
-		Digest:  "sha256:baseline", // 基线镜像已存在，避免「未构建无 digest」闸挡住演示
-	}
-	_, err := log.AppendOp(ctx, pbc, "seed/baseline/commit", store.FactCommitCreated, "i3-pipeline", c)
-	return err
 }
 
 // withCORS 允许原型页（file:// 或另一端口）直接调这套 API。

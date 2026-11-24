@@ -37,6 +37,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/health", s.health)
 	m.HandleFunc("GET /api/state", s.wrap(s.state))
 	m.HandleFunc("GET /api/overview", s.wrap(s.overview))
+	m.HandleFunc("GET /api/inbox", s.wrap(s.inbox))
+	m.HandleFunc("GET /api/notifications", s.wrap(s.notifications))
 	m.HandleFunc("GET /api/tasks", s.wrap(s.tasks))
 	m.HandleFunc("POST /api/tasks", s.wrap(s.createTask))
 	m.HandleFunc("GET /api/items/{id}", s.wrap(s.getItem))
@@ -44,9 +46,24 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/items/{id}/answer", s.wrap(s.answer))
 	m.HandleFunc("POST /api/role", s.wrap(s.setRole))
 	m.HandleFunc("GET /api/timeline/stream", s.stream)
+
+	// v2.3：交付单元 / BRD / Agent / 服务验收 / 批注
+	m.HandleFunc("GET /api/units", s.wrap(s.units))
+	m.HandleFunc("POST /api/units", s.wrap(s.createUnit))
+	m.HandleFunc("POST /api/units/{id}/svcverify", s.wrap(s.svcVerify))
+	m.HandleFunc("GET /api/brd", s.wrap(s.brd))
+	m.HandleFunc("POST /api/brd", s.wrap(s.saveBRD))
+	m.HandleFunc("GET /api/agents", s.wrap(s.agents))
+	m.HandleFunc("GET /api/agents/{id}", s.wrap(s.agent))
+	m.HandleFunc("POST /api/agents/{id}/eval", s.wrap(s.agentEval))
+	m.HandleFunc("POST /api/agents/{id}/baseline", s.wrap(s.agentBaseline))
+	m.HandleFunc("POST /api/agents/{id}/publish", s.wrap(s.agentPublish))
+	m.HandleFunc("POST /api/agents/{id}/rollout", s.wrap(s.agentRollout))
+	m.HandleFunc("POST /api/agents/{id}/rollback", s.wrap(s.agentRollback))
+	m.HandleFunc("POST /api/annotations", s.wrap(s.addAnnotation))
 	// ServeMux 里 /api/... 比 / 更具体，优先匹配，静态兜底不会抢接口。
-	// web/ 是相对进程工作目录的：必须从仓库根起跑（见 docs/SPEC-frontend-wiring.md）。
-	m.Handle("/", http.FileServer(http.Dir("web")))
+	// web/dist 是 Vite 构建产物：必须从仓库根起跑（见 docs/SPEC-frontend-wiring.md）。
+	m.Handle("/", http.FileServer(http.Dir("web/dist")))
 	return m
 }
 
@@ -137,18 +154,8 @@ func (s *Server) load(r *http.Request, pbc string) (*store.View, error) {
 	return store.Project(pbc, facts)
 }
 
-// state 返回完整投影：版本线、提交线、部署、批注、工作项。
-// 前端「方案 / 发布」页需要这些，而 overview 只给工作项摘要。
-//
-// 注意：这不是另一份真相——它就是 Project(facts) 的输出，和 /overview 同源。
-func (s *Server) state(w http.ResponseWriter, r *http.Request, c reqCtx) error {
-	v, err := s.load(r, c.PBC)
-	if err != nil {
-		return err
-	}
-	writeJSON(w, http.StatusOK, v)
-	return nil
-}
+// state 与 Agent 相关的读取在 v23.go：同一条 /api/state 路由，
+// 但 v2.3 起还要把交付单元构成与门禁结论一并带上。
 
 // NotifyChange 由事实日志在每次成功落链后回调，把「某个 PBC 变了」推给 SSE。
 // 它不携带账本内容：订阅者收到后重新 GET 全量投影。

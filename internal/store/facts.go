@@ -51,6 +51,19 @@ const (
 	FactPublishDecided   = "publish.decided"
 	FactAnnotationAdded  = "annotation.added"
 	FactRoleSwitch       = "role.switch"
+
+	// v2.3：交付单元、BRD、服务验收与 Agent 生命周期。
+	// Agent 的定义与评测走独立的 agent 日志（见 ProjectAgents），
+	// 因为它属于「数字员工」而不是某个 PBC。
+	FactUnitCreated   = "unit.created"
+	FactBRDSaved      = "brd.saved"
+	FactSvcVerified   = "svc.verified"
+	FactAgentDefined  = "agent.defined"
+	FactAgentEvalRun  = "agent.eval.run"
+	FactAgentPublish  = "agent.published"
+	FactAgentRollout  = "agent.rollout"
+	FactAgentRollback = "agent.rollback"
+	FactAgentBaseline = "agent.baseline"
 )
 
 // Fact 是一条不可变事实。
