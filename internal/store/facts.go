@@ -78,6 +78,11 @@ type Store struct {
 	state    string     // state store 组件名
 	mu       sync.Mutex // 进程内降噪；跨副本靠 etag CAS
 	maxRetry int
+
+	// Notify 在一条事实真正落链后回调，用于把「有变化了」推给 BFF 的 SSE 订阅者。
+	// 它只做通知，不携带账本内容；进程重启后自行丢失也无妨——下一次读取仍是全量。
+	// 必须在开始服务前一次性赋值；之后只读，故不需要额外同步。
+	Notify func(pbc string)
 }
 
 func New(c *dapr.Client, stateStore string) *Store {
@@ -219,6 +224,10 @@ func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, pa
 	if _, err := s.c.SetState(ctx, s.state, headKey(pbc),
 		head{Seq: f.Seq, Hash: f.Hash}, etag); err != nil {
 		return Fact{}, err
+	}
+	// 只在 head 推进成功后通知：没落链的事实不算「有变化」。
+	if s.Notify != nil {
+		s.Notify(pbc)
 	}
 	return f, nil
 }

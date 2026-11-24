@@ -31,10 +31,11 @@ func NewServer(log *store.Store, d *dapr.Client, sess *Sessions, comp string) *S
 		subs: map[chan string]struct{}{}}
 }
 
-// Handler 装路由。全部以 /api 开头，静态页由 main 单独挂。
+// Handler 装路由。业务接口全部以 /api 开头；其余路径交给静态页（web/）。
 func (s *Server) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /api/health", s.health)
+	m.HandleFunc("GET /api/state", s.wrap(s.state))
 	m.HandleFunc("GET /api/overview", s.wrap(s.overview))
 	m.HandleFunc("GET /api/tasks", s.wrap(s.tasks))
 	m.HandleFunc("POST /api/tasks", s.wrap(s.createTask))
@@ -43,6 +44,9 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/items/{id}/answer", s.wrap(s.answer))
 	m.HandleFunc("POST /api/role", s.wrap(s.setRole))
 	m.HandleFunc("GET /api/timeline/stream", s.stream)
+	// ServeMux 里 /api/... 比 / 更具体，优先匹配，静态兜底不会抢接口。
+	// web/ 是相对进程工作目录的：必须从仓库根起跑（见 docs/SPEC-frontend-wiring.md）。
+	m.Handle("/", http.FileServer(http.Dir("web")))
 	return m
 }
 
@@ -131,6 +135,25 @@ func (s *Server) load(r *http.Request, pbc string) (*store.View, error) {
 		return nil, err
 	}
 	return store.Project(pbc, facts)
+}
+
+// state 返回完整投影：版本线、提交线、部署、批注、工作项。
+// 前端「方案 / 发布」页需要这些，而 overview 只给工作项摘要。
+//
+// 注意：这不是另一份真相——它就是 Project(facts) 的输出，和 /overview 同源。
+func (s *Server) state(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	v, err := s.load(r, c.PBC)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, v)
+	return nil
+}
+
+// NotifyChange 由事实日志在每次成功落链后回调，把「某个 PBC 变了」推给 SSE。
+// 它不携带账本内容：订阅者收到后重新 GET 全量投影。
+func (s *Server) NotifyChange(pbc string) {
+	s.publish(pbc, "fact.appended", nil)
 }
 
 // overview 是工作台首页：待办 / 待确认 / 我发起的 + 项目进度。

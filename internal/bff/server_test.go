@@ -1,13 +1,16 @@
 package bff
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zhangkun/i3-composer/internal/dapr"
 	"github.com/zhangkun/i3-composer/internal/store"
@@ -92,6 +95,8 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(ds.Close)
 	st := store.New(dapr.New(ds.URL), "fake")
 	b := NewServer(st, dapr.New(ds.URL), NewSessions([]byte("test-key")), "dapr")
+	// BFF 与生产同构：事实落链后应推 SSE。测试里把这条回调接上，才能验证通知链。
+	st.Notify = b.NotifyChange
 	s := httptest.NewServer(b.Handler())
 	t.Cleanup(s.Close)
 	return &harness{srv: s, fake: f, st: st}
@@ -309,4 +314,111 @@ func TestRunRejectsPublishedItem(t *testing.T) {
 	if len(h.fake.calls) != before {
 		t.Fatal("被拒绝的发起绝不能调 sidecar 起实例")
 	}
+}
+
+func TestStateReturnsFullProjection(t *testing.T) {
+	h := newHarness(t)
+	seedItem(t, h.st, store.Item{ID: "US-01", Title: "t", Kind: "Story", PBC: "fee",
+		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
+	resp, out := h.do(t, http.MethodGet, "/api/state?pbc=fee", nil, RoleBA)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("应 200，实际 %d", resp.StatusCode)
+	}
+	if _, ok := out["versions"]; !ok {
+		t.Fatal("state 必须包含 versions")
+	}
+	items, ok := out["items"].(map[string]any)
+	if !ok {
+		t.Fatal("state 必须包含 items")
+	}
+	if _, ok := items["US-01"]; !ok {
+		t.Fatalf("state 的 items 应包含刚写入的工作项，实际 %v", items)
+	}
+}
+
+func TestStateIsNotASecondTruth(t *testing.T) {
+	// /api/state 与 /api/overview 必须同源：同一个工作项在两处给出的 run/st/t 完全一致。
+	h := newHarness(t)
+	seedItem(t, h.st, store.Item{ID: "US-01", Title: "t", Kind: "Story", PBC: "fee",
+		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
+
+	_, st := h.do(t, http.MethodGet, "/api/state?pbc=fee", nil, RoleBA)
+	_, ov := h.do(t, http.MethodGet, "/api/overview?pbc=fee", nil, RoleBA)
+
+	si := st["items"].(map[string]any)["US-01"].(map[string]any)
+	oi := ov["items"].([]any)[0].(map[string]any)
+	if si["run"] != oi["run"] || si["st"] != oi["st"] || si["t"] != oi["t"] {
+		t.Fatalf("state 与 overview 不一致：state=%v overview=%v", si, oi)
+	}
+}
+
+func TestHandlerServesStaticWithoutShadowingAPI(t *testing.T) {
+	h := newHarness(t)
+	resp, _ := h.do(t, http.MethodGet, "/api/health", nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/api/health 应 200，实际 %d", resp.StatusCode)
+	}
+	// 测试的工作目录是 internal/bff，那里没有 web/，所以静态兜底应 404——
+	// 关键是不能把静态路径回落到 API 的 JSON 响应上。
+	resp2, err := http.Get(h.srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Fatalf("测试目录下 web/ 不存在，静态兜底应 404，实际 %d", resp2.StatusCode)
+	}
+}
+
+// 事实落链必须推 SSE：否则页面不会自动推进（SPEC §3.4 的语义是「通知有变化」）。
+// 这里直接看事件流：先 hello，再在一条事实之后收到 change。
+func TestFactAppendNotifiesSSESubscribers(t *testing.T) {
+	h := newHarness(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.srv.URL+"/api/timeline/stream?pbc=fee", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("SSE 的 Content-Type 应为 text/event-stream，实际 %q", ct)
+	}
+
+	lines := make(chan string, 16)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+
+	next := func(want string) {
+		t.Helper()
+		for {
+			select {
+			case l, ok := <-lines:
+				if !ok {
+					t.Fatalf("事件流提前关闭，没等到 %q", want)
+				}
+				if strings.HasPrefix(l, want) {
+					return
+				}
+			case <-ctx.Done():
+				t.Fatalf("等待 %q 超时", want)
+			}
+		}
+	}
+
+	next("event: hello")
+	// 第一帧 hello 之后落一条事实；app 侧没有 handler 调 publish，全靠 store 回调。
+	seedItem(t, h.st, store.Item{ID: "US-07", Title: "t", Kind: "Story", PBC: "fee",
+		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
+	next("event: change")
 }

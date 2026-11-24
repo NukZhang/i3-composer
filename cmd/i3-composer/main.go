@@ -102,6 +102,9 @@ func run() error {
 	}
 
 	srv := bff.NewServer(log, dc, bff.NewSessions([]byte(sessKey)), wfComp)
+	// 每一次事实落链（包括 workflow activity 写的）都通知 SSE：前端收到后重拉全量投影。
+	// 这样「页面自动推进」不依赖某个 handler 是否记得调 publish。
+	log.Notify = srv.NotifyChange
 	hs := &http.Server{
 		Addr:              addr,
 		Handler:           withCORS(srv.Handler()),
