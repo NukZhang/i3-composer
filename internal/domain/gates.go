@@ -14,6 +14,12 @@ type Gate struct {
 	Label  string `json:"label"`
 	OK     bool   `json:"ok"`
 	Detail string `json:"detail"`
+	// Unknown 表示这条闸「判不了」，而不是「没通过」。
+	//
+	// 差别很重要：视觉比对还没接时，那句「无未处理差异」是猜的，
+	// 不是算出来的。旧实现直接按 unhandled==0 判绿，页面就把
+	// 「没比对过」显示成「比过了、没差异」。判不了就说判不了。
+	Unknown bool `json:"unknown,omitempty"`
 }
 
 // Commit 是一个原子提交：整棵树落一个版本号，全落或全不落。
@@ -47,7 +53,10 @@ func TreeSHA(t Tree) string {
 //
 // unhandled 是「原型还原未处理差异数」，由 BFF 从视觉比对结果传入——
 // 本包不做图像比对，只消费它的结论，保持纯函数。
-func CheckCommit(c Commit, versions map[Artifact][]Version, unhandled int) []Gate {
+//
+// 传 nil 表示「还没比对过」，与「比对过、0 处差异」是两件事：
+// 前者这条闸判不了（Unknown），后者才算真的过了。
+func CheckCommit(c Commit, versions map[Artifact][]Version, unhandled *int) []Gate {
 	// 闸一：引用闭合。树里每个版本都得存在，且它的衍生引用与树一致。
 	closed := true
 	var miss []string
@@ -94,6 +103,17 @@ func CheckCommit(c Commit, versions map[Artifact][]Version, unhandled int) []Gat
 		firstMiss = miss[0]
 	}
 
+	// 闸四：原型还原。没有比对结果就不判——判不了就如实说判不了，
+	// 不能拿「未处理差异数默认为 0」假装比过了。
+	visual := Gate{Key: "visual", Label: "原型还原", OK: true, Unknown: true,
+		Detail: "视觉比对未接入：这条判不了，别当成证据"}
+	if unhandled != nil {
+		visual.OK = *unhandled == 0
+		visual.Unknown = false
+		visual.Detail = detail(visual.OK, "无未处理差异",
+			fmt.Sprintf("还有 %d 处差异未处理", *unhandled))
+	}
+
 	return []Gate{
 		{Key: "closure", Label: "引用闭合", OK: closed,
 			Detail: detail(closed, "无悬空引用", firstMiss)},
@@ -101,13 +121,14 @@ func CheckCommit(c Commit, versions map[Artifact][]Version, unhandled int) []Gat
 			Detail: detail(allAccepted, "无草稿", "存在未接受版本")},
 		{Key: "digest", Label: "镜像与树一致", OK: c.Digest != "",
 			Detail: detail(c.Digest != "", c.Digest, "未构建，无 digest")},
-		{Key: "visual", Label: "原型还原", OK: unhandled == 0,
-			Detail: detail(unhandled == 0, "无未处理差异",
-				fmt.Sprintf("还有 %d 处差异未处理", unhandled))},
+		visual,
 	}
 }
 
 // GatesPass 判定四闸是否全过。
+//
+// Unknown 的闸不挡发布：它表示这条「判不了」，不是「没过」。
+// 但要让人知道哪几条判不了——Gate.Unknown 就是给这个用的。
 func GatesPass(gs []Gate) bool {
 	for _, g := range gs {
 		if !g.OK {

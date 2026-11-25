@@ -93,11 +93,21 @@ sha256sum .i3-artifacts/blobs/sha256/<hex>   # 与事实里的 digest 一致
 - 同 (pbc, env) 换版本先停旧的；
 - 服务退出时 `StopAll()` 把起过的进程全部收掉；
 - 起进程失败/健康检查超时的路径也 Kill + Wait，不留僵尸；
-- `Alive` 用信号 0 问操作系统「这个 pid 还在吗」，不再拿 `ProcessState`
-  当判据——那个字段只有 `Wait` 之后才填，进程自己崩了它也还是 nil。
+- `Alive` 的判据是「reaper 收完了没有」——`ProcessState` 只有 `Wait` 之
+  后才填，而僵尸进程对信号 0 也照样应答，两者都判不出真死。
 
 判据很简单：验收跑完，`ps aux | grep app.bin` 只该看到当前在用的那几个部署；
 停掉服务，一个都不该剩。
+
+**8. 「没比对过」曾经被显示成「比过了、没差异」**
+
+四闸里的「原型还原」需要视觉比对结果。比对没接时，旧代码传一个默认的
+`unhandled = 0`，于是这条闸算出来是绿的，页面上写着「无未处理差异」——
+一个从来没跑过的检查，显示成通过。
+
+现在 `CheckCommit` 的第三个参数是 `*int`：传 `nil` 表示「没比对过」，
+这条闸会标成 `unknown`、画灰问号、文案写「视觉比对未接入：这条判不了」。
+判不了不挡发布（它不表示没过），但页面上不能拿它当证据。
 
 ---
 
@@ -109,7 +119,8 @@ docker compose up -d
 (cd web && npm ci && npm run build)
 
 # 2. 起服务（仓库根，因为静态根是相对路径 web/dist）
-go run ./cmd/i3-composer
+go build -o /tmp/i3-composer-bin ./cmd/i3-composer
+/tmp/i3-composer-bin
 
 # 3. 四套验收
 cd web/e2e
@@ -118,6 +129,12 @@ BASE=http://127.0.0.1:8080 node acceptance_flow.cjs  # 写路径：建任务 →
 BASE=http://127.0.0.1:8080 node acceptance_v26.cjs   # v2.6 界面：编排工作台 / 质量报告 / 验收台
 BASE=http://127.0.0.1:8080 node acceptance_full.cjs  # 从零：建单元 → 建任务 → 真跑六步 → 发布
 ```
+
+**为什么要先编译再跑、而不是 `go run`：** `go run` 把 SIGTERM 送给 `go`
+命令本身，编译出来的子进程未必收到。你以为重启了，8080 上还是上一次那个
+进程在应答——改的代码没生效，验收却全绿。这个坑是真踩过的。
+起之前先 `lsof -nP -iTCP:8080 -sTCP:LISTEN` 看是谁在应答；
+跑编译好的二进制，信号直达进程，退出时 `StopAll()` 也才收得掉部署进程。
 
 `acceptance_exec.cjs` 是最能说明问题的一套：它跑完一条交付后，
 逐条核对账本里的证据——代码制品能不能编译、测试条数对不对、
@@ -146,7 +163,7 @@ go test ./internal/wf/ -run TestDeliveryChainReallyBuildsTestsAndDeploys -v
 | 交付构建走 CI 服务 | 构建是本地 `go build`，不是 CI | `internal/pipeline.Build` | 换成调 CI 的实现；上层契约（返回 digest）不变 |
 | 真模型 | Agent 判定是本地规则引擎 | `internal/agentexec.decide` | 换成调模型网关；编排图与节点契约不变 |
 | 真业务数据 | 工具读仓内语料 | `internal/agentexec.runTool` | 换成调真实接口；工具名与入参映射不变 |
-| 真还原对比 | 视觉比对未接，四闸第三条恒过 | `domain.CheckCommit(unhandled)` | 接上比对结果传入 |
+| 真还原对比 | 视觉比对未接：这条闸判不了 | `domain.CheckCommit(..., unhandled *int)` | 传 nil 表示「没比对过」，闸显示「判不了」而不是「无差异」；接上比对后传入差异数 |
 
 这四处都是**换实现，不改结构**：编排、账本、闸门、页面都已经是真的了。
 

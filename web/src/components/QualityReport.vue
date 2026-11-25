@@ -23,6 +23,8 @@ const all = computed(() => props.gates.all || []);
 const pbcGates = computed(() => props.gates.pbc || []);
 const agGates = computed(() => props.gates.agent || []);
 const passAll = computed(() => all.value.filter((g) => g.ok).length);
+// 判不了的闸（比如此刻还没接视觉比对的那条）不算通过，但要单独说清楚。
+const unknownCount = computed(() => all.value.filter((g) => g.unknown).length);
 const canRelease = computed(() => all.value.length > 0 && passAll.value === all.value.length);
 
 // 这次提交构建出来的产物摘要。
@@ -91,16 +93,17 @@ const digest = computed(() => (props.head && props.builds[props.head]) || '');
     <div v-else class="card">
       <div class="ch">
         <span v-html="icon('check')" /><h3>交付四闸 · {{ head || '—' }}</h3><span class="spacer" />
-        <span class="tag" :class="passAll === 4 ? 't-ok' : 't-warn'">{{ passAll }}/4 通过</span>
+        <span class="tag" :class="passAll === 4 ? 't-ok' : 't-warn'">{{ passAll }}/4 通过<template v-if="unknownCount"> · {{ unknownCount }} 判不了</template></span>
       </div>
       <div class="row wrap" style="gap: 6px">
+        <!-- 判不了的闸用「?」和灰边，别用绿勾：绿勾是「查过了没问题」的意思。 -->
         <span
           v-for="g in all"
           :key="g.key"
           class="achip"
-          :style="'border-color:' + (g.ok ? 'var(--line-ok)' : 'var(--line-err)')"
+          :style="'border-color:' + (g.unknown ? 'var(--line-e)' : (g.ok ? 'var(--line-ok)' : 'var(--line-err)'))"
         >
-          <b :style="{ color: g.ok ? 'var(--ok)' : 'var(--err)' }">{{ g.ok ? '✓' : '✕' }}</b> {{ g.label }}
+          <b :style="{ color: g.unknown ? 'var(--tx-9)' : (g.ok ? 'var(--ok)' : 'var(--err)') }">{{ g.unknown ? '?' : (g.ok ? '✓' : '✕') }}</b> {{ g.label }}
           <span style="color: var(--tx-9); margin-left: 5px">{{ g.detail }}</span>
         </span>
         <span v-if="!all.length" class="small muted">还没有提交，四闸无从判定。</span>

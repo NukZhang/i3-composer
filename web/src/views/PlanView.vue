@@ -236,11 +236,13 @@ async function addAnnotationRound() {
             </div>
           </div>
           <div class="small" style="color: var(--tx-7); margin-bottom: 4px">交付四闸</div>
+          <!-- 判不了的闸（unknown）用灰色问号，不能画成绿勾：
+               绿勾说的是「查过了、没问题」，这里根本没查。 -->
           <div v-for="g in gates.all" :key="g.key" class="ck">
-            <span class="dot" :style="'background:' + (g.ok ? 'var(--bg-ok-soft4)' : 'var(--bg-err-soft3)') + ';color:' + (g.ok ? 'var(--ok)' : 'var(--err)')">
-              <span v-html="icon(g.ok ? 'check' : 'alert', 10)" />
+            <span class="dot" :style="'background:' + (g.unknown ? 'var(--bg-gray)' : (g.ok ? 'var(--bg-ok-soft4)' : 'var(--bg-err-soft3)') ) + ';color:' + (g.unknown ? 'var(--tx-7)' : (g.ok ? 'var(--ok)' : 'var(--err)'))">
+              <span v-html="icon(g.unknown ? 'alert' : (g.ok ? 'check' : 'alert'), 10)" />
             </span>
-            <span :style="{ color: g.ok ? 'var(--tx-4)' : 'var(--err)' }">{{ g.label }}</span>
+            <span :style="{ color: g.unknown ? 'var(--tx-7)' : (g.ok ? 'var(--tx-4)' : 'var(--err)') }">{{ g.label }}</span>
             <span class="small muted" style="margin-left: auto">{{ g.detail }}</span>
           </div>
           <hr class="sep" />
@@ -248,8 +250,9 @@ async function addAnnotationRound() {
             <span v-if="selCommit.tag" class="tag t-ok"><span v-html="icon('tag', 11)" /> {{ selCommit.tag }} 已交付</span>
             <button v-if="selCommit.tag" class="btn small" style="margin-left: auto" @click="S.view = 'release'">去发布页</button>
             <template v-else>
-              <span class="tag" :class="gates.all.length && gates.all.every((g) => g.ok) ? 't-ok' : 't-warn'">
-                {{ gates.all.filter((g) => g.ok).length }}/{{ gates.all.length }} 闸通过
+              <!-- 判不了的闸不算「通过」，单独说清楚是哪几条。 -->
+              <span class="tag" :class="gates.all.length && gates.all.every((g) => g.ok || g.unknown) ? 't-ok' : 't-warn'">
+                {{ gates.all.filter((g) => g.ok && !g.unknown).length }}/{{ gates.all.length }} 闸通过<template v-if="gates.all.some((g) => g.unknown)"> · {{ gates.all.filter((g) => g.unknown).length }} 判不了</template>
               </span>
               <span class="small muted">打 tag 由 SA 在发布页完成（审批 = 那条 publish.decided 事实）</span>
             </template>

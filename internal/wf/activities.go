@@ -303,8 +303,9 @@ func (a *Activities) Commit(ctx context.Context, in StepInput) (StepResult, erro
 	}
 	no := nextCommitNo(v.Commits)
 	// 提交前用 domain 的闸校验「引用闭合」，不闭合直接拒绝。
+	// 视觉比对没接：传 nil（这条判不了），这里也只看 gates[0]。
 	probe := domain.Commit{No: no, Tree: tree, Digest: "probe"}
-	if gates := domain.CheckCommit(probe, v.Versions, 0); !gates[0].OK {
+	if gates := domain.CheckCommit(probe, v.Versions, nil); !gates[0].OK {
 		return StepResult{OK: false, Step: in.Step, Detail: "引用不闭合：" + gates[0].Detail}, nil
 	}
 
@@ -503,9 +504,8 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 	}
 	head := v.Commits[0]
 
-	// 视觉比对未接入时按 0；接入后由比对结果传入。
-	unhandled := 0
-	gates := domain.CheckCommit(head, v.Versions, unhandled)
+	// 视觉比对未接入：传 nil。这条闸会说「判不了」，而不是「无差异」。
+	gates := domain.CheckCommit(head, v.Versions, nil)
 	if !domain.GatesPass(gates) {
 		var bad string
 		for _, g := range gates {

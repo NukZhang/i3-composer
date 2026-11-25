@@ -147,6 +147,18 @@ function check(name, ok, detail) {
     /交付四闸/.test(quality.text) && /实验对比/.test(quality.text) && /知识库准确度/.test(quality.text),
     { m: quality.metrics });
   check('5 知识库准确度有召回/忠实度/引用四格', quality.metrics >= 9, quality.metrics);
+  // 视觉比对还没接：PBC 单元的四闸里，这一条必须标成「判不了」，
+  // 不能画成绿勾冒充「比过了、没差异」。Agent 单元没有这条闸，
+  // 所以要看 PBC（fee）的投影。
+  const feeGates = await page.evaluate(async (b) => {
+    const r = await fetch(b + '/api/state?pbc=fee');
+    const j = await r.json();
+    return (j.gates && j.gates.all) || [];
+  }, BASE);
+  const visual = feeGates.find((g) => g.key === 'visual') || {};
+  check('5 视觉比对未接入时，这条闸标成判不了（不是假装通过）',
+    visual.unknown === true && /未接入/.test(visual.detail || ''),
+    visual);
 
   // ---- 6. 验证页 = 真人验收台（BA 的活：验收判定是 acceptAT） ----
   await page.click('.rolebtn:has-text("BA")');

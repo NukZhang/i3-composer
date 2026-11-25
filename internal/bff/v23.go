@@ -136,7 +136,9 @@ func pbcGates(v *store.View) []domain.Gate {
 	if len(v.Commits) == 0 {
 		return nil
 	}
-	return domain.CheckCommit(v.Commits[0], v.Versions, 0)
+	// 视觉比对还没接：传 nil，让这条闸显示「判不了」，
+	// 而不是拿默认 0 显示成「比过了、没差异」。
+	return domain.CheckCommit(v.Commits[0], v.Versions, nil)
 }
 
 // state 返回完整投影：版本线、提交线、部署、批注、工作项，外加 v2.3 的
