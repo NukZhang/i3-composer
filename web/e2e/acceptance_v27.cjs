@@ -302,6 +302,48 @@ async function waitFor(fn, ms, step) {
   await page.waitForTimeout(800);
   await shot('加入后的侧栏');
 
+  // ---- 9.1 三种单元的发布闸（方案页 → 提交历史 → HEAD）----
+  // 闸的结论必须和这一轮的交付对得上：此刻还没有别的流程动过 Agent 编排。
+  // 截的是「交付完、还没被改动」那一刻的真实闸门。
+  //
+  // 加入已有之后当前项目可能已切到别人的项目：先点回本项目，
+  // 它下面的单元行才会出现在侧栏里（否则点不到单元，截出来是别的页面）。
+  await page.evaluate((name) => {
+    const rows = Array.from(document.querySelectorAll('.sidebar .trow'));
+    const p = rows.find((x) => x.textContent.trim().startsWith(name));
+    if (p) p.click();
+  }, projName);
+  await page.waitForTimeout(600);
+  for (const u of unitsNow) {
+    await page.evaluate((name) => {
+      const rows = Array.from(document.querySelectorAll('.sidebar .trow'));
+      const p = rows.find((x) => x.textContent.trim().startsWith(name));
+      if (p) p.click();
+    }, u.name);
+    await page.waitForTimeout(500);
+    await page.evaluate(() => {
+      const s = Array.from(document.querySelectorAll('.sidebar .trow.sub2')).find((x) => x.textContent.trim().startsWith('方案'));
+      if (s) s.click();
+    });
+    await page.waitForTimeout(600);
+    await page.evaluate(() => {
+      const t = Array.from(document.querySelectorAll('.ptab')).find((x) => x.textContent.includes('提交历史'));
+      if (t) t.click();
+    });
+    await page.waitForTimeout(500);
+    await page.evaluate(() => {
+      const c = document.querySelector('.citem');
+      if (c) c.click();
+    });
+    await page.waitForTimeout(600);
+    await page.evaluate(() => {
+      const ck = document.querySelector('.ck');
+      if (ck) (ck.closest('.card') || ck).scrollIntoView({ block: 'center' });
+    });
+    await page.waitForTimeout(300);
+    await shot('门禁-' + u.id);
+  }
+
   // ---- 10. 刷新后仍在（持久化在账本里，不在前端内存）----
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1500);

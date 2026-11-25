@@ -1,8 +1,8 @@
 {
   "run": "fin",
   "project": {
-    "id": "p401b",
-    "ws": "w2d23",
+    "id": "p6ccf",
+    "ws": "w766a",
     "name": "门禁与访客fin",
     "owner": "PA"
   },
@@ -14,7 +14,7 @@
         "name": "门禁通行",
         "code": "PBC-GATEFIN",
         "kind": "pbc",
-        "proj": "p401b",
+        "proj": "p6ccf",
         "head": "",
         "line": "",
         "tags": null,
@@ -24,7 +24,7 @@
       },
       "item": "US-04",
       "tag": "v1.0.0",
-      "digest": "sha256:0d5850d4b81cc5bcfa7789ddf6b22904468f96ffea48933aaa5e3cbc7a0c05b9",
+      "digest": "sha256:c4d8d3c9fb25671439fe98e8704194404699716d54680006d06a077a4cc22ece",
       "test": {
         "by": "x-qa",
         "commit": "1.0.1",
@@ -41,7 +41,7 @@
         "code": "PBC-VISITORFIN",
         "kind": "agent",
         "agentId": "x-qc",
-        "proj": "p401b",
+        "proj": "p6ccf",
         "head": "",
         "line": "",
         "tags": null,
@@ -480,7 +480,7 @@
       },
       "item": "US-05",
       "tag": "v1.0.0",
-      "digest": "sha256:811ffd9b2edd81cb9fb5fe74de15d12b9bc61882d8136c391442ab970b4dd0b6",
+      "digest": "sha256:8402d2829b5ec4ac258b4df0cf1a94185c67ad6e95d186e16a7fde9317cf937b",
       "test": {
         "by": "x-qa",
         "commit": "1.0.1",
@@ -497,7 +497,7 @@
         "code": "PBC-PASSFIN",
         "kind": "hybrid",
         "agentId": "x-qc",
-        "proj": "p401b",
+        "proj": "p6ccf",
         "head": "",
         "line": "",
         "tags": null,
@@ -936,7 +936,7 @@
       },
       "item": "US-06",
       "tag": "v1.0.0",
-      "digest": "sha256:695fb70c1e2fae0d03b39030c8238186601becf21b0b0adbbd517f9906c6bcdf",
+      "digest": "sha256:755cebe647a8f1d0fcb115808f0ce24a9873bc3da5c2de6c08c92569c4a9d49c",
       "test": {
         "by": "x-qa",
         "commit": "1.0.1",

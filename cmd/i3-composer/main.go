@@ -140,6 +140,15 @@ func run() error {
 	}
 	srv := bff.NewServer(log, dc, bff.NewSessions([]byte(sessKey)), wfComp)
 	srv.WfName = wfName
+	srv.LocalPort = bff.PortOfAddr(addr)
+	// 启动就把 pubsub 投递地址核对一遍：sidecar 只往它的 app-port 投事件，
+	// 本实例监听别的端口时工作流照跑、事件一条也收不到，验收里极难看出原因。
+	srv.Pubsub = srv.CheckPubsubWiring(context.Background())
+	if w, ok := srv.Pubsub["ok"].(bool); ok && !w {
+		slog.Warn("pubsub 投递地址不一致", "detail", srv.Pubsub["detail"])
+	} else if d, ok := srv.Pubsub["detail"].(string); ok {
+		slog.Info("pubsub 投递地址", "detail", d)
+	}
 	// 每一次事实落链（包括 workflow activity 写的）都通知 SSE：前端收到后重拉全量投影。
 	// 这样「页面自动推进」不依赖某个 handler 是否记得调 publish。
 	log.Notify = srv.NotifyChange

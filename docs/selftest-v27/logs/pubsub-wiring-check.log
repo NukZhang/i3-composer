@@ -1,0 +1,30 @@
+== 场景：本实例监听 8091，sidecar 的 app-port 是 8080（不一致）==
+
+$ ADDR=:8091 ... /tmp/i3-composer-bin
+2026/11/25 10:20:34 WARN pubsub 投递地址不一致 detail="sidecar 的 app-port=8080，本实例监听 8091：pubsub 事件只会投到 8080，本实例一条也收不到。让本实例监听 sidecar 的 app-port，或为本实例单独起一个 sidecar。"
+2026/11/25 10:20:34 INFO BFF 监听 addr=:8091 stateStore=statestore workflowComponent=dapr
+
+$ GET /api/health
+(8091 的 health.pubsub)
+{
+  "checked": true,
+  "detail": "sidecar 的 app-port=8080，本实例监听 8091：pubsub 事件只会投到 8080，本实例一条也收不到。让本实例监听 sidecar 的 app-port，或为本实例单独起一个 sidecar。",
+  "localPort": 8091,
+  "ok": false,
+  "sidecarAddress": "host.docker.internal",
+  "sidecarAppPort": 8080
+}
+
+== 对照：监听 8080（与 sidecar 一致）==
+{
+    "ok": true,
+    "pubsub": {
+        "checked": true,
+        "detail": "sidecar 的 app-port=8080，与本实例一致",
+        "localPort": 8080,
+        "ok": true,
+        "sidecarAddress": "host.docker.internal",
+        "sidecarAppPort": 8080
+    },
+    "time": "2026-11-25T10:21:02Z"
+}

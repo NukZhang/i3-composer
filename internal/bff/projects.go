@@ -98,11 +98,18 @@ func (s *Server) newProjectID(ctx context.Context) (string, error) {
 		used[p.ID] = true
 	}
 	base := strings.ToLower(newID("p"))
+	return uniqueID(base, used), nil
+}
+
+// uniqueID 在 base 已占用时依次试 base0、base1……，直到不重。
+// 项目与工作空间都走这里：随机碰撞概率低，但账本是长期存在的，
+// 撞号会静默把两条记录合成一条，事后很难看出发生过什么。
+func uniqueID(base string, used map[string]bool) string {
 	id := base
 	for i := 0; used[id]; i++ {
 		id = fmt.Sprintf("%s%d", base, i)
 	}
-	return id, nil
+	return id
 }
 
 // createProject 新建一个项目。start=brd 时顺带建 0.1 的 BRD 草稿。
@@ -245,7 +252,16 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request, c reqCt
 	if in.Use != "" && in.Use != "org" && in.Use != "team" {
 		return fmt.Errorf("%w：用途只能是 org（按客户）或 team（按团队）", errBadRequest)
 	}
-	id := strings.ToLower(newID("w"))
+	pv, err := s.loadProjects(r.Context())
+	if err != nil {
+		return err
+	}
+	used := map[string]bool{}
+	for _, w := range pv.Workspaces {
+		used[w.ID] = true
+	}
+	// 随机 id 也要查重：账本是长期的，撞号会让两个工作空间共用一条记录。
+	id := uniqueID(strings.ToLower(newID("w")), used)
 	if err := s.Log.Ensure(r.Context(), projectsLog); err != nil {
 		return err
 	}

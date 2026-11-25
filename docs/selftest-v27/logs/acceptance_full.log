@@ -1,17 +1,18 @@
 PASS 1 pubsub 订阅端在线（声明了主题与路由） :: {"pubsubname":"pubsub","topic":"tag.created","route":"/api/events/tag.created"}
-PASS 2 从零建单元（PBC 构成） :: {"code":201,"body":{"id":"e2e62006","kind":"pbc","proj":"p1"}}
+PASS 2 从零建单元（PBC 构成） :: {"code":201,"body":{"id":"e2e84948","kind":"pbc","proj":"p1"}}
 PASS 3 建任务 :: {"id":"US-10"}
-PASS 4 DA 发起交付（真实 Dapr workflow） :: {"code":202,"body":{"id":"US-10","instance":"v27s_e2e62006_US-10"}}
+PASS 4 DA 发起交付（真实 Dapr workflow） :: {"code":202,"body":{"id":"US-10","instance":"v27h_e2e84948_US-10"}}
 PASS 5 workflow 跑完六步停在发布闸 :: {"run":"waiting","step":6}
 PASS 6 代码制品带可编译的文件（go.mod / main.go / main_test.go） :: ["go.mod","main.go","main_test.go"]
-PASS 6 AT 制品有验收标准正文 :: "# 端到端验收单元 · 端到端验收-1795588162045 · 验收标准\n\n> 由 X-测试工程师生成 · 11-2"
+PASS 6 AT 制品有验收标准正文 :: "# 端到端验收单元 · 端到端验收-1795602184972 · 验收标准\n\n> 由 X-测试工程师生成 · 11-2"
 PASS 7 账本里有 test.run 事实（真跑过测试） :: ["item.created","item.run.started","item.step.done","item.step.done","item.step.done","test.run","item.step.done","build.succeeded","item.step.done","deploy.succeeded","item.step.done","item.waiting"]
-PASS 8 构建产物 digest 存在且是 sha256 内容摘要 :: "sha256:964dbcb71e3a3b736ec9715d9e9fefbbdefffaf449bca80f9c9aa6446777b293"
-PASS 9 部署事实带真实地址 :: "http://127.0.0.1:61696"
-PASS 9 部署地址真的能访问，/healthz 返回 200 :: {"code":200,"body":"{\"name\":\"端到端验收单元\",\"ok\":true,\"unit\":\"e2e62006\"}\n"}
+PASS 8 构建产物 digest 存在且是 sha256 内容摘要 :: "sha256:91f1bef36c7535f431a45b81309ff4a5948c83b2cfb5fe5616997bc277414dc2"
+PASS 9 部署事实带真实地址 :: "http://127.0.0.1:56020"
+PASS 9 部署地址真的能访问，/healthz 返回 200 :: {"code":200,"body":"{\"name\":\"端到端验收单元\",\"ok\":true,\"unit\":\"e2e84948\"}\n"}
 PASS 10 SA 拍板发布 :: {"code":202,"body":{"approve":true,"id":"US-10"}}
 PASS 10 发布完成（有 tag 与版本） :: {"tag":"v1.0.0","version":"1.0.1"}
+PASS 11 pubsub 投递地址与本实例端口一致 :: {"checked":true,"detail":"sidecar 的 app-port=8080，与本实例一致","localPort":8080,"ok":true,"sidecarAddress":"host.docker.internal","sidecarAppPort":8080}
 PASS 11 pubsub 收到的事件落了 event.received 事实 :: ["item.changed","tag.created"]
-PASS 11 事件确实经由总线（收到的条数 ≥ 1） :: 72
+PASS 11 事件确实经由总线（收到的条数 ≥ 1） :: 71
 PASS 页面无 JS 异常 :: []
-SUMMARY 16/16 passed
+SUMMARY 17/17 passed
