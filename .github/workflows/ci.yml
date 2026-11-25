@@ -1,0 +1,67 @@
+# 仓库自己的 CI：格式、静态检查、编译、单测、前端构建。
+#
+# 这里跑的是「代码本身还立得住吗」，不是产品里的交付构建。
+# 产品里的 Build 是 internal/pipeline 的真编译（产物进内容寻址仓库），
+# 这两件事不是一回事，别混着说 —— 这一条以前在文档里被含糊带过。
+#
+# 全套 Playwright 验收不在 CI 里跑：那四套要 Dapr sidecar（placement /
+# scheduler / redis）与真实进程部署，在 CI 上要么跑不动、要么只能跑成假绿。
+# 它们在本地跑，怎么跑见 docs/EXECUTION.md 第三节。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 格式
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "以下文件没过 gofmt："
+            echo "$out"
+            exit 1
+          fi
+
+      - name: 静态检查
+        run: go vet ./...
+
+      - name: 编译
+        run: go build ./...
+
+      # 单测里有真编译、真起进程、真等健康检查的用例：
+      # 它们需要 go 工具链（有）和 sleep（有），不需要 Dapr。
+      - name: 单测
+        run: go test ./... -count=1
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建
+        run: npm run build
