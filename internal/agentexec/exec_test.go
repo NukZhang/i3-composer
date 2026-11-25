@@ -177,3 +177,51 @@ func TestExecuteRejectsInvalidFlow(t *testing.T) {
 		t.Fatal("没有开始节点的编排必须被拒绝")
 	}
 }
+
+// `.length > 0` 这种写法必须真的能用。
+//
+// 早先 evalCond 先按 `>` 拆成 "hits.length" 与 "0"，再去上游找一个
+// 名叫 "hits.length" 的字段——永远找不到，于是这一半条件永远为假，
+// 需要转人工的对话被判成不用转。真实编排里就有
+// "escalate || hits.length > 0" 这样的条件。
+func TestLengthConditionIsEvaluated(t *testing.T) {
+	e := &Exec{}
+	outs := map[string]map[string]any{
+		"n4": {"hits": []any{map[string]any{"rule": "R-03"}, map[string]any{"rule": "R-05"}},
+			"escalate": false},
+	}
+	// 只有 hits 命中综述时，右侧这半边要顶得住。
+	if !e.evalCond("hits.length > 0", outs) {
+		t.Fatal("hits 有 2 条，hits.length > 0 应为真")
+	}
+	if !e.evalCond("escalate || hits.length > 0", outs) {
+		t.Fatal("escalate 为假但 hits 非空，整体应为真")
+	}
+	// 没有命中时不能误判。
+	if e.evalCond("hits.length > 0", map[string]map[string]any{"n4": {"hits": []any{}}}) {
+		t.Fatal("hits 为空，hits.length > 0 应为假")
+	}
+	// 字段比较照常。
+	outs2 := map[string]map[string]any{"n4": {"risk": "high"}}
+	if !e.evalCond(`risk == "high"`, outs2) {
+		t.Fatal(`risk == "high" 应为真`)
+	}
+	if e.evalCond(`risk == "low"`, outs2) {
+		t.Fatal(`risk == "low" 应为假`)
+	}
+}
+
+// 同样的输入必须得到同样的结论：上游有多个节点时，
+// 取同名字段不能靠 map 的随机迭代顺序。
+func TestLookupIsDeterministic(t *testing.T) {
+	e := &Exec{}
+	outs := map[string]map[string]any{
+		"n9": {"flag": true},
+		"n2": {"flag": false},
+	}
+	for i := 0; i < 50; i++ {
+		if got := e.lookup("flag", outs); got != false {
+			t.Fatalf("应取节点 id 最小的那个输出（n2=false），第 %d 次得到 %v", i, got)
+		}
+	}
+}

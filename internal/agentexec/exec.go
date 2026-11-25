@@ -23,6 +23,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -457,44 +458,19 @@ func (e *Exec) evalCond(cond string, outs map[string]map[string]any) bool {
 	if cond == "" || strings.EqualFold(cond, "else") {
 		return true
 	}
+	// 先认「整句就是一个比较」：右边可能是带 > 的字符串
+	// （escalate || hits.length > 0 里的右半边），
+	// 先切 || 的话会被切成 "hits.length > 0" 之外的东西。
+	if match := condOperand.FindStringSubmatch(cond); match != nil {
+		return compare(match[1], match[2], match[3], outs, e)
+	}
 	if i := strings.Index(cond, "||"); i >= 0 {
 		return e.evalCond(cond[:i], outs) || e.evalCond(cond[i+2:], outs)
 	}
 	if i := strings.Index(cond, "&&"); i >= 0 {
 		return e.evalCond(cond[:i], outs) && e.evalCond(cond[i+2:], outs)
 	}
-	// 字段比较：a == "b" / a != 2 / a > 0
-	for _, op := range []string{"==", "!=", ">=", "<=", ">", "<"} {
-		if i := strings.Index(cond, op); i > 0 {
-			left := strings.TrimSpace(cond[:i])
-			right := strings.TrimSpace(cond[i+len(op):])
-			lv := e.lookup(left, outs)
-			rv := strings.Trim(right, `"'`)
-			switch op {
-			case "==":
-				return fmt.Sprint(lv) == rv
-			case "!=":
-				return fmt.Sprint(lv) != rv
-			case ">", ">=", "<", "<=":
-				lf, ok1 := toFloat(lv)
-				rf, ok2 := toFloat(rv)
-				if !ok1 || !ok2 {
-					return false
-				}
-				switch op {
-				case ">":
-					return lf > rf
-				case ">=":
-					return lf >= rf
-				case "<":
-					return lf < rf
-				default:
-					return lf <= rf
-				}
-			}
-		}
-	}
-	// 布尔字段：escalate / hits.length > 0 之类。
+	// 布尔字段为真，或 <字段>.length > 0。
 	if strings.HasSuffix(cond, ".length > 0") {
 		field := strings.TrimSuffix(cond, ".length > 0")
 		return len(sliceFrom(outs, field)) > 0
@@ -503,15 +479,71 @@ func (e *Exec) evalCond(cond string, outs map[string]map[string]any) bool {
 	return boolFrom(v)
 }
 
+// condOperand 匹配「左操作数 运算符 右操作数」，两端都不许再含运算符或逻辑连接符。
+//
+// 这是 evalCond 的第一优先：整句是个比较，就先按比较算。
+// 含 || / && 的句子匹配不上，会落到下面的拆分逻辑，逐半边再判。
+var condOperand = regexp.MustCompile(`^([^=!<>|&]*?)\s*(==|!=|>=|<=|>|<)\s*([^=!<>|&]*)$`)
+
+// compare 算一个比较表达式。
+func compare(left, op, right string, outs map[string]map[string]any, e *Exec) bool {
+	right = strings.Trim(strings.TrimSpace(right), `"'`)
+	// 右边是数字字面量时按数字比（hits.length > 0）。
+	if rf, err := strconv.ParseFloat(right, 64); err == nil {
+		lf, ok := toFloat(e.lookup(left, outs))
+		if !ok {
+			return false
+		}
+		switch op {
+		case ">":
+			return lf > rf
+		case ">=":
+			return lf >= rf
+		case "<":
+			return lf < rf
+		case "<=":
+			return lf <= rf
+		}
+		// == / != 落到下面的字符串比较：bool 与 "true" 之类仍能对上。
+	}
+	lv := e.lookup(left, outs)
+	switch op {
+	case "==":
+		return fmt.Sprint(lv) == right
+	case "!=":
+		return fmt.Sprint(lv) != right
+	}
+	return false
+}
+
 // lookup 在上游输出里找一个字段。
+//
+// 字段可能是 "hits.length"（数组长度），先拆掉后缀再取值。
 func (e *Exec) lookup(field string, outs map[string]map[string]any) any {
 	field = strings.TrimSpace(field)
-	for _, o := range outs {
-		if v, ok := o[field]; ok {
+	if base, ok := strings.CutSuffix(field, ".length"); ok {
+		return len(sliceFrom(outs, base))
+	}
+	for _, id := range keysInOrder(outs) {
+		if v, ok := outs[id][field]; ok {
 			return v
 		}
 	}
 	return nil
+}
+
+// keysInOrder 按节点 id 排序取输出。
+//
+// map 的迭代顺序在 Go 里是随机的：两个节点都输出同名字段时，
+// 不排序的话「取到谁的」每轮都不一样，同样的输入会得出不同的结论。
+// 节点 id（n1、n2…）正好是编排里的先后顺序。
+func keysInOrder(outs map[string]map[string]any) []string {
+	ids := make([]string, 0, len(outs))
+	for id := range outs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // search 在知识库里检索：按关键词命中度排序，带出处。
@@ -755,8 +787,8 @@ func boolFrom(v any) bool {
 
 // sliceFrom 在各节点输出里找一个数组字段（分支判定用）。
 func sliceFrom(outs map[string]map[string]any, field string) []any {
-	for _, o := range outs {
-		if v, ok := o[field]; ok {
+	for _, id := range keysInOrder(outs) {
+		if v, ok := outs[id][field]; ok {
 			if s, ok := v.([]any); ok {
 				return s
 			}
