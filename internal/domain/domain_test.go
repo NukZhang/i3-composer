@@ -85,18 +85,29 @@ func TestCheckCommitFourGates(t *testing.T) {
 
 	// 全部就绪：只剩 digest 与视觉差异两道闸。
 	c := Commit{No: "1.0.1", Tree: tree}
-	g := CheckCommit(c, m, 0)
+	g := CheckCommit(c, m, intPtr(0))
 	if !g[0].OK || !g[1].OK {
 		t.Fatalf("引用闭合与 accepted 应通过：%+v", g)
 	}
 	if g[2].OK {
 		t.Error("未构建时 digest 闸不应通过")
 	}
-	if !GatesPass(CheckCommit(Commit{No: "1.0.1", Tree: tree, Digest: "sha256:x"}, m, 0)) {
+	if !GatesPass(CheckCommit(Commit{No: "1.0.1", Tree: tree, Digest: "sha256:x"}, m, intPtr(0))) {
 		t.Error("四闸齐备时应当通过")
 	}
-	if GatesPass(CheckCommit(Commit{No: "1.0.1", Tree: tree, Digest: "sha256:x"}, m, 3)) {
+	if GatesPass(CheckCommit(Commit{No: "1.0.1", Tree: tree, Digest: "sha256:x"}, m, intPtr(3))) {
 		t.Error("有未处理视觉差异时不应通过")
+	}
+	// 没比对过 ≠ 比对过没差异：前者这条闸判不了，不能说它过了。
+	unknown := CheckCommit(Commit{No: "1.0.1", Tree: tree, Digest: "sha256:x"}, m, nil)
+	if !unknown[3].Unknown {
+		t.Error("没有视觉比对结果时，这条闸应标成判不了")
+	}
+	if !unknown[3].OK {
+		t.Error("判不了不该挡住发布（它不表示没过）")
+	}
+	if CheckCommit(Commit{No: "1.0.1", Tree: tree, Digest: "sha256:x"}, m, intPtr(0))[3].Unknown {
+		t.Error("真的比对过之后就不该再标判不了")
 	}
 
 	// 引用不闭合：AD 引用的 Proto 版本与树不一致。
@@ -112,16 +123,19 @@ func TestCheckCommitFourGates(t *testing.T) {
 		ver(Backlog, "1.0.1", StAccepted, Ref{AT, "1.0.1"}),
 		ver(Code, "1.0.1", StAccepted, Ref{AT, "1.0.1"}, Ref{Backlog, "1.0.1"}),
 	)
-	if g := CheckCommit(Commit{No: "1.0.1", Tree: bad}, m2, 0); g[0].OK {
+	if g := CheckCommit(Commit{No: "1.0.1", Tree: bad}, m2, intPtr(0)); g[0].OK {
 		t.Error("悬空引用时引用闭合闸不应通过")
 	}
 
 	// 草稿进树：accepted 闸不通过。
 	m3 := line(ver(PRD, "1.0.1", StDraft))
-	if g := CheckCommit(Commit{No: "1.0.1", Tree: Tree{PRD: "1.0.1"}}, m3, 0); g[1].OK {
+	if g := CheckCommit(Commit{No: "1.0.1", Tree: Tree{PRD: "1.0.1"}}, m3, intPtr(0)); g[1].OK {
 		t.Error("草稿入树时 accepted 闸不应通过")
 	}
 }
+
+// intPtr 给 CheckCommit 的「视觉差异数」传一个真的比过的值。
+func intPtr(n int) *int { return &n }
 
 func TestTreeSHAIsOrderIndependent(t *testing.T) {
 	a := Tree{PRD: "1.0.1", AD: "1.0.1", Code: "1.0.1"}

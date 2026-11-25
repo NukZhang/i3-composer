@@ -41,6 +41,7 @@ const (
 	FactCommitCreated    = "commit.created"
 	FactTagCreated       = "tag.created"
 	FactBuildSucceeded   = "build.succeeded"
+	FactTestRun          = "test.run"
 	FactDeploySucceeded  = "deploy.succeeded"
 	FactItemCreated      = "item.created"
 	FactItemRunStarted   = "item.run.started"
@@ -81,6 +82,10 @@ const (
 	FactDefect       = "defect.created"
 	FactVerifyChat   = "verify.chat"
 
+	// v2.6：pubsub 的收件事实。发出去的每条事件都在这边留下一条
+	// 「收到了」的记录——收发闭环是可查的，不是靠信任。
+	FactEventReceived = "event.received"
+
 	// v2.4：客服工单 PBC 与收费缴费重复，从演示项目里删除。
 	FactUnitRemoved = "unit.removed"
 )
@@ -108,6 +113,7 @@ type head struct {
 type Store struct {
 	c        *dapr.Client
 	state    string     // state store 组件名
+	prefix   string     // 账本前缀：同一套 Dapr 上跑多套账本时用它隔开
 	mu       sync.Mutex // 进程内降噪；跨副本靠 etag CAS
 	maxRetry int
 
@@ -117,15 +123,24 @@ type Store struct {
 	Notify func(pbc string)
 }
 
-func New(c *dapr.Client, stateStore string) *Store {
-	return &Store{c: c, state: stateStore, maxRetry: 32}
+// New 造一个账本。prefix 为空时键就是 "log:<pbc>:…"；
+// 给了前缀则是 "<prefix>/log:<pbc>:…"——同一套 Dapr 上跑隔离环境时用。
+func New(c *dapr.Client, stateStore string, prefix ...string) *Store {
+	p := ""
+	if len(prefix) > 0 {
+		p = prefix[0]
+	}
+	return &Store{c: c, state: stateStore, prefix: p, maxRetry: 32}
 }
 
-func headKey(pbc string) string { return "log:" + pbc + ":head" }
+// Prefix 是账本前缀（空表示默认账本）。
+func (s *Store) Prefix() string { return s.prefix }
+
+func (s *Store) headKey(pbc string) string { return s.prefix + "log:" + pbc + ":head" }
 
 // factKey 用 seq + 哈希共同定位：并发写同一 seq 时互不覆盖。
-func factKey(pbc string, seq int, hash string) string {
-	return "log:" + pbc + ":" + fmt.Sprintf("%08d", seq) + ":" + shortHash(hash)
+func (s *Store) factKey(pbc string, seq int, hash string) string {
+	return s.prefix + "log:" + pbc + ":" + fmt.Sprintf("%08d", seq) + ":" + shortHash(hash)
 }
 
 func shortHash(hash string) string {
@@ -143,7 +158,7 @@ func shortHash(hash string) string {
 // etag 为空的写入在 first-write-wins 下没有前置条件，并发时会互相覆盖。
 // 已存在则原样返回，可重复调用。
 func (s *Store) Ensure(ctx context.Context, pbc string) error {
-	_, etag, err := s.c.GetState(ctx, s.state, headKey(pbc))
+	_, etag, err := s.c.GetState(ctx, s.state, s.headKey(pbc))
 	if err != nil {
 		return err
 	}
@@ -153,13 +168,13 @@ func (s *Store) Ensure(ctx context.Context, pbc string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// 双检：拿锁期间别人可能已经建好了。
-	if _, etag, err = s.c.GetState(ctx, s.state, headKey(pbc)); err != nil {
+	if _, etag, err = s.c.GetState(ctx, s.state, s.headKey(pbc)); err != nil {
 		return err
 	}
 	if etag != "" {
 		return nil
 	}
-	_, err = s.c.SetState(ctx, s.state, headKey(pbc), head{Seq: 0, Hash: ""}, "")
+	_, err = s.c.SetState(ctx, s.state, s.headKey(pbc), head{Seq: 0, Hash: ""}, "")
 	return err
 }
 
@@ -211,7 +226,7 @@ func (s *Store) AppendOp(ctx context.Context, pbc, opID, typ, actor string, payl
 var errNoLog = errors.New("store: 日志未建立")
 
 func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, payload json.RawMessage) (Fact, error) {
-	rawHead, etag, err := s.c.GetState(ctx, s.state, headKey(pbc))
+	rawHead, etag, err := s.c.GetState(ctx, s.state, s.headKey(pbc))
 	if err != nil {
 		return Fact{}, err
 	}
@@ -250,10 +265,10 @@ func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, pa
 
 	// 先写事实，再推进 head。崩在中间只会留下一条无人引用的孤儿事实；
 	// 并发输家写的事实落在另一个哈希键上，同样不会被 head 引用。
-	if _, err := s.c.SetState(ctx, s.state, factKey(pbc, f.Seq, f.Hash), f, ""); err != nil {
+	if _, err := s.c.SetState(ctx, s.state, s.factKey(pbc, f.Seq, f.Hash), f, ""); err != nil {
 		return Fact{}, err
 	}
-	if _, err := s.c.SetState(ctx, s.state, headKey(pbc),
+	if _, err := s.c.SetState(ctx, s.state, s.headKey(pbc),
 		head{Seq: f.Seq, Hash: f.Hash}, etag); err != nil {
 		return Fact{}, err
 	}
@@ -282,7 +297,7 @@ func (s *Store) findOp(ctx context.Context, pbc string, h head, opID string) (*F
 // Load 读出某个 PBC 的全部事实，按 seq 升序。遇哈希链断裂立即报错——
 // 宁可服务不可用，也不能把被篡改的日志当成真的。
 func (s *Store) Load(ctx context.Context, pbc string) ([]Fact, error) {
-	rawHead, _, err := s.c.GetState(ctx, s.state, headKey(pbc))
+	rawHead, _, err := s.c.GetState(ctx, s.state, s.headKey(pbc))
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +320,7 @@ func (s *Store) loadChain(ctx context.Context, pbc string, h head, limit int) ([
 	seq, hash := h.Seq, h.Hash
 	back := make([]Fact, 0, 32)
 	for seq >= 1 {
-		raw, _, err := s.c.GetState(ctx, s.state, factKey(pbc, seq, hash))
+		raw, _, err := s.c.GetState(ctx, s.state, s.factKey(pbc, seq, hash))
 		if err != nil {
 			return nil, err
 		}

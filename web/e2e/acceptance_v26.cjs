@@ -36,8 +36,14 @@ function check(name, ok, detail) {
     };
   }, BASE);
   check('1 首屏挂载 Vue', boot.root.includes('工作台'), boot.root.slice(0, 40));
-  check('1 单元只剩三个构成（fee/qa/dun，ticket 已撤）',
-    boot.units.length === 3 && boot.units.some((u) => u.startsWith('qa:agent:x-qc')) && boot.units.some((u) => u.startsWith('dun:hybrid:x-dun')),
+  // 只数种子带来的那几个单元：别的验收脚本（acceptance_full）会在同一本账上
+  // 建新单元，那是正常的，不该让这条断言误报。
+  const seededUnits = boot.units
+    .map((u) => u.split(':')[0])
+    .filter((id) => ['fee', 'qa', 'dun', 'ticket'].indexOf(id) >= 0);
+  check('1 种子单元只剩三个构成（fee/qa/dun，ticket 已撤）',
+    seededUnits.length === 3 && seededUnits.indexOf('ticket') < 0 &&
+    boot.units.some((u) => u.startsWith('qa:agent:x-qc')) && boot.units.some((u) => u.startsWith('dun:hybrid:x-dun')),
     boot.units);
   check('1 Agent 工厂是七名 worker（含 X-质检员）',
     boot.agents.length === 7 && boot.agents.includes('x-qc'), boot.agents);
@@ -141,6 +147,18 @@ function check(name, ok, detail) {
     /交付四闸/.test(quality.text) && /实验对比/.test(quality.text) && /知识库准确度/.test(quality.text),
     { m: quality.metrics });
   check('5 知识库准确度有召回/忠实度/引用四格', quality.metrics >= 9, quality.metrics);
+  // 视觉比对还没接：PBC 单元的四闸里，这一条必须标成「判不了」，
+  // 不能画成绿勾冒充「比过了、没差异」。Agent 单元没有这条闸，
+  // 所以要看 PBC（fee）的投影。
+  const feeGates = await page.evaluate(async (b) => {
+    const r = await fetch(b + '/api/state?pbc=fee');
+    const j = await r.json();
+    return (j.gates && j.gates.all) || [];
+  }, BASE);
+  const visual = feeGates.find((g) => g.key === 'visual') || {};
+  check('5 视觉比对未接入时，这条闸标成判不了（不是假装通过）',
+    visual.unknown === true && /未接入/.test(visual.detail || ''),
+    visual);
 
   // ---- 6. 验证页 = 真人验收台（BA 的活：验收判定是 acceptAT） ----
   await page.click('.rolebtn:has-text("BA")');

@@ -29,6 +29,18 @@ const canBacklog = computed(() => (S.acts || []).includes('backlog'));
 const canBuild = computed(() => (S.acts || []).includes('build'));
 const canTag = computed(() => (S.acts || []).includes('tag'));
 
+// 这一轮真跑出来的结论：测试条数、构建摘要、部署地址。
+const testResult = computed(() => (S.state && S.state.test) || null);
+const buildDigest = computed(() => {
+  const st = S.state || {};
+  const head = (st.commits || [])[0];
+  return head ? (st.builds || {})[head.no] || '' : '';
+});
+const deployURL = computed(() => {
+  const ds = (S.state && S.state.deploys) || [];
+  return ds.length ? ds[ds.length - 1].url : '';
+});
+
 const note = ref('');
 const busy = ref(false);
 
@@ -79,6 +91,7 @@ function factText(f) {
     'item.published': '已发布（打 tag）',
     'item.blocked': '受阻',
     'tag.created': '打了 tag',
+    'test.run': '真跑测试',
     'build.succeeded': '镜像构建完成',
     'deploy.succeeded': '部署完成',
     'artifact.drafted': '制品草稿落账',
@@ -89,6 +102,28 @@ function factText(f) {
     'unit.created': '交付单元登记',
     'brd.saved': 'BRD 保存',
   }[f.type] || f.type;
+}
+
+// factDetail 从事实 payload 里取出结论。账本不只记「发生过什么」，
+// 还要能就地核对「到底发生了什么」——测试几条过、digest 是哪个、部署在哪。
+function factDetail(f) {
+  const p = f.payload || {};
+  switch (f.type) {
+    case 'test.run':
+      return `${p.pass}/${p.total} 通过` + (p.failures && p.failures.length ? `（${p.failures.join('、')}）` : '');
+    case 'build.succeeded':
+      return p.digest ? String(p.digest).slice(0, 19) + '…' : '';
+    case 'deploy.succeeded':
+      return p.url || '';
+    case 'item.published':
+      return `${p.tag || ''} · v${p.version || ''}`;
+    case 'publish.decided':
+      return p.approve ? '同意发布' : '不同意发布';
+    case 'item.waiting':
+      return p.reason || '等 SA 拍板';
+    default:
+      return '';
+  }
 }
 </script>
 
@@ -165,14 +200,32 @@ function factText(f) {
       <div class="ws-h"><span v-html="icon('check')" /> 已发布生产 · {{ item.version || '' }}<span v-if="item.url" style="color: var(--info)"> · {{ item.url }}</span></div>
     </div>
 
+    <div v-if="testResult || buildDigest || deployURL" class="card">
+      <div class="ch"><span v-html="icon('check')" /><h3>这一轮真跑出来的结论</h3><span class="spacer" />
+        <span class="small muted">测试条数来自 go test，摘要是编译产物的 sha256</span>
+      </div>
+      <div class="row wrap" style="gap: 6px">
+        <span v-if="testResult" class="achip" :style="'border-color:' + (testResult.pass === testResult.total ? 'var(--line-ok)' : 'var(--line-err)')">
+          <b :style="{ color: testResult.pass === testResult.total ? 'var(--ok)' : 'var(--err)' }">{{ testResult.pass }}/{{ testResult.total }}</b>
+          测试通过
+        </span>
+        <span v-if="buildDigest" class="achip"><b>{{ buildDigest.slice(0, 19) }}…</b> 构建产物摘要</span>
+        <span v-if="deployURL" class="achip"><b style="color: var(--info)">{{ deployURL }}</b> 部署地址</span>
+      </div>
+      <div v-if="testResult && testResult.failures && testResult.failures.length" class="small" style="color: var(--err); margin-top: 7px">
+        失败用例：{{ testResult.failures.join('、') }}
+      </div>
+    </div>
+
     <div class="card">
       <div class="ch"><span v-html="icon('layers')" /><h3>这条工作项的账本事实</h3><span class="spacer" /><span class="small muted">{{ facts.length }} 条</span></div>
       <div v-if="!facts.length" class="small muted">账本里还没有与它相关的事实。</div>
       <div v-for="f in facts" :key="f.seq" class="row" style="padding: 5px 0; border-bottom: 1px solid var(--line-e); font-size: 11.5px">
         <span class="mono small" style="color: var(--tx-11); width: 42px">#{{ f.seq }}</span>
         <span class="tag t-gray" style="font-size: 9px">{{ f.type }}</span>
-        <span class="muted" style="flex: 1">{{ factText(f) }}</span>
+        <span class="muted" style="flex: 1">{{ factText(f) }}<span v-if="factDetail(f)" class="mono small" style="color: var(--tx-11); margin-left: 6px">{{ factDetail(f) }}</span></span>
         <span class="small muted">{{ f.actor }} · {{ f.at }}</span>
+        <span v-if="f.actor === 'seed'" class="tag t-gray" style="font-size: 8px">演示数据</span>
       </div>
     </div>
   </template>

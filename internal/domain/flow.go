@@ -148,6 +148,25 @@ type Trial struct {
 	In  string   `json:"in"`
 	Out []string `json:"out,omitempty"`
 	Raw string   `json:"raw,omitempty"`
+	// Nodes 是逐节点的执行记录（名字、类型、实测耗时、输出）。
+	Nodes []TrialNode `json:"nodes,omitempty"`
+	// Branch 是走过的分支条件。
+	Branch []string `json:"branch,omitempty"`
+	// Escalated 为真表示这轮转了人工。
+	Escalated bool `json:"escalated,omitempty"`
+	// Source 说明结果从哪来：executor=执行器真跑，sample=回放样例，
+	// submitted=外部提交。页面据此显示，不把回放说成执行。
+	Source string `json:"source,omitempty"`
+}
+
+// TrialNode 是一个节点的执行记录。
+type TrialNode struct {
+	ID   string `json:"id"`
+	Name string `json:"n"`
+	Type string `json:"t"`
+	Ms   int64  `json:"ms"`
+	Out  string `json:"out,omitempty"`
+	Wait string `json:"wait,omitempty"`
 }
 
 // Chain 返回这一轮的逐节点耗时链（只取真正耗时的节点）。

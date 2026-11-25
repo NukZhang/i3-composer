@@ -15,17 +15,46 @@ const props = defineProps({
   agent: { type: Object, default: null },
   head: { type: String, default: '' },
   svc: { type: Object, default: null },
+  test: { type: Object, default: null },
+  builds: { type: Object, default: () => ({}) },
 });
 
 const all = computed(() => props.gates.all || []);
 const pbcGates = computed(() => props.gates.pbc || []);
 const agGates = computed(() => props.gates.agent || []);
 const passAll = computed(() => all.value.filter((g) => g.ok).length);
+// 判不了的闸（比如此刻还没接视觉比对的那条）不算通过，但要单独说清楚。
+const unknownCount = computed(() => all.value.filter((g) => g.unknown).length);
 const canRelease = computed(() => all.value.length > 0 && passAll.value === all.value.length);
+
+// 这次提交构建出来的产物摘要。
+const digest = computed(() => (props.head && props.builds[props.head]) || '');
 </script>
 
 <template>
   <div>
+    <!-- 真跑测试与构建产物的结论 -->
+    <div v-if="test" class="card">
+      <div class="ch">
+        <span v-html="icon('check')" /><h3>测试与构建</h3><span class="spacer" />
+        <span class="small muted">{{ test.by || 'x-qa' }} · {{ test.at || '' }}</span>
+      </div>
+      <div class="row wrap" style="gap: 6px">
+        <span class="achip" :style="'border-color:' + (test.pass === test.total ? 'var(--line-ok)' : 'var(--line-err)')">
+          <b :style="{ color: test.pass === test.total ? 'var(--ok)' : 'var(--err)' }">{{ test.pass }}/{{ test.total }}</b>
+          测试通过
+        </span>
+        <span v-if="digest" class="achip"><b>{{ digest.slice(0, 19) }}…</b> 构建产物摘要</span>
+        <span v-if="test.failures && test.failures.length" class="achip" style="border-color: var(--line-err)">
+          <b style="color: var(--err)">{{ test.failures.join('、') }}</b> 失败用例
+        </span>
+      </div>
+      <div class="small muted" style="margin-top: 8px; line-height: 1.7">
+        测试条数是 <code>go test</code> 的真实输出，摘要是编译产物的字节 sha256——
+        两者都不是编出来的：构建不过、测试不过，这一页就会红。
+      </div>
+    </div>
+
     <!-- 组合项：合并门禁 -->
     <div v-if="kind === 'hybrid'" class="card" :style="'border-color:' + (canRelease ? 'var(--line-ok)' : 'var(--line-err)')">
       <div class="ch">
@@ -64,16 +93,17 @@ const canRelease = computed(() => all.value.length > 0 && passAll.value === all.
     <div v-else class="card">
       <div class="ch">
         <span v-html="icon('check')" /><h3>交付四闸 · {{ head || '—' }}</h3><span class="spacer" />
-        <span class="tag" :class="passAll === 4 ? 't-ok' : 't-warn'">{{ passAll }}/4 通过</span>
+        <span class="tag" :class="passAll === 4 ? 't-ok' : 't-warn'">{{ passAll }}/4 通过<template v-if="unknownCount"> · {{ unknownCount }} 判不了</template></span>
       </div>
       <div class="row wrap" style="gap: 6px">
+        <!-- 判不了的闸用「?」和灰边，别用绿勾：绿勾是「查过了没问题」的意思。 -->
         <span
           v-for="g in all"
           :key="g.key"
           class="achip"
-          :style="'border-color:' + (g.ok ? 'var(--line-ok)' : 'var(--line-err)')"
+          :style="'border-color:' + (g.unknown ? 'var(--line-e)' : (g.ok ? 'var(--line-ok)' : 'var(--line-err)'))"
         >
-          <b :style="{ color: g.ok ? 'var(--ok)' : 'var(--err)' }">{{ g.ok ? '✓' : '✕' }}</b> {{ g.label }}
+          <b :style="{ color: g.unknown ? 'var(--tx-9)' : (g.ok ? 'var(--ok)' : 'var(--err)') }">{{ g.unknown ? '?' : (g.ok ? '✓' : '✕') }}</b> {{ g.label }}
           <span style="color: var(--tx-9); margin-left: 5px">{{ g.detail }}</span>
         </span>
         <span v-if="!all.length" class="small muted">还没有提交，四闸无从判定。</span>

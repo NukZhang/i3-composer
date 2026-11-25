@@ -47,6 +47,8 @@ const IMPL = {
 
 const rows = computed(() => IMPL[S.view] || [['说明', '切换到方案 / 原型 / 构建 / 验证 / 发布查看对应接口契约']]);
 const rt = computed(() => S.runtime);
+// events 是经 pub/sub 收到的事件：发出去 → 收回来 → 落成事实。
+const events = computed(() => (S.state && S.state.events) || []);
 </script>
 
 <template>
@@ -57,6 +59,14 @@ const rt = computed(() => S.runtime);
     </div>
     <div class="rp-body">
       <template v-if="S.rpTab === 'rt'">
+        <div v-if="events.length" style="padding: 8px 8px 4px">
+          <div class="small muted" style="margin-bottom: 4px">经 pub/sub 收到的事件（{{ events.length }}）</div>
+          <div v-for="(e, i) in events" :key="'ev' + i" class="rt-line">
+            <span class="rt-t">{{ e.at }}</span>
+            <span class="rt-k k-ACTOR">{{ e.topic }}</span>
+            <span class="rt-x">{{ e.eventId || (e.data && e.data.tag) || '' }}</span>
+          </div>
+        </div>
         <div v-if="!rt.length" class="small muted" style="padding: 8px">等待运行时事件…</div>
         <div v-for="(r, i) in rt" :key="i" class="rt-line">
           <span class="rt-t">{{ r.at }}</span>

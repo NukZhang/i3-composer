@@ -1,6 +1,7 @@
 package bff
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zhangkun/i3-composer/internal/agentexec"
 	"github.com/zhangkun/i3-composer/internal/dapr"
 	"github.com/zhangkun/i3-composer/internal/store"
 	"github.com/zhangkun/i3-composer/internal/wf"
@@ -22,6 +24,12 @@ type Server struct {
 	Dapr *dapr.Client
 	Sess *Sessions
 	Comp string // workflow 组件路径段；Dapr 目前不校验它，但它是路由契约
+	// WfName 是 workflow 的名字。名字不同 = Dapr 里不同的 actor 类型，
+	// 多套流程可以并存而不抢工作项。
+	WfName string
+	// Exec 是 Agent 执行器：试跑与对话验收都靠它真跑一遍编排，
+	// 不是把定义里存的样例端出来。
+	Exec *agentexec.Exec
 
 	mu   sync.Mutex
 	subs map[chan string]struct{} // SSE 订阅者（进程内即可：断线重连是常态）
@@ -29,7 +37,38 @@ type Server struct {
 
 func NewServer(log *store.Store, d *dapr.Client, sess *Sessions, comp string) *Server {
 	return &Server{Log: log, Dapr: d, Sess: sess, Comp: comp,
+		Exec: &agentexec.Exec{},
 		subs: map[chan string]struct{}{}}
+}
+
+// wfName 是本实例使用的 workflow 名；没配就用默认名。
+func (s *Server) wfName() string {
+	if s.WfName != "" {
+		return s.WfName
+	}
+	return wf.NameDelivery
+}
+
+// instanceID 是 Dapr 侧的 workflow 实例号。
+//
+// 它带账本前缀：同一套 Dapr 上跑多套账本时，实例号也必须隔开，
+// 否则两套账本的工作项会抢同一个 workflow 实例。
+// Dapr 只允许字母数字与下划线，所以前缀里的其它字符要换成下划线。
+func (s *Server) instanceID(itemID string) string {
+	p := s.Log.Prefix()
+	if p == "" {
+		return itemID
+	}
+	var b strings.Builder
+	for _, r := range p {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String() + itemID
 }
 
 // Handler 装路由。业务接口全部以 /api 开头；其余路径交给静态页（web/）。
@@ -73,6 +112,11 @@ func (s *Server) Handler() http.Handler {
 	// v2.5：真人验收台
 	m.HandleFunc("POST /api/checks/{id}/decide", s.wrap(s.checkDecide))
 	m.HandleFunc("POST /api/units/{id}/chat", s.wrap(s.verifyChat))
+	// v2.6：pubsub 收发。/dapr/subscribe 是 sidecar 问订阅的地方；
+	// /api/events/{topic} 是事件投递进来的地方。
+	m.HandleFunc("GET /dapr/subscribe", s.daprSubscribe)
+	m.HandleFunc("POST /api/events/{topic}", s.wrap(s.receiveEvent))
+	m.HandleFunc("GET /api/events", s.wrap(s.receivedEvents))
 	// ServeMux 里 /api/... 比 / 更具体，优先匹配，静态兜底不会抢接口。
 	// web/dist 是 Vite 构建产物：必须从仓库根起跑（见 docs/SPEC-frontend-wiring.md）。
 	m.Handle("/", spa(http.Dir("web/dist")))
@@ -332,7 +376,8 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if !ok {
 		return fmt.Errorf("%w：%s", errNotFound, c.ItemID)
 	}
-	// 事实流：把该 item 相关的事实（不含 payload 里的敏感内容）按时间给出。
+	// 事实流：把该 item 相关的事实按时间给出。
+	// payload 只给摘要（标量字段），不给正文——制品的代码、文档正文不进这个出口。
 	var facts []map[string]any
 	fs, err := s.Log.Load(r.Context(), c.PBC)
 	if err != nil {
@@ -343,11 +388,55 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 			strings.Contains(string(f.Payload), `"itemId":"`+c.ItemID+`"`) {
 			facts = append(facts, map[string]any{
 				"seq": f.Seq, "at": f.At, "type": f.Type, "actor": f.Actor,
+				"payload": factScalars(f.Payload),
 			})
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"item": toTask(it), "facts": facts})
 	return nil
+}
+
+// factScalars 抽事实 payload 里的标量字段。
+//
+// 事实的正文有时是整份制品（代码树、文档正文），原样返回既臃肿又不该进这个出口；
+// 但「测试几条过、digest 是什么、部署在哪」这些结论必须能就地核对，
+// 否则账本只是「发生过什么」的目录，看不出「到底发生了什么」。
+func factScalars(raw json.RawMessage) map[string]any {
+	out := map[string]any{}
+	if len(raw) == 0 {
+		return out
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber() // 数字原样输出，不被浮点化
+	var m map[string]any
+	if err := dec.Decode(&m); err != nil {
+		return out
+	}
+	for k, v := range m {
+		switch tv := v.(type) {
+		case string, bool, json.Number, nil:
+			out[k] = tv
+		case []any:
+			// 只留标量数组（失败用例名之类），且截断，避免把大数组塞进列表。
+			items := make([]any, 0, len(tv))
+			scalars := true
+			for _, e := range tv {
+				switch et := e.(type) {
+				case string, bool, json.Number:
+					items = append(items, et)
+				default:
+					scalars = false
+				}
+			}
+			if scalars && len(items) > 0 {
+				if len(items) > 20 {
+					items = items[:20]
+				}
+				out[k] = items
+			}
+		}
+	}
+	return out
 }
 
 // runItem 发起一条 backlog 的交付。
@@ -379,8 +468,12 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 		return fmt.Errorf("%w：%s 不是可执行的工作项", errBadRequest, c.ItemID)
 	}
 
-	in := wf.Input{ItemID: it.ID, PBC: it.PBC, Title: it.Title, Type: it.Type, Env: it.Env, Mode: it.Mode}
-	err = s.Dapr.StartWorkflow(r.Context(), s.Comp, wf.NameDelivery, it.ID, in)
+	// Ledger 跟着工作项走：工作项落到哪个进程执行是 Dapr 决定的，
+	// 账本前缀必须由发起方带过去，不能由执行方自己猜。
+	in := wf.Input{ItemID: it.ID, PBC: it.PBC, Title: it.Title, Type: it.Type, Env: it.Env, Mode: it.Mode,
+		Ledger: s.Log.Prefix()}
+	inst := s.instanceID(it.ID)
+	err = s.Dapr.StartWorkflow(r.Context(), s.Comp, s.wfName(), inst, in)
 	if errors.Is(err, dapr.ErrConflict) {
 		return fmt.Errorf("%w：%s 已有一个未结束的实例", errBadRequest, c.ItemID)
 	}
@@ -393,7 +486,7 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 		return err
 	}
 	s.publish(c.PBC, "item.run.started", map[string]any{"id": it.ID})
-	writeJSON(w, http.StatusAccepted, map[string]any{"id": it.ID, "instance": it.ID})
+	writeJSON(w, http.StatusAccepted, map[string]any{"id": it.ID, "instance": inst})
 	return nil
 }
 
@@ -431,7 +524,7 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request, c reqCtx) error 
 		return err
 	}
 	ans := wf.Answer{Approve: in.Approve, By: string(c.Role), Note: in.Note}
-	if err := s.Dapr.RaiseEvent(r.Context(), s.Comp, it.ID, wf.EventPublish, ans); err != nil {
+	if err := s.Dapr.RaiseEvent(r.Context(), s.Comp, s.instanceID(it.ID), wf.EventPublish, ans); err != nil {
 		return err
 	}
 	s.publish(c.PBC, "publish.decided", map[string]any{"id": it.ID, "approve": in.Approve})

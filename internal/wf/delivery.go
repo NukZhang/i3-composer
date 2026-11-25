@@ -115,7 +115,18 @@ func activity[In any](fn func(context.Context, In) (StepResult, error)) workflow
 }
 
 func Register(r *workflow.Registry, a *Activities) error {
-	if err := r.AddWorkflowN(NameDelivery, Delivery); err != nil {
+	return RegisterAs(r, a, NameDelivery)
+}
+
+// RegisterAs 用指定名字注册同一套 workflow。
+//
+// 名字不同 = Dapr 里是不同的 actor 类型：两套流程可以并存，互不抢工作项。
+// 同一套 Dapr 上跑多个实例时用它隔开。
+func RegisterAs(r *workflow.Registry, a *Activities, name string) error {
+	if name == "" {
+		name = NameDelivery
+	}
+	if err := r.AddWorkflowN(name, Delivery); err != nil {
 		return err
 	}
 	acts := []struct {

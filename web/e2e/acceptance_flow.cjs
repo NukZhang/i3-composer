@@ -72,7 +72,8 @@ const api = (page, path, opts) =>
   check('3 角色切换写入服务端会话', roleNow === 'DA', roleNow);
 
   const run = await api(page, `/api/items/${id}/run?pbc=fee`, { method: 'POST' });
-  check('3 DA 发起返回 202（实例 ID = 工作项 ID）', run.code === 202 && run.body.instance === id, run);
+  // 实例号在默认账本上就是工作项号；隔离账本会加前缀（避免两套账本抢同一个实例）。
+  check('3 DA 发起返回 202（实例号绑定工作项）', run.code === 202 && String(run.body.instance || '').endsWith(id), run);
 
   // 不手动刷新：靠 SSE 通知 + 重拉，页面应自动推进
   const uiWaiting = await waitFor(

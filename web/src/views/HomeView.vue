@@ -44,6 +44,16 @@ function unitName(id) {
     <span><b>权限口径：</b>你能做 {{ (S.acts || []).filter((a) => a !== 'view').join(' / ') || '—' }}；X 团队是 {{ S.agents.length }} 名专业 worker，产出物仍需人确认</span>
   </div>
 
+  <div class="perm-note">
+    <span v-html="icon('refresh', 12)" />
+    <span>
+      <b>演示数据说明：</b>启动时写入的历史由种子生成（actor 标为 <span class="mono">seed</span>），
+      用来让页面有东西可看；<b>它不是真发生过的工作</b>。
+      真跑出来的记录 actor 是 <span class="mono">x-fe / x-qa / x-ops / SA</span> 这些角色，
+      测试条数是 <span class="mono">go test</span> 的真实输出，digest 是构建产物的内容摘要。
+    </span>
+  </div>
+
   <div class="home-tabs">
     <div
       v-for="t in tabs"

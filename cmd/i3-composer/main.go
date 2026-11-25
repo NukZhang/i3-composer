@@ -26,9 +26,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/zhangkun/i3-composer/internal/artifacts"
 	"github.com/zhangkun/i3-composer/internal/bff"
 	"github.com/zhangkun/i3-composer/internal/dapr"
-	"github.com/zhangkun/i3-composer/internal/domain"
+	"github.com/zhangkun/i3-composer/internal/pipeline"
 	"github.com/zhangkun/i3-composer/internal/seed"
 	"github.com/zhangkun/i3-composer/internal/store"
 	"github.com/zhangkun/i3-composer/internal/wf"
@@ -58,10 +59,25 @@ func run() error {
 		addr     = env("ADDR", ":8080")
 		sessKey  = os.Getenv("SESSION_KEY")
 		seedDemo = env("SEED_DEMO", "1") == "1"
+		workDir  = env("WORK_DIR", "")                   // 执行侧工作区（空则用系统临时目录）
+		artDir   = env("ARTIFACT_DIR", "")               // 产物仓库（空则用 ./.i3-artifacts）
+		ledger   = env("LEDGER_PREFIX", "")              // 账本前缀：同一套 Dapr 上跑隔离账本时用
+		wfName   = env("WORKFLOW_NAME", wf.NameDelivery) // workflow 名：不同名 = 不同 actor 类型
 	)
 
 	dc := dapr.New(httpEnd)
-	log := store.New(dc, stateSt)
+	log := store.New(dc, stateSt, ledger)
+
+	// logFor 按前缀给出一本账。
+	//
+	// 工作项落到哪个进程执行是 Dapr 决定的，所以账本前缀必须由发起方
+	// 带进工作项里，activity 再据此选账本——不能靠进程自己那份。
+	logFor := func(prefix string) *store.Store {
+		if prefix == ledger {
+			return log
+		}
+		return store.New(dc, stateSt, prefix)
+	}
 
 	// 与 sidecar 建一条 gRPC 连接，用于注册并运行 workflow worker。
 	// 这条连接只承载 work-item stream，业务 API 全走上面的 HTTP。
@@ -75,12 +91,24 @@ func run() error {
 
 	wfc := workflow.NewClient(conn)
 	registry := workflow.NewRegistry()
+	// 执行侧：真生成制品、真跑测试、真构建、真部署。
+	// 以前这里是 mockBuilder——digest 是树摘要拼的，测试条数是编的，
+	// 部署 URL 是拼出来的。现在这一层真的干活。
+	exec, err := pipeline.New(log, workDir)
+	if err != nil {
+		return fmt.Errorf("初始化执行侧失败：%w", err)
+	}
+	if artDir != "" {
+		exec.Store = artifacts.New(artDir)
+	}
+	exec.LogFor = logFor
 	acts := &wf.Activities{D: wf.Deps{
-		Log:   log,
-		Pub:   publisher{dc: dc, pubsub: pubsub},
-		Build: mockBuilder{},
+		Log:    log,
+		Pub:    publisher{dc: dc, pubsub: pubsub},
+		Exec:   exec,
+		LogFor: logFor,
 	}}
-	if err := wf.Register(registry, acts); err != nil {
+	if err := wf.RegisterAs(registry, acts, wfName); err != nil {
 		return fmt.Errorf("注册 workflow 失败：%w", err)
 	}
 
@@ -89,7 +117,7 @@ func run() error {
 
 	// worker 必须在建实例前连上 sidecar，否则 start 会因「没有 worker」失败。
 	go func() {
-		slog.Info("workflow worker 启动", "grpc", grpcEnd, "workflow", wf.NameDelivery)
+		slog.Info("workflow worker 启动", "grpc", grpcEnd, "workflow", wfName)
 		// StartWorker 阻塞到 ctx 结束；它一旦返回就说明流断了。
 		if err := wfc.StartWorker(ctx, registry); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("workflow worker 退出", "err", err)
@@ -97,11 +125,21 @@ func run() error {
 	}()
 
 	if seedDemo {
-		if err := seed.Run(context.Background(), log); err != nil {
+		// 种子要真的构建一次基线：digest 得是真的构建产物的摘要，
+		// 不是拿树摘要拼一个假的 sha256:baseline。
+		so := seed.Options{Build: func(ctx context.Context, pbc, commit string, files map[string]string) (string, bool, error) {
+			out, err := exec.Build(ctx, pbc, commit, files)
+			if err != nil {
+				return "", false, err
+			}
+			return out.Digest, out.Binary, nil
+		}}
+		if err := seed.Run(context.Background(), log, so); err != nil {
 			slog.Warn("种子数据写入失败", "err", err)
 		}
 	}
 	srv := bff.NewServer(log, dc, bff.NewSessions([]byte(sessKey)), wfComp)
+	srv.WfName = wfName
 	// 每一次事实落链（包括 workflow activity 写的）都通知 SSE：前端收到后重拉全量投影。
 	// 这样「页面自动推进」不依赖某个 handler 是否记得调 publish。
 	log.Notify = srv.NotifyChange
@@ -120,6 +158,8 @@ func run() error {
 
 	<-ctx.Done()
 	slog.Info("收尾中…")
+	// 部署起的进程归我们收：不停掉的话，进程会在机器上赖着不走。
+	exec.StopAll()
 	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return hs.Shutdown(shutCtx)
@@ -133,14 +173,6 @@ type publisher struct {
 
 func (p publisher) Publish(ctx context.Context, topic string, data any) error {
 	return p.dc.Publish(ctx, p.pubsub, topic, data)
-}
-
-// mockBuilder 就是原型里唯一标「大」的那块：真接 CI（Jenkins）要替换它。
-// 故意不假装打通了——digest 由树内容确定性派生，便于回放与断言。
-type mockBuilder struct{}
-
-func (mockBuilder) Build(_ context.Context, pbc, commit string, tree domain.Tree) (string, error) {
-	return "sha256:" + domain.TreeSHA(tree)[7:] + "-" + commit + "@" + pbc, nil
 }
 
 // withCORS 允许原型页（file:// 或另一端口）直接调这套 API。

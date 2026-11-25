@@ -79,10 +79,14 @@ type stateView struct {
 	*store.View
 	Agent *domain.Agent `json:"agent,omitempty"`
 	Gates gateSet       `json:"gates"`
+	// Events 是经 pub/sub 收到的事件（收发闭环的证据）。
+	Events []store.EventRecord `json:"events,omitempty"`
 }
 
 func (s *Server) stateWithAgent(ctx context.Context, v *store.View) (stateView, error) {
 	sv := stateView{View: v}
+	// 经 pub/sub 收到的事件：附在视图上，页面能看见「事件真的回来了」。
+	sv.Events = s.eventsFor(ctx, v.PBC)
 	// 单元构成以 units 日志（注册表）为准：PBC 自己的日志可能早于 v2.3，
 	// 里面没有 unit.created；这时不能把 Agent 单元当成纯 PBC 来判。
 	if uv, err := s.loadUnits(ctx); err != nil {
@@ -132,7 +136,9 @@ func pbcGates(v *store.View) []domain.Gate {
 	if len(v.Commits) == 0 {
 		return nil
 	}
-	return domain.CheckCommit(v.Commits[0], v.Versions, 0)
+	// 视觉比对还没接：传 nil，让这条闸显示「判不了」，
+	// 而不是拿默认 0 显示成「比过了、没差异」。
+	return domain.CheckCommit(v.Commits[0], v.Versions, nil)
 }
 
 // state 返回完整投影：版本线、提交线、部署、批注、工作项，外加 v2.3 的
