@@ -22,7 +22,8 @@
 | Agent 试跑 / 对话验收 | ✅ 真（本地判定） | `internal/agentexec` 按编排图逐节点执行：读会话、检索知识库、跑合规规则、判分支、转人工；**输入变了结论就变** |
 | pub/sub | ✅ 真（收发闭环） | 声明式订阅 `components/subscription.yaml` → sidecar 建 consumer group → 事件回到 `/api/events/{topic}` → 落 `event.received` 事实；workflow 的**每一步**都发 `item.changed` |
 | 种子数据 | ⚠️ 演示数据（已标注） | actor 写作 `seed`，页面上标「演示数据」；真跑出来的事实 actor 是 `x-fe`/`x-qa`/`x-ops`/`SA` |
-| CI（Jenkins / GitHub Actions） | ❌ 未接 | 本地构建是**真的编译**，但它不是 CI；接真 CI 只需换掉 `internal/pipeline` 的 Build 实现 |
+| 仓库自己的 CI | ✅ 已接 | `.github/workflows/ci.yml`：每个 PR 跑 gofmt / go vet / go build / go test -count=1 + 前端 npm ci / build |
+| 交付构建走 CI 服务 | ❌ 未接 | 产品里的构建是**真的编译**（`internal/pipeline` → `go build`），但跑在本机而不是 CI；接上要换掉 `pipeline.Build` 的实现，上层契约不变 |
 | 真模型调用 | ❌ 未接 | Agent 的判定由**本地规则引擎**算（合规规则库里的 R-03/R-05/R-07/R-11），不是模型推理 |
 | 真实业务数据 | ❌ 未接 | 工具读的是仓内的语料 `internal/agentexec/data/corpus.json`，不是真实会话/账单系统 |
 
@@ -142,12 +143,16 @@ go test ./internal/wf/ -run TestDeliveryChainReallyBuildsTestsAndDeploys -v
 
 | 事项 | 缺口 | 接口在哪 | 接上要做什么 |
 |---|---|---|---|
-| 真 CI | 构建是本地 `go build`，不是 CI | `internal/pipeline.Build` | 换成调 CI 的实现；上层契约（返回 digest）不变 |
+| 交付构建走 CI 服务 | 构建是本地 `go build`，不是 CI | `internal/pipeline.Build` | 换成调 CI 的实现；上层契约（返回 digest）不变 |
 | 真模型 | Agent 判定是本地规则引擎 | `internal/agentexec.decide` | 换成调模型网关；编排图与节点契约不变 |
 | 真业务数据 | 工具读仓内语料 | `internal/agentexec.runTool` | 换成调真实接口；工具名与入参映射不变 |
 | 真还原对比 | 视觉比对未接，四闸第三条恒过 | `domain.CheckCommit(unhandled)` | 接上比对结果传入 |
 
 这四处都是**换实现，不改结构**：编排、账本、闸门、页面都已经是真的了。
+
+仓库自己的验证已经接到 CI（`.github/workflows/ci.yml`，每个 PR 都跑）。
+四套 Playwright 验收不在 CI 里：它们要 Dapr sidecar 与真实进程部署，
+在 CI 上只能跑成假绿，所以在本地跑。
 
 ---
 
