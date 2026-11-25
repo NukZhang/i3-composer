@@ -123,6 +123,10 @@ function check(name, ok, detail) {
   check('6 真跑出来的事实 actor 不是 seed', realFacts.length > 0, realFacts.map((f) => f.actor).slice(0, 4));
 
   // ---- 7. pubsub 收到的事件落了事实 ----
+  // 先核对投递地址：sidecar 只往它配置的 app-port 投事件。本实例换个端口起，
+  // 下面必然是 0 条——把根因直接报出来，别让人对着空数组猜。
+  const wiring = (await api('/api/health')).body.pubsub || {};
+  check('7 pubsub 投递地址与本实例端口一致', wiring.ok === true, wiring);
   const evs = (await api('/api/events')).body.events || [];
   check('7 pubsub 收到的事件落了 event.received 事实', evs.length > 0, evs.slice(0, 2).map((e) => e.payload && e.payload.topic));
 

@@ -1,0 +1,21 @@
+PASS 1 建工作项 :: {"id":"US-07"}
+PASS 1 发起交付（真实 Dapr workflow） :: {"id":"US-07","instance":"v27h_fee_US-07"}
+PASS 1 workflow 跑到发布闸 :: {"run":"waiting"}
+PASS 2 代码制品带可编译的文件 :: ["go.mod","main.go","main_test.go"]
+PASS 2 文档制品带 markdown 正文 :: "# 收费缴费 · 执行侧验收-1795602136014\n\n> 收费缴费 · 由"
+PASS 3 账本里有 test.run 事实 :: {"commit":"1.0.2","pass":5,"total":5,"at":"2026-11-25T10:22:18Z","by":"x-qa"}
+PASS 3 测试条数是真跑出来的（总数 = 用例数） :: {"commit":"1.0.2","pass":5,"total":5,"at":"2026-11-25T10:22:18Z","by":"x-qa"}
+PASS 3 测试没有失败项
+PASS 4 构建产物 digest 是 sha256 内容摘要 :: "sha256:b165ae8c9af6fc35f58c07e008d1786c377f81ce29b22295d54398f4067d0dab"
+PASS 5 有部署事实 :: "http://127.0.0.1:55031"
+PASS 5 部署地址能访问且 /healthz 返回 200 :: {"code":200,"body":"{\"name\":\"收费缴费\",\"ok\":true,\"unit\":\"fee\"}\n"}
+PASS 5 页面上看得到真证据（测试条数 / digest / 部署地址） :: {"digest":"sha256:b165ae8c9af6","url":"http://127.0.0.1:55031","hasPass":true}
+PASS 6 种子事实 actor 是 seed（演示数据可识别） :: 11
+PASS 6 真跑出来的事实 actor 不是 seed :: ["i3-pipeline","i3-pipeline","x-ops","i3-pipeline"]
+PASS 7 pubsub 投递地址与本实例端口一致 :: {"checked":true,"detail":"sidecar 的 app-port=8080，与本实例一致","localPort":8080,"ok":true,"sidecarAddress":"host.docker.internal","sidecarAppPort":8080}
+PASS 7 pubsub 收到的事件落了 event.received 事实 :: ["item.changed","item.changed"]
+PASS 7 workflow 每一步都经总线发过事件（不是装饰品） :: {"收到":10,"其中步骤":7}
+PASS 8 SA 拍板发布 :: {"approve":true,"id":"US-07"}
+PASS 8 发布完成 :: {"tag":"v1.0.1","version":"1.0.2"}
+PASS 页面无 JS 异常 :: []
+SUMMARY 20/20 passed

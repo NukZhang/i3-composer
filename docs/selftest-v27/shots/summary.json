@@ -1,0 +1,950 @@
+{
+  "run": "fin",
+  "project": {
+    "id": "p6ccf",
+    "ws": "w766a",
+    "name": "门禁与访客fin",
+    "owner": "PA"
+  },
+  "brd": "v0.2",
+  "delivered": [
+    {
+      "unit": {
+        "id": "gatefin",
+        "name": "门禁通行",
+        "code": "PBC-GATEFIN",
+        "kind": "pbc",
+        "proj": "p6ccf",
+        "head": "",
+        "line": "",
+        "tags": null,
+        "commits": 0,
+        "deploys": 0,
+        "items": 0
+      },
+      "item": "US-04",
+      "tag": "v1.0.0",
+      "digest": "sha256:c4d8d3c9fb25671439fe98e8704194404699716d54680006d06a077a4cc22ece",
+      "test": {
+        "by": "x-qa",
+        "commit": "1.0.1",
+        "failures": null,
+        "id": "US-04",
+        "pass": 5,
+        "total": 5
+      }
+    },
+    {
+      "unit": {
+        "id": "visitorfin",
+        "name": "访客质检",
+        "code": "PBC-VISITORFIN",
+        "kind": "agent",
+        "agentId": "x-qc",
+        "proj": "p6ccf",
+        "head": "",
+        "line": "",
+        "tags": null,
+        "commits": 0,
+        "deploys": 0,
+        "items": 0,
+        "agent": {
+          "id": "x-qc",
+          "n": "X-质检员",
+          "role": "质检_worker",
+          "spe": "会话质检 / 合规判定 / 质检报告",
+          "task": "待复核 5 条风险会话",
+          "ver": "1.2.0",
+          "model": "deepseek-v3 · DSH",
+          "cost": "¥0.09/次",
+          "st": [
+            "done",
+            "done",
+            "done",
+            "done",
+            "doing"
+          ],
+          "eval": [
+            61,
+            64
+          ],
+          "tools": [
+            "session.read",
+            "order.read",
+            "report.write",
+            "guard.check"
+          ],
+          "prompt": "你是质检员。读会话原文与检索到的口径，逐条判断：是否承诺疗效、是否用绝对化用语、说的与口径是否一致、客户负面情绪有没有被接住。\n只出判定与证据（引用哪条规则、原话在哪），不做处罚决定。出现医疗承诺、退费纠纷、投诉升级，一律转人工。",
+          "runs": [
+            {
+              "id": "exp-0418",
+              "at": "11-23 21:10",
+              "ver": "1.2.0",
+              "pass": 61,
+              "total": 64,
+              "cost": "¥5.76",
+              "p50": "5.2s",
+              "p95": "9.8s",
+              "tok": "56.8k",
+              "digest": "sha256:3c8a9d59bc7d"
+            },
+            {
+              "id": "exp-0413",
+              "at": "11-22 20:30",
+              "ver": "1.1.6",
+              "pass": 60,
+              "total": 64,
+              "cost": "¥5.61",
+              "p50": "5.0s",
+              "p95": "9.4s",
+              "tok": "55.2k",
+              "base": true
+            },
+            {
+              "id": "exp-0407",
+              "at": "11-21 19:15",
+              "ver": "1.1.2",
+              "pass": 58,
+              "total": 64,
+              "cost": "¥5.40",
+              "p50": "4.9s",
+              "p95": "9.1s",
+              "tok": "53.6k"
+            }
+          ],
+          "fails": [
+            {
+              "n": "擦边承诺漏判",
+              "c": 2,
+              "ex": "「可以帮您申请减免」属擦边承诺，未命中 R-07"
+            },
+            {
+              "n": "口径引用旧版本",
+              "c": 1,
+              "ex": "引用了 2026.06 价目表，与现行口径不一致"
+            }
+          ],
+          "trace": [
+            {
+              "n": "读会话",
+              "d": "session.read · 12 轮对话",
+              "ms": 840,
+              "tok": 620
+            },
+            {
+              "n": "检索口径",
+              "d": "3 库 · 命中 5 段",
+              "ms": 1240,
+              "tok": 820
+            },
+            {
+              "n": "合规判定",
+              "d": "逐条比对 R-03 / R-07 / R-11",
+              "ms": 3260,
+              "tok": 1420
+            },
+            {
+              "n": "出报告",
+              "d": "report.write · 绑定会话与版本",
+              "ms": 410,
+              "tok": 340
+            }
+          ],
+          "cases": [
+            {
+              "v": "承诺疗效",
+              "in": "「保证三个月见效，无效退款」",
+              "out": "risk=high · 命中 R-03 承诺疗效",
+              "exp": "判 high 并引用原话",
+              "why": "原话引用准确，规则编号对",
+              "ms": "5.6s",
+              "tok": "1.8k",
+              "score": 0.94,
+              "ok": true
+            },
+            {
+              "v": "绝对化用语",
+              "in": "「这是最安全的技术」",
+              "out": "risk=high · 命中 R-05 绝对化",
+              "exp": "判 high",
+              "why": "「最安全」属禁用词，判定正确",
+              "ms": "4.8s",
+              "tok": "1.5k",
+              "score": 0.91,
+              "ok": true
+            },
+            {
+              "v": "报价与口径不一致",
+              "in": "客服报 3800，口径字典 4200",
+              "out": "risk=high · 命中 R-11 口径不一致",
+              "exp": "判 high 并给出正确价",
+              "why": "检索到现行价目，指出了差额",
+              "ms": "6.1s",
+              "tok": "2.1k",
+              "score": 0.88,
+              "ok": true
+            },
+            {
+              "v": "客户情绪未接住",
+              "in": "客户说「我很担心」，客服直接报价",
+              "out": "risk=normal · 附情绪提示",
+              "exp": "标情绪风险但不判 high",
+              "why": "判定正确，但提示语偏模板化",
+              "ms": "5.2s",
+              "tok": "1.6k",
+              "score": 0.79,
+              "ok": true
+            },
+            {
+              "v": "擦边承诺",
+              "in": "「可以帮您申请减免」",
+              "out": "risk=normal · 未命中",
+              "exp": "判 high（擦边承诺）",
+              "why": "R-07 要求在意图层判断，「申请」被当成流程词放过",
+              "ms": "5.9s",
+              "tok": "1.9k",
+              "score": 0.38,
+              "ok": false
+            },
+            {
+              "v": "引用旧版口径",
+              "in": "客服说「按 6 月价目是 3800」",
+              "out": "risk=normal · 未命中",
+              "exp": "判 high（口径过期）",
+              "why": "检索到旧版文档片段，未校验文档版本",
+              "ms": "6.4s",
+              "tok": "2.0k",
+              "score": 0.31,
+              "ok": false
+            },
+            {
+              "v": "正常会话",
+              "in": "确认项目、价格、到店时间，无承诺",
+              "out": "risk=normal · 无命中",
+              "exp": "判 normal",
+              "why": "无误报，证据为空时明确写 none",
+              "ms": "4.4s",
+              "tok": "1.3k",
+              "score": 0.96,
+              "ok": true
+            }
+          ],
+          "flow": {
+            "nodes": [
+              {
+                "id": "n1",
+                "n": "会话进入",
+                "t": "start",
+                "c": 0,
+                "r": 1,
+                "sub": "badcase 回流 / 抽检",
+                "ms": 0,
+                "tok": 0,
+                "cfg": {
+                  "vars": [
+                    [
+                      "sessionId",
+                      "string",
+                      "必填",
+                      "调度器"
+                    ],
+                    [
+                      "orderId",
+                      "string",
+                      "必填",
+                      "会话元数据"
+                    ],
+                    [
+                      "agentId",
+                      "string",
+                      "选填",
+                      "会话元数据"
+                    ]
+                  ]
+                }
+              },
+              {
+                "id": "n2",
+                "n": "读会话",
+                "t": "tool",
+                "c": 1,
+                "r": 1,
+                "sub": "session.read",
+                "ms": 840,
+                "tok": 620,
+                "cfg": {
+                  "approve": "不需要（只读）",
+                  "in": "sessionId → 会话原文 + 轮次；orderId → 订单与项目",
+                  "tool": "session.read",
+                  "tools": [
+                    "session.read",
+                    "order.read"
+                  ]
+                }
+              },
+              {
+                "id": "n3",
+                "n": "检索口径",
+                "t": "kb",
+                "c": 2,
+                "r": 1,
+                "sub": "3 库 · topK 5",
+                "ms": 1240,
+                "tok": 820,
+                "cfg": {
+                  "out": "chunks[]（带出处与文档版本）"
+                }
+              },
+              {
+                "id": "n4",
+                "n": "合规判定",
+                "t": "llm",
+                "c": 3,
+                "r": 1,
+                "sub": "deepseek-v3 · t=0",
+                "ms": 3260,
+                "tok": 1420,
+                "cfg": {
+                  "out": "verdict{risk, hits[]}",
+                  "prompt": "你是质检员。读会话原文与检索到的口径，逐条检查：\n1) 是否出现承诺疗效、绝对化用语\n2) 说的与口径字典是否一致\n3) 客户负面情绪是否被接住\n\n输出 JSON：{\"risk\":\"high|normal\",\"hits\":[{\"rule\":\"R-03\",\"quote\":\"...\",\"why\":\"...\"}]}\n没有依据就写 unknown，不要猜。",
+                  "temp": 0
+                }
+              },
+              {
+                "id": "n5",
+                "n": "风险分级",
+                "t": "branch",
+                "c": 4,
+                "r": 1,
+                "sub": "risk == high ?",
+                "ms": 12,
+                "tok": 0,
+                "cfg": {
+                  "conds": [
+                    [
+                      "risk == \"high\"",
+                      "转人工复核"
+                    ],
+                    [
+                      "else",
+                      "出报告入库"
+                    ]
+                  ],
+                  "pre": "先跑 guard.check：医疗承诺 / 疗效保证 / 退费承诺 三类红线"
+                }
+              },
+              {
+                "id": "n6",
+                "n": "转人工",
+                "t": "hitl",
+                "c": 5,
+                "r": 0,
+                "sub": "质检员 · 4h",
+                "ms": 0,
+                "tok": 0,
+                "cfg": {
+                  "onTimeout": "升级给质检组长，不出自动结论",
+                  "timeout": "4 小时",
+                  "who": "质检员（人工）"
+                }
+              },
+              {
+                "id": "n7",
+                "n": "回执入库",
+                "t": "end",
+                "c": 5,
+                "r": 2,
+                "sub": "report.write + 流水",
+                "ms": 410,
+                "tok": 340,
+                "cfg": {
+                  "outs": [
+                    [
+                      "sessionId",
+                      "继承"
+                    ],
+                    [
+                      "verdict",
+                      "n4"
+                    ],
+                    [
+                      "reportUrl",
+                      "report.write"
+                    ]
+                  ],
+                  "tool": "report.write"
+                }
+              }
+            ],
+            "edges": [
+              [
+                "n1",
+                "n2",
+                ""
+              ],
+              [
+                "n2",
+                "n3",
+                ""
+              ],
+              [
+                "n3",
+                "n4",
+                ""
+              ],
+              [
+                "n4",
+                "n5",
+                ""
+              ],
+              [
+                "n5",
+                "n6",
+                "high"
+              ],
+              [
+                "n5",
+                "n7",
+                "常规"
+              ],
+              [
+                "n6",
+                "n7",
+                ""
+              ]
+            ]
+          },
+          "kb": {
+            "libs": [
+              {
+                "n": "产品口径字典",
+                "docs": 412,
+                "v": "2026.11.1",
+                "sync": "T+1",
+                "owner": "市场"
+              },
+              {
+                "n": "医美合规规则库",
+                "docs": 86,
+                "v": "2026.10.20",
+                "sync": "手动",
+                "owner": "法务"
+              },
+              {
+                "n": "历史质检样本",
+                "docs": 1240,
+                "v": "2026.11.3",
+                "sync": "T+1",
+                "owner": "客服"
+              }
+            ],
+            "topK": 5,
+            "thr": 0.72,
+            "rerank": true,
+            "recall": 0.884,
+            "mrr": 0.81,
+            "faithful": 0.912,
+            "cite": 0.94,
+            "attr": {
+              "notFound": 2,
+              "wrongGen": 1
+            },
+            "issues": [
+              {
+                "n": "缺「热玛吉维持期」口径",
+                "c": 1,
+                "ex": "口径字典只有项目介绍，没有维持期区间，模型只能凭印象说"
+              },
+              {
+                "n": "价格口径过期",
+                "c": 1,
+                "ex": "2026.06 版价格未更新，与现行价目表不一致"
+              }
+            ]
+          },
+          "trial": {
+            "in": "sessionId = S-20261124-0912\norderId   = ORD-88213",
+            "out": [
+              "判定：风险高（high）",
+              "命中 1 条：R-03 承诺疗效",
+              "处置：转人工复核，未出自动结论",
+              "耗时 5.4s · 3.2k token"
+            ],
+            "raw": "{\n  \"risk\": \"high\",\n  \"hits\": [\n    {\"rule\":\"R-03\",\"quote\":\"保证三个月见效\",\"why\":\"承诺疗效，属禁用话术\"}\n  ],\n  \"next\": \"hitl\"\n}"
+          },
+          "digest": "sha256:3c8a9d59bc7d",
+          "builtDigest": "sha256:3c8a9d59bc7d",
+          "published": false,
+          "rollout": 0
+        }
+      },
+      "item": "US-05",
+      "tag": "v1.0.0",
+      "digest": "sha256:8402d2829b5ec4ac258b4df0cf1a94185c67ad6e95d186e16a7fde9317cf937b",
+      "test": {
+        "by": "x-qa",
+        "commit": "1.0.1",
+        "failures": null,
+        "id": "US-05",
+        "pass": 6,
+        "total": 6
+      }
+    },
+    {
+      "unit": {
+        "id": "passfin",
+        "name": "通行组合",
+        "code": "PBC-PASSFIN",
+        "kind": "hybrid",
+        "agentId": "x-qc",
+        "proj": "p6ccf",
+        "head": "",
+        "line": "",
+        "tags": null,
+        "commits": 0,
+        "deploys": 0,
+        "items": 0,
+        "agent": {
+          "id": "x-qc",
+          "n": "X-质检员",
+          "role": "质检_worker",
+          "spe": "会话质检 / 合规判定 / 质检报告",
+          "task": "待复核 5 条风险会话",
+          "ver": "1.2.0",
+          "model": "deepseek-v3 · DSH",
+          "cost": "¥0.09/次",
+          "st": [
+            "done",
+            "done",
+            "done",
+            "done",
+            "doing"
+          ],
+          "eval": [
+            61,
+            64
+          ],
+          "tools": [
+            "session.read",
+            "order.read",
+            "report.write",
+            "guard.check"
+          ],
+          "prompt": "你是质检员。读会话原文与检索到的口径，逐条判断：是否承诺疗效、是否用绝对化用语、说的与口径是否一致、客户负面情绪有没有被接住。\n只出判定与证据（引用哪条规则、原话在哪），不做处罚决定。出现医疗承诺、退费纠纷、投诉升级，一律转人工。",
+          "runs": [
+            {
+              "id": "exp-0418",
+              "at": "11-23 21:10",
+              "ver": "1.2.0",
+              "pass": 61,
+              "total": 64,
+              "cost": "¥5.76",
+              "p50": "5.2s",
+              "p95": "9.8s",
+              "tok": "56.8k",
+              "digest": "sha256:3c8a9d59bc7d"
+            },
+            {
+              "id": "exp-0413",
+              "at": "11-22 20:30",
+              "ver": "1.1.6",
+              "pass": 60,
+              "total": 64,
+              "cost": "¥5.61",
+              "p50": "5.0s",
+              "p95": "9.4s",
+              "tok": "55.2k",
+              "base": true
+            },
+            {
+              "id": "exp-0407",
+              "at": "11-21 19:15",
+              "ver": "1.1.2",
+              "pass": 58,
+              "total": 64,
+              "cost": "¥5.40",
+              "p50": "4.9s",
+              "p95": "9.1s",
+              "tok": "53.6k"
+            }
+          ],
+          "fails": [
+            {
+              "n": "擦边承诺漏判",
+              "c": 2,
+              "ex": "「可以帮您申请减免」属擦边承诺，未命中 R-07"
+            },
+            {
+              "n": "口径引用旧版本",
+              "c": 1,
+              "ex": "引用了 2026.06 价目表，与现行口径不一致"
+            }
+          ],
+          "trace": [
+            {
+              "n": "读会话",
+              "d": "session.read · 12 轮对话",
+              "ms": 840,
+              "tok": 620
+            },
+            {
+              "n": "检索口径",
+              "d": "3 库 · 命中 5 段",
+              "ms": 1240,
+              "tok": 820
+            },
+            {
+              "n": "合规判定",
+              "d": "逐条比对 R-03 / R-07 / R-11",
+              "ms": 3260,
+              "tok": 1420
+            },
+            {
+              "n": "出报告",
+              "d": "report.write · 绑定会话与版本",
+              "ms": 410,
+              "tok": 340
+            }
+          ],
+          "cases": [
+            {
+              "v": "承诺疗效",
+              "in": "「保证三个月见效，无效退款」",
+              "out": "risk=high · 命中 R-03 承诺疗效",
+              "exp": "判 high 并引用原话",
+              "why": "原话引用准确，规则编号对",
+              "ms": "5.6s",
+              "tok": "1.8k",
+              "score": 0.94,
+              "ok": true
+            },
+            {
+              "v": "绝对化用语",
+              "in": "「这是最安全的技术」",
+              "out": "risk=high · 命中 R-05 绝对化",
+              "exp": "判 high",
+              "why": "「最安全」属禁用词，判定正确",
+              "ms": "4.8s",
+              "tok": "1.5k",
+              "score": 0.91,
+              "ok": true
+            },
+            {
+              "v": "报价与口径不一致",
+              "in": "客服报 3800，口径字典 4200",
+              "out": "risk=high · 命中 R-11 口径不一致",
+              "exp": "判 high 并给出正确价",
+              "why": "检索到现行价目，指出了差额",
+              "ms": "6.1s",
+              "tok": "2.1k",
+              "score": 0.88,
+              "ok": true
+            },
+            {
+              "v": "客户情绪未接住",
+              "in": "客户说「我很担心」，客服直接报价",
+              "out": "risk=normal · 附情绪提示",
+              "exp": "标情绪风险但不判 high",
+              "why": "判定正确，但提示语偏模板化",
+              "ms": "5.2s",
+              "tok": "1.6k",
+              "score": 0.79,
+              "ok": true
+            },
+            {
+              "v": "擦边承诺",
+              "in": "「可以帮您申请减免」",
+              "out": "risk=normal · 未命中",
+              "exp": "判 high（擦边承诺）",
+              "why": "R-07 要求在意图层判断，「申请」被当成流程词放过",
+              "ms": "5.9s",
+              "tok": "1.9k",
+              "score": 0.38,
+              "ok": false
+            },
+            {
+              "v": "引用旧版口径",
+              "in": "客服说「按 6 月价目是 3800」",
+              "out": "risk=normal · 未命中",
+              "exp": "判 high（口径过期）",
+              "why": "检索到旧版文档片段，未校验文档版本",
+              "ms": "6.4s",
+              "tok": "2.0k",
+              "score": 0.31,
+              "ok": false
+            },
+            {
+              "v": "正常会话",
+              "in": "确认项目、价格、到店时间，无承诺",
+              "out": "risk=normal · 无命中",
+              "exp": "判 normal",
+              "why": "无误报，证据为空时明确写 none",
+              "ms": "4.4s",
+              "tok": "1.3k",
+              "score": 0.96,
+              "ok": true
+            }
+          ],
+          "flow": {
+            "nodes": [
+              {
+                "id": "n1",
+                "n": "会话进入",
+                "t": "start",
+                "c": 0,
+                "r": 1,
+                "sub": "badcase 回流 / 抽检",
+                "ms": 0,
+                "tok": 0,
+                "cfg": {
+                  "vars": [
+                    [
+                      "sessionId",
+                      "string",
+                      "必填",
+                      "调度器"
+                    ],
+                    [
+                      "orderId",
+                      "string",
+                      "必填",
+                      "会话元数据"
+                    ],
+                    [
+                      "agentId",
+                      "string",
+                      "选填",
+                      "会话元数据"
+                    ]
+                  ]
+                }
+              },
+              {
+                "id": "n2",
+                "n": "读会话",
+                "t": "tool",
+                "c": 1,
+                "r": 1,
+                "sub": "session.read",
+                "ms": 840,
+                "tok": 620,
+                "cfg": {
+                  "approve": "不需要（只读）",
+                  "in": "sessionId → 会话原文 + 轮次；orderId → 订单与项目",
+                  "tool": "session.read",
+                  "tools": [
+                    "session.read",
+                    "order.read"
+                  ]
+                }
+              },
+              {
+                "id": "n3",
+                "n": "检索口径",
+                "t": "kb",
+                "c": 2,
+                "r": 1,
+                "sub": "3 库 · topK 5",
+                "ms": 1240,
+                "tok": 820,
+                "cfg": {
+                  "out": "chunks[]（带出处与文档版本）"
+                }
+              },
+              {
+                "id": "n4",
+                "n": "合规判定",
+                "t": "llm",
+                "c": 3,
+                "r": 1,
+                "sub": "deepseek-v3 · t=0",
+                "ms": 3260,
+                "tok": 1420,
+                "cfg": {
+                  "out": "verdict{risk, hits[]}",
+                  "prompt": "你是质检员。读会话原文与检索到的口径，逐条检查：\n1) 是否出现承诺疗效、绝对化用语\n2) 说的与口径字典是否一致\n3) 客户负面情绪是否被接住\n\n输出 JSON：{\"risk\":\"high|normal\",\"hits\":[{\"rule\":\"R-03\",\"quote\":\"...\",\"why\":\"...\"}]}\n没有依据就写 unknown，不要猜。",
+                  "temp": 0
+                }
+              },
+              {
+                "id": "n5",
+                "n": "风险分级",
+                "t": "branch",
+                "c": 4,
+                "r": 1,
+                "sub": "risk == high ?",
+                "ms": 12,
+                "tok": 0,
+                "cfg": {
+                  "conds": [
+                    [
+                      "risk == \"high\"",
+                      "转人工复核"
+                    ],
+                    [
+                      "else",
+                      "出报告入库"
+                    ]
+                  ],
+                  "pre": "先跑 guard.check：医疗承诺 / 疗效保证 / 退费承诺 三类红线"
+                }
+              },
+              {
+                "id": "n6",
+                "n": "转人工",
+                "t": "hitl",
+                "c": 5,
+                "r": 0,
+                "sub": "质检员 · 4h",
+                "ms": 0,
+                "tok": 0,
+                "cfg": {
+                  "onTimeout": "升级给质检组长，不出自动结论",
+                  "timeout": "4 小时",
+                  "who": "质检员（人工）"
+                }
+              },
+              {
+                "id": "n7",
+                "n": "回执入库",
+                "t": "end",
+                "c": 5,
+                "r": 2,
+                "sub": "report.write + 流水",
+                "ms": 410,
+                "tok": 340,
+                "cfg": {
+                  "outs": [
+                    [
+                      "sessionId",
+                      "继承"
+                    ],
+                    [
+                      "verdict",
+                      "n4"
+                    ],
+                    [
+                      "reportUrl",
+                      "report.write"
+                    ]
+                  ],
+                  "tool": "report.write"
+                }
+              }
+            ],
+            "edges": [
+              [
+                "n1",
+                "n2",
+                ""
+              ],
+              [
+                "n2",
+                "n3",
+                ""
+              ],
+              [
+                "n3",
+                "n4",
+                ""
+              ],
+              [
+                "n4",
+                "n5",
+                ""
+              ],
+              [
+                "n5",
+                "n6",
+                "high"
+              ],
+              [
+                "n5",
+                "n7",
+                "常规"
+              ],
+              [
+                "n6",
+                "n7",
+                ""
+              ]
+            ]
+          },
+          "kb": {
+            "libs": [
+              {
+                "n": "产品口径字典",
+                "docs": 412,
+                "v": "2026.11.1",
+                "sync": "T+1",
+                "owner": "市场"
+              },
+              {
+                "n": "医美合规规则库",
+                "docs": 86,
+                "v": "2026.10.20",
+                "sync": "手动",
+                "owner": "法务"
+              },
+              {
+                "n": "历史质检样本",
+                "docs": 1240,
+                "v": "2026.11.3",
+                "sync": "T+1",
+                "owner": "客服"
+              }
+            ],
+            "topK": 5,
+            "thr": 0.72,
+            "rerank": true,
+            "recall": 0.884,
+            "mrr": 0.81,
+            "faithful": 0.912,
+            "cite": 0.94,
+            "attr": {
+              "notFound": 2,
+              "wrongGen": 1
+            },
+            "issues": [
+              {
+                "n": "缺「热玛吉维持期」口径",
+                "c": 1,
+                "ex": "口径字典只有项目介绍，没有维持期区间，模型只能凭印象说"
+              },
+              {
+                "n": "价格口径过期",
+                "c": 1,
+                "ex": "2026.06 版价格未更新，与现行价目表不一致"
+              }
+            ]
+          },
+          "trial": {
+            "in": "sessionId = S-20261124-0912\norderId   = ORD-88213",
+            "out": [
+              "判定：风险高（high）",
+              "命中 1 条：R-03 承诺疗效",
+              "处置：转人工复核，未出自动结论",
+              "耗时 5.4s · 3.2k token"
+            ],
+            "raw": "{\n  \"risk\": \"high\",\n  \"hits\": [\n    {\"rule\":\"R-03\",\"quote\":\"保证三个月见效\",\"why\":\"承诺疗效，属禁用话术\"}\n  ],\n  \"next\": \"hitl\"\n}"
+          },
+          "digest": "sha256:3c8a9d59bc7d",
+          "builtDigest": "sha256:3c8a9d59bc7d",
+          "published": false,
+          "rollout": 0
+        }
+      },
+      "item": "US-06",
+      "tag": "v1.0.0",
+      "digest": "sha256:755cebe647a8f1d0fcb115808f0ce24a9873bc3da5c2de6c08c92569c4a9d49c",
+      "test": {
+        "by": "x-qa",
+        "commit": "1.0.1",
+        "failures": null,
+        "id": "US-06",
+        "pass": 5,
+        "total": 5
+      }
+    }
+  ]
+}

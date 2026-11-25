@@ -130,6 +130,42 @@ func (c *Client) Publish(ctx context.Context, pubsub, topic string, data any) er
 	return nil
 }
 
+// AppConnection 是 sidecar 认为「应用在哪」的那一小段元数据。
+//
+// pubsub 事件、actor 回调都往这里投。它和本进程实际监听的端口是两件事：
+// sidecar 由 docker-compose 固定成 8080，业务进程若监听别的端口，
+// 事件就会投到别处（验收里表现为「一条都没收到」，很难看出原因）。
+type AppConnection struct {
+	Port    int    `json:"port"`
+	Address string `json:"channelAddress"`
+}
+
+// AppConnection 读 sidecar 的 app 连接配置。读不到（sidecar 没起、版本不认）时返回错误，
+// 调用方据此区分「没配」与「配错了」。
+func (c *Client) AppConnection(ctx context.Context) (AppConnection, error) {
+	var zero AppConnection
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1.0/metadata", nil)
+	if err != nil {
+		return zero, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return zero, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return zero, fmt.Errorf("dapr metadata: %d %s", resp.StatusCode, body)
+	}
+	var m struct {
+		AppConnectionProperties AppConnection `json:"appConnectionProperties"`
+	}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return zero, fmt.Errorf("dapr metadata 解析失败：%w", err)
+	}
+	return m.AppConnectionProperties, nil
+}
+
 // StartWorkflow 启动一个 workflow 实例。instanceID 相同时 Dapr 返回 409，
 // 这正是「同一 backlog 不许并发跑」的锁：调用方据此判定重复发起。
 func (c *Client) StartWorkflow(ctx context.Context, component, workflow, instanceID string, input any) error {

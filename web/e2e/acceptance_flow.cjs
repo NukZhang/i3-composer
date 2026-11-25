@@ -41,7 +41,9 @@ const api = (page, path, opts) =>
   await page.waitForTimeout(500);
 
   // ---- 1. 建任务（BA / backlog）----
-  await page.click('.sidebar .trow:has-text("悦府物业")');
+  // v2.7 起侧栏是「工作空间 → 项目」两级：悦府物业是工作空间，
+  // 要点它下面的项目行「收费与工单数字化」才进项目页。
+  await page.click('.sidebar .trow.sub:has-text("收费与工单数字化")');
   await page.waitForTimeout(600);
   const title = '端到端验收-' + Date.now();
   await page.fill('#cr-title', title);

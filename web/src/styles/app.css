@@ -611,3 +611,18 @@ details.as-exp summary::marker{color:var(--tx-11)}
 .ac-term .who{font-size:10px;color:var(--tx-11);margin-bottom:2px}
 .ac-steps{font-size:10.5px;color:var(--tx-10);padding:7px 10px;border-top:1px solid var(--line-e);background:var(--bg-panel)}
 .ac-bug{border-left:2px solid var(--err);padding:5px 0 5px 9px;margin-top:6px}
+
+/* ---------- v2.7 侧栏：工作空间 → 项目 ---------- */
+.sb-group{display:flex;align-items:center;gap:6px}
+.sb-add{margin-left:auto;width:17px;height:17px;display:flex;align-items:center;justify-content:center;border-radius:4px;
+  color:var(--tx-11);font-size:14px;line-height:1;cursor:pointer;letter-spacing:0;text-transform:none;transition:.12s}
+.sb-add:hover{background:var(--bg-el);color:var(--accent-tx2)}
+.sb-ws{display:flex;align-items:center;gap:5px;padding:5px 8px 3px;margin-top:3px;font-size:9.5px;color:var(--tx-11);
+  letter-spacing:.4px;cursor:pointer;text-transform:none;font-weight:500}
+.sb-ws:hover{color:var(--tx-6)}
+.sb-ws .ar2{width:0;height:0;flex:0 0 auto;
+  border-left:4.5px solid var(--tx-11);border-top:3.5px solid transparent;border-bottom:3.5px solid transparent;
+  transition:transform .12s}
+.sb-ws .cnt{margin-left:auto;font-size:8.5px;color:var(--tx-12)}
+.sb-solo{padding:6px 8px 2px;font-size:9.5px;color:var(--tx-12);letter-spacing:.4px}
+.sb-empty{font-size:11px;color:var(--tx-11);padding:4px 8px 6px}

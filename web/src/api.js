@@ -40,7 +40,14 @@ export const api = {
   state: (pbc) => request('/api/state' + q(pbc)),
   overview: (pbc) => request('/api/overview' + q(pbc)),
   units: () => request('/api/units'),
-  brd: () => request('/api/brd'),
+  brd: (proj) => request('/api/brd' + (proj ? '?proj=' + encodeURIComponent(proj) : '')),
+  // v2.7：工作空间 → 项目
+  projects: () => request('/api/projects'),
+  createProject: (body) => request('/api/projects', { method: 'POST', body: JSON.stringify(body) }),
+  joinProject: (id) => request('/api/projects/join', { method: 'POST', body: JSON.stringify({ id }) }),
+  startBRD: (proj) => request('/api/projects/' + encodeURIComponent(proj) + '/brd', { method: 'POST' }),
+  createWorkspace: (body) => request('/api/workspaces', { method: 'POST', body: JSON.stringify(body) }),
+  joinWorkspace: (id) => request('/api/workspaces/join', { method: 'POST', body: JSON.stringify({ id }) }),
   agents: () => request('/api/agents'),
   agent: (id) => request('/api/agents/' + encodeURIComponent(id)),
   tasks: (pbc, tab) => request('/api/tasks' + q(pbc) + '&tab=' + encodeURIComponent(tab)),
@@ -64,7 +71,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  saveBRD: (text, note) => request('/api/brd', { method: 'POST', body: JSON.stringify({ text, note }) }),
+  saveBRD: (text, note, proj) => request('/api/brd' + (proj ? '?proj=' + encodeURIComponent(proj) : ''), { method: 'POST', body: JSON.stringify({ text, note }) }),
   agentEval: (id, body) =>
     request('/api/agents/' + encodeURIComponent(id) + '/eval', { method: 'POST', body: JSON.stringify(body) }),
   agentBaseline: (id, runId) =>

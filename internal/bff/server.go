@@ -2,6 +2,7 @@ package bff
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,12 @@ type Server struct {
 	// Exec 是 Agent 执行器：试跑与对话验收都靠它真跑一遍编排，
 	// 不是把定义里存的样例端出来。
 	Exec *agentexec.Exec
+	// LocalPort 是本进程实际监听的端口（0 = 未知）。
+	// sidecar 把 pubsub 事件投到它配置的 app-port；两者不一致时事件会在别处落地，
+	// 验收里只看到「收到 0 条」，看不出原因。见 CheckPubsubWiring。
+	LocalPort int
+	// Pubsub 是启动时算出的投递地址校验结果，/api/health 原样带出。
+	Pubsub map[string]any
 
 	mu   sync.Mutex
 	subs map[chan string]struct{} // SSE 订阅者（进程内即可：断线重连是常态）
@@ -93,6 +100,13 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/units/{id}/svcverify", s.wrap(s.svcVerify))
 	m.HandleFunc("GET /api/brd", s.wrap(s.brd))
 	m.HandleFunc("POST /api/brd", s.wrap(s.saveBRD))
+	// v2.7：工作空间 → 项目。项目是承接容器，新建 / 加入已有都进账本。
+	m.HandleFunc("GET /api/projects", s.wrap(s.projects))
+	m.HandleFunc("POST /api/projects", s.wrap(s.createProject))
+	m.HandleFunc("POST /api/projects/join", s.wrap(s.joinProject))
+	m.HandleFunc("POST /api/projects/{id}/brd", s.wrap(s.startBRD))
+	m.HandleFunc("POST /api/workspaces", s.wrap(s.createWorkspace))
+	m.HandleFunc("POST /api/workspaces/join", s.wrap(s.joinWorkspace))
 	m.HandleFunc("GET /api/agents", s.wrap(s.agents))
 	m.HandleFunc("GET /api/agents/{id}", s.wrap(s.agent))
 	m.HandleFunc("POST /api/agents/{id}/eval", s.wrap(s.agentEval))
@@ -472,7 +486,9 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	// 账本前缀必须由发起方带过去，不能由执行方自己猜。
 	in := wf.Input{ItemID: it.ID, PBC: it.PBC, Title: it.Title, Type: it.Type, Env: it.Env, Mode: it.Mode,
 		Ledger: s.Log.Prefix()}
-	inst := s.instanceID(it.ID)
+	// 实例号 = 账本前缀 + 单元 + 工作项。单元必须进来：不同单元下
+	// 各有一份 US-01 是常态，只带工作项号会让两份工作项抢同一个实例。
+	inst := s.instanceID(c.PBC + "_" + it.ID)
 	err = s.Dapr.StartWorkflow(r.Context(), s.Comp, s.wfName(), inst, in)
 	if errors.Is(err, dapr.ErrConflict) {
 		return fmt.Errorf("%w：%s 已有一个未结束的实例", errBadRequest, c.ItemID)
@@ -524,7 +540,7 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request, c reqCtx) error 
 		return err
 	}
 	ans := wf.Answer{Approve: in.Approve, By: string(c.Role), Note: in.Note}
-	if err := s.Dapr.RaiseEvent(r.Context(), s.Comp, s.instanceID(it.ID), wf.EventPublish, ans); err != nil {
+	if err := s.Dapr.RaiseEvent(r.Context(), s.Comp, s.instanceID(c.PBC+"_"+it.ID), wf.EventPublish, ans); err != nil {
 		return err
 	}
 	s.publish(c.PBC, "publish.decided", map[string]any{"id": it.ID, "approve": in.Approve})
@@ -549,8 +565,67 @@ func (s *Server) setRole(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	return nil
 }
 
-func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "time": time.Now().UTC().Format(time.RFC3339)})
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	body := map[string]any{"ok": true, "time": time.Now().UTC().Format(time.RFC3339)}
+	if s.Pubsub != nil {
+		body["pubsub"] = s.Pubsub
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// CheckPubsubWiring 对比 sidecar 的 app-port 与本进程端口。
+//
+// 为什么要显式校验：sidecar 由 docker-compose 固定 --app-port=8080，
+// 事件也只会投到那个端口。把业务进程换个端口起（比如 8090）时，
+// 工作流照样能跑（gRPC 由本进程外连）、但 pubsub 一条也收不到——
+// 验收脚本只会报「收到 0 条」，看不出根因。把它算成一条结构化结论，
+// 启动时打日志、/api/health 带出去，省一次排查。
+//
+// 读不到 sidecar 元数据时不判红（ok=true, checked=false）：
+// 「没配 sidecar」和「配错了」是两件事，不能混成一条告警。
+func (s *Server) CheckPubsubWiring(ctx context.Context) map[string]any {
+	out := map[string]any{"localPort": s.LocalPort, "checked": false, "ok": true}
+	if s.LocalPort == 0 {
+		out["detail"] = "本进程监听端口未知（ADDR 里没有端口），跳过投递地址校验"
+		return out
+	}
+	if s.Dapr == nil {
+		out["detail"] = "未配置 Dapr 客户端，跳过投递地址校验"
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	ac, err := s.Dapr.AppConnection(ctx)
+	if err != nil {
+		out["detail"] = "读不到 sidecar 元数据，无法校验 pubsub 投递地址：" + err.Error()
+		return out
+	}
+	out["checked"] = true
+	out["sidecarAppPort"] = ac.Port
+	out["sidecarAddress"] = ac.Address
+	out["ok"] = ac.Port == s.LocalPort
+	if ac.Port == s.LocalPort {
+		out["detail"] = fmt.Sprintf("sidecar 的 app-port=%d，与本实例一致", ac.Port)
+	} else {
+		out["detail"] = fmt.Sprintf(
+			"sidecar 的 app-port=%d，本实例监听 %d：pubsub 事件只会投到 %d，本实例一条也收不到。"+
+				"让本实例监听 sidecar 的 app-port，或为本实例单独起一个 sidecar。",
+			ac.Port, s.LocalPort, ac.Port)
+	}
+	return out
+}
+
+// PortOfAddr 从 ":8080" / "127.0.0.1:8080" 这类监听地址里取端口；取不到返回 0。
+func PortOfAddr(addr string) int {
+	i := strings.LastIndex(addr, ":")
+	if i < 0 || i == len(addr)-1 {
+		return 0
+	}
+	var p int
+	if _, err := fmt.Sscanf(addr[i+1:], "%d", &p); err != nil {
+		return 0
+	}
+	return p
 }
 
 // ---------- SSE ----------

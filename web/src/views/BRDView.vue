@@ -1,11 +1,18 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
-import { S, refresh, toast } from '../store.js';
+import { S, refresh, toast, currentProject, currentWorkspace } from '../store.js';
 import { api } from '../api.js';
 import { icon } from '../icons.js';
 
 const brd = computed(() => S.brd || { v: '—', versions: [], text: '', words: 0 });
+const proj = computed(() => currentProject());
+const ws = computed(() => currentWorkspace());
+const title = computed(() => {
+  const p = proj.value;
+  if (!p) return 'BRD';
+  return 'BRD · ' + (ws.value ? ws.value.name + ' / ' : '') + p.name;
+});
 const can = computed(() => (S.acts || []).includes('brd'));
 const text = ref('');
 const note = ref('');
@@ -35,7 +42,7 @@ async function save() {
     return;
   }
   try {
-    const j = await api.saveBRD(text.value, note.value || '人工编辑：' + text.value.split('\n')[0].slice(0, 18));
+    const j = await api.saveBRD(text.value, note.value || '人工编辑：' + text.value.split('\n')[0].slice(0, 18), S.projId);
     toast('已保存草稿 ' + j.v, 'ok');
     note.value = '';
   } catch (e) {
@@ -45,28 +52,27 @@ async function save() {
 }
 async function suggest() {
   // 「续写」是建议，不是自动改写：把建议追加进草稿区，由 BA 决定要不要保存。
+  // 内容是通用骨架，不塞别的项目的业务——新项目不该继承悦府的规则。
+  const name = (proj.value && proj.value.name) || '本项目';
   const add = [
     '',
-    '### 4.1 账期规则',
-    '- 账期按自然月，每月 1 日 00:00 生成上月账单',
-    '- 缴费截止日为次月 15 日，之后按日计滞纳金',
-    '- 滞纳金日利率 0.05%，上限为本金 20%',
-    '',
-    '### 4.2 收费范围',
-    '- 在管项目 14 个，覆盖住宅与车位',
-    '- 水电分摊按楼栋公共表读数核算',
+    '### 待确认事项（X-业务分析员整理）',
+    '- ' + name + '：谁在什么场景下用、现在怎么解决',
+    '- 做完之后哪个数会变（量化口径）',
+    '- 不做的话哪个数不会变',
+    '- 边界与例外：哪些情况不做 / 要人工确认',
     '',
   ].join('\n');
-  text.value = text.value.replace('## 4. 收费范围与账期规则（待补）\n', '') + '## 4. 收费范围与账期规则（待补）\n' + add;
+  text.value = text.value.replace(/\n## 4\. 关键规则[\s\S]*$/, '') + '\n## 4. 关键规则\n' + add;
   dirty.value = true;
-  toast('X-业务分析员已续写 §4（未保存），请 BA 检查后保存', 'warn');
+  toast('X-业务分析员已续写一版「待确认事项」（未保存），请 BA 检查后保存', 'warn');
 }
 </script>
 
 <template>
   <PageHeader
-    title="BRD · 悦府物业 · 收费与工单数字化"
-    sub="项目级制品。渐进编写：每次保存生成草稿版本，走同一套提交模型；X-业务分析员可续写，BA 确认。"
+    :title="title"
+    :sub="'项目级制品。渐进编写：每次保存生成草稿版本，走同一套提交模型；X-业务分析员可续写，BA 确认。' + (proj && !proj.brd ? ' 这一份还没建过：先保存一次就是 v0.1。' : '')"
   >
     <button class="btn small" @click="S.view = 'projects'"><span v-html="icon('box', 12)" /> 返回项目</button>
     <button class="btn small" @click="suggest"><span v-html="icon('robot', 12)" /> 让 X 续写下一节</button>

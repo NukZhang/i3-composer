@@ -19,6 +19,7 @@ import BRDView from './views/BRDView.vue';
 import NotifyView from './views/NotifyView.vue';
 import TechView from './views/TechView.vue';
 import ConfigView from './views/ConfigView.vue';
+import AddProjectModal from './components/AddProjectModal.vue';
 
 const VIEWS = {
   home: HomeView,
@@ -71,8 +72,19 @@ function grayModule(name) {
 watch(
   () => S.pbcId,
   (id, prev) => {
-    if (id && id !== prev) refresh();
+    if (id !== prev && (id || prev)) refresh();
   },
+);
+
+// v2.7：空项目没有当前单元。凡是「必须先有交付单元」的视图，
+// 直接回项目页——不让它渲染空白再报错（原型 §五 的容错）。
+const STAGE_VIEWS = ['plan', 'proto', 'build', 'verify', 'release', 'agent', 'item'];
+watch(
+  () => [S.view, S.pbcId],
+  () => {
+    if (!S.pbcId && STAGE_VIEWS.includes(S.view)) S.view = 'projects';
+  },
+  { immediate: true },
 );
 
 let closeStream = null;
@@ -137,6 +149,8 @@ onUnmounted(() => closeStream && closeStream());
     </main>
     <RightPane v-show="S.rpOpen" />
   </div>
+
+  <AddProjectModal />
 
   <div id="toast">
     <div v-for="t in S.toasts" :key="t.id" class="tst" :class="t.kind">{{ t.text }}</div>
