@@ -129,6 +129,20 @@ func TestEventSubscriptionAndReceive(t *testing.T) {
 	if p["topic"] != "tag.created" {
 		t.Fatalf("事件主题不对：%v", p)
 	}
+
+	// 没声明过的主题不能往账本里写东西：这个口子是 Dapr 的回调，
+	// 不是谁都能 POST 一条「发生了这件事」的地方。
+	resp3, _ := h.do(t, http.MethodPost, "/api/events/not.subscribed", map[string]any{
+		"id": "evt-2", "source": "i3-composer",
+		"data": map[string]any{"pbc": "fee"},
+	}, RoleBA)
+	if resp3.StatusCode != http.StatusNotFound {
+		t.Fatalf("未订阅的主题应 404，实际 %d", resp3.StatusCode)
+	}
+	_, ev2 := h.do(t, http.MethodGet, "/api/events", nil, RoleBA)
+	if l, _ := ev2["events"].([]any); len(l) != 1 {
+		t.Fatalf("未订阅的主题不该落事实，事件数应仍为 1，实际 %d", len(l))
+	}
 }
 
 // qcFlow 是一张最小的可执行编排（质检员链路）。

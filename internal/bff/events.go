@@ -67,6 +67,11 @@ func (s *Server) daprSubscribe(w http.ResponseWriter, r *http.Request) {
 // 投递失败要返回 5xx——Dapr 会重投，吞掉就等于丢事件。
 func (s *Server) receiveEvent(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	topic := r.PathValue("topic")
+	// 只收声明过的主题。这个路由是 Dapr 的回调口，不对路径做校验的话，
+	// 任何 topic 字符串都能往账本里写一条「收到的事件」。
+	if _, ok := eventTopicOf(topic); !ok {
+		return fmt.Errorf("%w：未订阅的主题 %s", errNotFound, topic)
+	}
 	var body struct {
 		ID      string          `json:"id"`
 		Source  string          `json:"source"`
