@@ -1,0 +1,21 @@
+PASS 1 BA 建任务走真实接口 :: "US-08"
+PASS 1 新项 run=idea 且七步链路齐全 :: "idea"
+PASS 1 页面 toast 显示创建结果 :: "已切换为 BA 业务 · 只显示与你有关的待办与确认 | 已创建 US-08；发起交付请切到 DA 点「发起」"
+PASS 1 刷新后仍在（事实日志而非前端内存）
+PASS 2 BA 发起交付被 403 拒绝 :: {"code":403,"body":{"error":"权限不足"}}
+PASS 3 角色切换写入服务端会话 :: "DA"
+PASS 3 DA 发起返回 202（实例号绑定工作项） :: {"code":202,"body":{"id":"US-08","instance":"v27s_fee_US-08"}}
+PASS 3 页面自动推进到 run=waiting（SSE 驱动，无需手动刷新） :: {"run":"waiting","step":6}
+PASS 3 第七步是人工闸且未执行 :: {"k":"publish","n":"发布生产","d":"全链唯一需要人拍板的一步","st":"todo","human":true}
+PASS 3 前六步全部完成 :: ["done","done","done","done","done","done","todo"]
+PASS 3 重复发起被 400 拒绝（Dapr 实例锁） :: {"code":400,"body":{"error":"请求不合法：US-08 已在执行中（run=waiting）"}}
+PASS 4 DA 拍板被 403 拒绝 :: {"code":403,"body":{"error":"权限不足"}}
+PASS 4 越权后账本状态没变（无乐观更新） :: {"before":"waiting","after":"waiting"}
+PASS 5 SA 拍板返回 202 :: {"code":202,"body":{"approve":true,"id":"US-08"}}
+PASS 5 几秒内 run 变 published :: "published"
+PASS 5 显示了 tag 与版本 :: {"tag":"v1.0.2","version":"1.0.3"}
+PASS 5 账本里有 publish.decided 与 item.published :: ["item.created","item.run.started","item.step.done","item.step.done","item.step.done","test.run","item.step.done","build.succeeded","item.step.done","deploy.succeeded","item.step.done","item.waiting","publish.decided","item.published","item.step.done"]
+PASS 6 通知中心出现该工作项的发布事件 :: [{"at":"2026-11-25T06:28:53Z","type":"tag.created","text":"收费缴费 · 打了 tag v1.0.2","unit":"fee"},{"at":"2026-11-25T06:28:53Z","type":"item.published","text":"收费缴费 · US-08 发布 v1.0.2（1.0.3）","unit":"fee"}]
+PASS 页面无 JS 异常 :: []
+PASS 除脚本自造的 403/400 外无 HTTP 错误 :: []
+SUMMARY 20/20 passed

@@ -23,6 +23,9 @@ type Unit struct {
 	Code    string `json:"code"`
 	Kind    string `json:"kind"`
 	AgentID string `json:"agentId,omitempty"`
+	// Proj 是所属项目（v2.7 起交付单元挂在项目下，不再是全局列表）。
+	// 老账本里没有这个字段的单元归入 DefaultProject。
+	Proj string `json:"proj,omitempty"`
 }
 
 // UnitsView 是 units 日志的投影。
@@ -71,6 +74,7 @@ func ProjectUnits(facts []Fact) (*UnitsView, error) {
 				Code    string `json:"code"`
 				Kind    string `json:"kind"`
 				AgentID string `json:"agentId"`
+				Proj    string `json:"proj"`
 			}
 			if err := json.Unmarshal(f.Payload, &p); err != nil {
 				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
@@ -78,8 +82,11 @@ func ProjectUnits(facts []Fact) (*UnitsView, error) {
 			if p.ID == "" {
 				return nil, fmt.Errorf("unit 事缺少 id")
 			}
+			if p.Proj == "" {
+				p.Proj = DefaultProject
+			}
 			u := Unit{ID: p.ID, Name: p.Name, Code: p.Code,
-				Kind: domain.ParseKind(p.Kind).String(), AgentID: p.AgentID}
+				Kind: domain.ParseKind(p.Kind).String(), AgentID: p.AgentID, Proj: p.Proj}
 			if seen[p.ID] {
 				for i := range v.Units {
 					if v.Units[i].ID == p.ID {
@@ -109,13 +116,21 @@ func ProjectUnits(facts []Fact) (*UnitsView, error) {
 	return v, nil
 }
 
-func ProjectBRD(facts []Fact) (*BRDView, error) {
+// ProjectBRD 重放某个项目的 BRD 版本线。
+//
+// v2.7 起 BRD 挂在项目上：同一条 units 日志里按 payload 的 proj 过滤。
+// 老账本里的 BRD 事实没有 proj 字段，归入 DefaultProject。
+func ProjectBRD(facts []Fact, proj string) (*BRDView, error) {
+	if proj == "" {
+		proj = DefaultProject
+	}
 	v := &BRDView{}
 	for _, f := range facts {
 		if f.Type != FactBRDSaved {
 			continue
 		}
 		var p struct {
+			Proj string `json:"proj"`
 			V    string `json:"v"`
 			At   string `json:"at"`
 			By   string `json:"by"`
@@ -125,6 +140,13 @@ func ProjectBRD(facts []Fact) (*BRDView, error) {
 		}
 		if err := json.Unmarshal(f.Payload, &p); err != nil {
 			return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
+		}
+		// 没写 proj 的老事实归 DefaultProject：升级不丢历史。
+		if p.Proj == "" {
+			p.Proj = DefaultProject
+		}
+		if p.Proj != proj {
+			continue
 		}
 		// 新一版草稿落账时，上一版草稿变为 superseded：和制品版本线同一规则。
 		if p.St == "" {

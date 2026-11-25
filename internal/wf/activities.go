@@ -223,6 +223,22 @@ func (a *Activities) unitOf(ctx context.Context, in Input) UnitInfo {
 	return u
 }
 
+// agentOf 从 agents 日志取一个数字员工的定义（发布闸要看它的评测与 digest）。
+func (a *Activities) agentOf(ctx context.Context, in Input, id string) *domain.Agent {
+	if id == "" {
+		return nil
+	}
+	facts, err := a.logOf(in).Load(ctx, "agents")
+	if err != nil {
+		return nil
+	}
+	av, err := store.ProjectAgents(facts)
+	if err != nil {
+		return nil
+	}
+	return av.Agents[id]
+}
+
 // Converge 按依赖顺序重算过期制品，直到工作区干净（单次遍历即可，因为
 // 依赖是 DAG 且顺序固定；护栏 8 轮防止逻辑异常导致死循环）。
 func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, error) {
@@ -505,7 +521,22 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 	head := v.Commits[0]
 
 	// 视觉比对未接入：传 nil。这条闸会说「判不了」，而不是「无差异」。
-	gates := domain.CheckCommit(head, v.Versions, nil)
+	pbcGates := domain.CheckCommit(head, v.Versions, nil)
+	// 闸的构成跟单元类型走：PBC 看四闸，Agent 看四闸（上游/工具/digest/评测），
+	// 组合两边都要过 + 服务验收。以前这里一律按 PBC 四闸判——
+	// 结果是 Agent / 组合单元只要制品齐了就能发，它自己的评测与服务验收根本没参与。
+	gates := pbcGates
+	unit := a.unitOf(ctx, in.Input)
+	switch domain.ParseKind(unit.Kind) {
+	case domain.KindAgent:
+		gates = domain.AgentGates(a.agentOf(ctx, in.Input, unit.AgentID))
+	case domain.KindHybrid:
+		sv := domain.SvcVerify{}
+		if v.SvcVerify != nil {
+			sv = *v.SvcVerify
+		}
+		gates = domain.HybridGates(pbcGates, sv, domain.AgentGates(a.agentOf(ctx, in.Input, unit.AgentID)))
+	}
 	if !domain.GatesPass(gates) {
 		var bad string
 		for _, g := range gates {
@@ -514,7 +545,7 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 				break
 			}
 		}
-		return StepResult{OK: false, Step: in.Step, Detail: "四闸未过：" + bad}, nil
+		return StepResult{OK: false, Step: in.Step, Detail: "发布闸未过：" + bad}, nil
 	}
 
 	tag := domain.NextTag(v.Tags)

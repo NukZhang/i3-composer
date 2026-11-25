@@ -88,6 +88,13 @@ const (
 
 	// v2.4：客服工单 PBC 与收费缴费重复，从演示项目里删除。
 	FactUnitRemoved = "unit.removed"
+
+	// v2.7：工作空间 → 项目。项目是承接容器（一份 BRD + 多个交付单元），
+	// 工作空间是文件夹，只做归集；两者都可以「新建」或「加入已有」。
+	FactWorkspaceCreated = "workspace.created"
+	FactWorkspaceJoined  = "workspace.joined"
+	FactProjectCreated   = "project.created"
+	FactProjectJoined    = "project.joined"
 )
 
 // Fact 是一条不可变事实。

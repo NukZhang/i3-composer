@@ -1,0 +1,46 @@
+PASS 1 侧栏是两级结构（工作空间 → 项目） :: ["悦府物业1"]
+PASS 1 「项目」右侧有 ＋（新建 / 加入已有）
+PASS 2 新建工作空间落账（workspace.created） :: "验收空间fin"
+PASS 3 新建项目落账（project.created） :: "p401b"
+PASS 4 空项目：BRD 待建 + 没有交付单元 + 需求池空 :: "项目 · 验收空间fin / 门禁与访客fin项目是承接容器：一个项目一份 BRD，BRD 拆成多个交付单元，每个单元各自交付。归属工作空间「验收空间fin」。 打开 BRD还没有 BRD待建 BRD 是这个项目唯一的入口：没有 BRD 就"
+PASS 4 新项目下确实是 0 个交付单元
+PASS 5 新建 BRD 生成 0.1 草稿 :: "v0.1"
+PASS 5 BRD 正文是空白模板（五节骨架，不是别的项目的业务） :: "# 门禁与访客fin · 需求说明书\n\n## 1. 背景\n（谁、在什么场景、现在"
+PASS 5 保存后版本前进（v0.1 → v0.2），正文进账本 :: {"v":"v0.2","words":179}
+PASS 6 三个交付单元挂在项目下（PBC / Agent / 组合） :: ["gatefin:pbc","visitorfin:agent","passfin:hybrid"]
+PASS 7 gatefin 建工作项 :: "US-04"
+PASS 7 gatefin 发起交付（真实 workflow） :: "v27g_gatefin_US-04"
+PASS 7 gatefin 六步跑完，停在发布闸 :: {"run":"waiting","step":6}
+PASS 7 gatefin 账本里有 test.run / build.succeeded / deploy.succeeded :: ["item.created","item.run.started","item.step.done","item.step.done","item.step.done","test.run","item.step.done","build.succeeded","item.step.done","deploy.succeeded","item.step.done","item.waiting"]
+PASS 7 gatefin 测试结论是真跑出来的 :: {"by":"x-qa","commit":"1.0.1","failures":null,"id":"US-04","pass":5,"total":5}
+PASS 7 gatefin digest 是 sha256 内容摘要 :: "sha256:0d5850d4b81cc5bcfa7789ddf6b22904468f96ffea48933aaa5e3cbc7a0c05b9"
+PASS 7 gatefin 部署地址 /healthz 真的 200 :: 200
+PASS 7 gatefin SA 拍板 :: {"approve":true,"id":"US-04"}
+PASS 7 gatefin 发布完成（有 tag） :: {"tag":"v1.0.0","version":"1.0.1"}
+PASS 7 visitorfin 建工作项 :: "US-05"
+PASS 7 visitorfin 发起交付（真实 workflow） :: "v27g_visitorfin_US-05"
+PASS 7 visitorfin 六步跑完，停在发布闸 :: {"run":"waiting","step":6}
+PASS 7 visitorfin 账本里有 test.run / build.succeeded（Agent 无部署） :: ["item.created","item.run.started","item.step.done","item.step.done","item.step.done","test.run","item.step.done","build.succeeded","item.step.done","item.step.done","item.waiting"]
+PASS 7 visitorfin 测试结论是真跑出来的 :: {"by":"x-qa","commit":"1.0.1","failures":null,"id":"US-05","pass":6,"total":6}
+PASS 7 visitorfin digest 是 sha256 内容摘要 :: "sha256:811ffd9b2edd81cb9fb5fe74de15d12b9bc61882d8136c391442ab970b4dd0b6"
+PASS 7 visitorfin Agent 单元没有进程：部署如实跳过
+PASS 7 visitorfin SA 拍板 :: {"approve":true,"id":"US-05"}
+PASS 7 visitorfin 发布完成（有 tag） :: {"tag":"v1.0.0","version":"1.0.1"}
+PASS 7 passfin 建工作项 :: "US-06"
+PASS 7 passfin 发起交付（真实 workflow） :: "v27g_passfin_US-06"
+PASS 7 passfin 六步跑完，停在发布闸 :: {"run":"waiting","step":6}
+PASS 7 passfin 账本里有 test.run / build.succeeded / deploy.succeeded :: ["item.created","item.run.started","item.step.done","item.step.done","item.step.done","test.run","item.step.done","build.succeeded","item.step.done","deploy.succeeded","item.step.done","item.waiting"]
+PASS 7 passfin 测试结论是真跑出来的 :: {"by":"x-qa","commit":"1.0.1","failures":null,"id":"US-06","pass":5,"total":5}
+PASS 7 passfin digest 是 sha256 内容摘要 :: "sha256:695fb70c1e2fae0d03b39030c8238186601becf21b0b0adbbd517f9906c6bcdf"
+PASS 7 passfin 部署地址 /healthz 真的 200 :: 200
+PASS 7 passfin 服务验收落账 :: {"pass":22,"total":22,"fails":null}
+PASS 7 passfin SA 拍板 :: {"approve":true,"id":"US-06"}
+PASS 7 passfin 发布完成（有 tag） :: {"tag":"v1.0.0","version":"1.0.1"}
+PASS 8 三个单元都有 HEAD 与 tag :: ["gatefin 1.0.1 [\"v1.0.0\"]","visitorfin 1.0.1 [\"v1.0.0\"]","passfin 1.0.1 [\"v1.0.0\"]"]
+PASS 8 项目页显示三个单元的 HEAD（都交付过） :: "项目 · 验收空间fin / 门禁与访客fin项目是承接容器：一个项目一份 BRD，BRD 拆成多个交付单元，每个单元各自交付。归属工作空间「验收空间fin」。"
+PASS 9 加入已有项目：落 project.joined 且标「共享」 :: {"id":"c1","shared":true}
+PASS 10 刷新后项目与工作空间都还在（账本而非本地快照） :: ["p1","p401b","c1"]
+PASS 页面无 JS 异常 :: []
+PASS 无意外 HTTP 错误 :: []
+SUMMARY 44/44 passed
+SHOTS /Users/nukzhang/projects/i3-composer/docs/selftest-v27/shots

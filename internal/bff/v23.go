@@ -43,14 +43,13 @@ func (s *Server) loadAgents(ctx context.Context) (*store.AgentsView, error) {
 	return store.ProjectAgents(facts)
 }
 
-// loadBRD 的 BRD 版本和单元构成在同一条日志（units）上，因为 BRD 是项目级制品，
-// 和「项目里有哪些交付单元」属于同一层级。
-func (s *Server) loadBRD(ctx context.Context) (*store.BRDView, error) {
+// loadBRD 读某个项目的 BRD 版本线（v2.7 起 BRD 挂在项目上）。
+func (s *Server) loadBRD(ctx context.Context, proj string) (*store.BRDView, error) {
 	facts, err := s.Log.Load(ctx, unitsLog)
 	if err != nil {
 		return nil, err
 	}
-	return store.ProjectBRD(facts)
+	return store.ProjectBRD(facts, proj)
 }
 
 // ---------- 视图 ----------
@@ -205,6 +204,7 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		Code    string `json:"code"`
 		Kind    string `json:"kind"`
 		AgentID string `json:"agentId"`
+		Proj    string `json:"proj"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
 		return fmt.Errorf("%w：%v", errBadRequest, err)
@@ -223,6 +223,25 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 	}
 	if k != domain.KindPBC && in.AgentID == "" {
 		return fmt.Errorf("%w：agent / hybrid 单元必须指定 agentId", errBadRequest)
+	}
+	// 交付单元挂在项目下：项目必须存在（v2.7）。
+	// 老账本还没有 projects 日志：此时默认项目视为存在，升级不打断。
+	in.Proj = strings.TrimSpace(in.Proj)
+	if in.Proj == "" {
+		in.Proj = store.DefaultProject
+	}
+	ok, err := s.projectExists(r.Context(), in.Proj)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		pv, err := s.loadProjects(r.Context())
+		if err != nil {
+			return err
+		}
+		if !(pv.Seq == 0 && in.Proj == store.DefaultProject) {
+			return fmt.Errorf("%w：项目 %s 不存在", errBadRequest, in.Proj)
+		}
 	}
 	uv, err := s.loadUnits(r.Context())
 	if err != nil {
@@ -247,7 +266,7 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		code = "PBC-" + strings.ToUpper(in.ID)
 	}
 	if _, err := s.Log.Append(r.Context(), unitsLog, store.FactUnitCreated, c.Role.String(), map[string]any{
-		"id": in.ID, "name": in.Name, "code": code, "kind": k.String(), "agentId": in.AgentID,
+		"id": in.ID, "name": in.Name, "code": code, "kind": k.String(), "agentId": in.AgentID, "proj": in.Proj,
 	}); err != nil {
 		return err
 	}
@@ -259,14 +278,23 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		return err
 	}
 	s.publish(in.ID, "unit.created", map[string]any{"id": in.ID})
-	writeJSON(w, http.StatusCreated, map[string]any{"id": in.ID, "kind": k.String()})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": in.ID, "kind": k.String(), "proj": in.Proj})
 	return nil
 }
 
 // ---------- BRD ----------
 
+// brdProj 取请求里的项目号：?proj=xxx；不传就是种子项目。
+func brdProj(r *http.Request) string {
+	p := strings.TrimSpace(r.URL.Query().Get("proj"))
+	if p == "" {
+		return store.DefaultProject
+	}
+	return p
+}
+
 func (s *Server) brd(w http.ResponseWriter, r *http.Request, c reqCtx) error {
-	v, err := s.loadBRD(r.Context())
+	v, err := s.loadBRD(r.Context(), brdProj(r))
 	if err != nil {
 		return err
 	}
@@ -292,7 +320,7 @@ func (s *Server) saveBRD(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if len([]rune(in.Text)) > 200000 {
 		return fmt.Errorf("%w：BRD 超过 20 万字", errBadRequest)
 	}
-	cur, err := s.loadBRD(r.Context())
+	cur, err := s.loadBRD(r.Context(), brdProj(r))
 	if err != nil {
 		return err
 	}
@@ -303,25 +331,40 @@ func (s *Server) saveBRD(w http.ResponseWriter, r *http.Request, c reqCtx) error
 		note = "保存 BRD 草稿"
 	}
 	if _, err := s.Log.Append(r.Context(), unitsLog, store.FactBRDSaved, c.Role.String(), map[string]any{
-		"v": ver, "at": time.Now().Format("01-02 15:04"), "by": c.Role.String(),
+		"proj": brdProj(r),
+		"v":    ver, "at": time.Now().Format("01-02 15:04"), "by": c.Role.String(),
 		"st": "draft", "note": note, "text": in.Text,
 	}); err != nil {
 		return err
 	}
-	s.publish("units", "brd.saved", map[string]any{"v": ver})
-	writeJSON(w, http.StatusCreated, map[string]any{"v": ver})
+	s.publish("units", "brd.saved", map[string]any{"v": ver, "proj": brdProj(r)})
+	writeJSON(w, http.StatusCreated, map[string]any{"v": ver, "proj": brdProj(r)})
 	return nil
 }
 
 func nextBRDVersion(cur *store.BRDView) string {
-	n := 0
+	if len(cur.Vers) == 0 {
+		// 第一版是 0.1，不是 1.1：新项目刚开始写，还没到「能对外」的版本。
+		return "v0.1"
+	}
+	// 0.x 阶段就在 0.x 上递增（0.1 → 0.2）：把 0.1 强行提到 1.2 会假装
+	// 这份 BRD 已经「到 1 了」，评审时会误读成熟度。
+	major, minor := -1, -1
 	for _, v := range cur.Vers {
-		var major, minor int
-		if _, err := fmt.Sscanf(v.V, "v%d.%d", &major, &minor); err == nil && minor > n {
-			n = minor
+		var a, b int
+		if _, err := fmt.Sscanf(v.V, "v%d.%d", &a, &b); err == nil {
+			if a > major || (a == major && b > minor) {
+				major, minor = a, b
+			}
 		}
 	}
-	return fmt.Sprintf("v1.%d", n+1)
+	if major < 0 {
+		return "v0.1"
+	}
+	if major == 0 {
+		return fmt.Sprintf("v0.%d", minor+1)
+	}
+	return fmt.Sprintf("v1.%d", minor+1)
 }
 
 // ---------- Agent ----------

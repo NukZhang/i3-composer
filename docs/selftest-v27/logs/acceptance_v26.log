@@ -1,0 +1,35 @@
+PASS 1 首屏挂载 Vue :: "i3i3构建工作台 · 编辑 → 提交 → 构建 → 交付蓝图构建运营配置隐藏右"
+PASS 1 种子单元只剩三个构成（fee/qa/dun，ticket 已撤） :: ["fee:pbc:-","qa:agent:x-qc","dun:hybrid:x-dun","gatefin:pbc:-","visitorfin:agent:x-qc","passfin:hybrid:x-qc"]
+PASS 1 Agent 工厂是七名 worker（含 X-质检员） :: ["x-fe","x-qa","x-ui","x-ops","x-ba","x-qc","x-dun"]
+PASS 2 构建页有 Agent 编排 / 质量报告两个新 tab :: ["Backlog 0","Agent 编排","质量报告"]
+PASS 2 编排工作台有 7 个节点 + 连线 :: {"li":7,"node":7,"edge":8}
+PASS 2 节点清单可点选（节点配置面板有内容） :: "会话进入开始节点 ID n1输入变量变量类型必填来源sessionIdstring必填调度器orderIdstring必"
+PASS 2 工具权限表多一列「用在哪」 :: ["工具类型审批用在哪","session.read只读不需要接到 读会话","order.read只读不需要接到 读会话","report.write写进工作区待确认接到 回执入库"]
+PASS 2 知识库依赖卡在编排页 :: ["知识库依赖"]
+PASS 2 导出 Dapr Agent 定义（折叠） :: null
+PASS 2 模型节点配置面板显示提示词（可编辑） :: "合规判定模型节点 ID n4模型deepseek-v3 · DSHtemp 0提示词输出变量verdict{risk, hits[]}改这段字就是新版本：dig"
+PASS 3 改编排后 digest 变了 :: {"before":"sha256:3c8a9d59bc7d","after":"sha256:04c90cd8e9ff"}
+PASS 3 改了没构建：digest 闸变红 :: "编排改了但没构建（当前 sha256:04c90cd8e9ff）"
+PASS 3 构建后版本号前进且 digest 闸转绿 :: {"ver":"1.2.1","gate":true}
+PASS 4 试跑有输出与逐节点耗时链 :: {"chain":6,"out":" 输出 跑通{\n  \"branch\": [\n    \"常规\"\n  ],\n  \"output\": {\n    \"agent"}
+PASS 4 沉淀的用例进评测集 :: {"before":7,"after":8}
+PASS 5 质量报告有四闸 + 评测台 + 知识库准确度 :: {"m":9}
+PASS 5 知识库准确度有召回/忠实度/引用四格 :: 9
+PASS 5 视觉比对未接入时，这条闸标成判不了（不是假装通过） :: {"key":"visual","label":"原型还原","ok":true,"detail":"视觉比对未接入：这条判不了，别当成证据","unknown":true}
+PASS 6 验证页是验收台（AC 清单 + 对话终端） :: ["✓AR-1 承诺疗效要判出来","○AR-2 无风险对话不误判","○AR-3 情绪没接住要标红","○AR-4 判定依据看得懂","○AR-5 引用要指到句子"]
+PASS 6 判定面板有 Given/When/Then :: null
+PASS 6 判定「通过」进账本 :: ["AR-1:pass","AR-2:pass","AR-3:todo","AR-4:todo","AR-5:todo"]
+PASS 6 「不提过」展开 bug 表单（标题预填、步骤自动带入） :: {"open":true,"title":"情绪没接住要标红：判为「风险」，引用 R-","steps":"客户：你们这个热玛吉能维持多久？"}
+PASS 6 bug 落账且 AC 标不通过 :: {"checks":["AR-1:pass","AR-2:pass","AR-3:fail","AR-4:todo","AR-5:todo"],"defects":["BUG-118/AR-3/一般"],"backlog":["US-09:修复：情绪没接住：客户不满时客服直接报价"]}
+PASS 6 bug 进 backlog（成了一条修复项） :: ["US-09:修复：情绪没接住：客户不满时客服直接报价"]
+PASS 7 Agent 原型页是「质检复核」一屏（可点会话 + 判定依据 + 人工动作） :: "原型 1.0.1Agent 交付的是一屏工具：它的产出（判定 / 草稿）在这里被人看、被人改、被人拍板。就这一屏，没有别的。 回方案页Agent制品原型 1.0"
+PASS 8 组合项原型页是「催缴业务台」（策略/任务/话术三块） :: "原型 1.0.1组合项交付的是一套业务系统：策略、任务、话术三块，Agent 只负责第三块的话术生成。 回方案页PBC + Agent制品原型 1.0.1 · "
+PASS 8 组合项质量报告有合并门禁且不能发布 :: ["不能发布"]
+PASS 9 Agent 工厂列出 7 名 worker :: 7
+PASS 9 质检员详情有五个阶段 tab :: ["✓ 方案","✓ 原型","✓ 构建","✓ 验证","● 发布"]
+PASS 9 Agent 详情构建页是编排摘要 + 节点一览 :: ["会话进入开始","读会话工具","检索口径知识库","合规判定模型","风险分级分支","转人工人工","回执入库结束"]
+PASS 9 有「去编排页」按钮 :: null
+PASS 10 验证页是验收台（不再堆机器自检） :: "验证 2/6 已验 · 通过 1这一步不是看报告，是人自己上手跑一遍：照着清单操作、判过不过，不过就提 bug。机器自检"
+PASS 页面无 JS 异常 :: []
+PASS 无 HTTP 错误 :: []
+SUMMARY 34/34 passed

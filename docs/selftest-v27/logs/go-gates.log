@@ -1,0 +1,19 @@
+== go version ==
+go version go1.27.4 darwin/arm64
+== go vet ==
+vet exit=0
+== go test ==
+?   	github.com/zhangkun/i3-composer/cmd/i3-composer	[no test files]
+ok  	github.com/zhangkun/i3-composer/internal/agentexec	(cached)
+?   	github.com/zhangkun/i3-composer/internal/artifacts	[no test files]
+ok  	github.com/zhangkun/i3-composer/internal/bff	(cached)
+?   	github.com/zhangkun/i3-composer/internal/builder	[no test files]
+ok  	github.com/zhangkun/i3-composer/internal/codegen	2.705s
+?   	github.com/zhangkun/i3-composer/internal/dapr	[no test files]
+ok  	github.com/zhangkun/i3-composer/internal/deployer	1.138s
+ok  	github.com/zhangkun/i3-composer/internal/domain	(cached)
+ok  	github.com/zhangkun/i3-composer/internal/pipeline	3.310s
+?   	github.com/zhangkun/i3-composer/internal/seed	[no test files]
+ok  	github.com/zhangkun/i3-composer/internal/store	(cached)
+ok  	github.com/zhangkun/i3-composer/internal/wf	3.860s
+test exit=0

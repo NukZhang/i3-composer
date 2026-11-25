@@ -150,7 +150,7 @@ func TestProjectBRDNewDraftSupersedesOld(t *testing.T) {
 		{Type: FactBRDSaved, Payload: []byte(`{"v":"v1.1","at":"b","by":"BA","st":"draft","text":"# y","note":"补 §3"}`)},
 		{Type: FactBRDSaved, Payload: []byte(`{"v":"v1.2","at":"c","by":"BA","st":"draft","text":"# z"}`)},
 	}
-	v, err := ProjectBRD(facts)
+	v, err := ProjectBRD(facts, "")
 	if err != nil {
 		t.Fatal(err)
 	}

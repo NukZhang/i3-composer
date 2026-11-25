@@ -93,6 +93,13 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/units/{id}/svcverify", s.wrap(s.svcVerify))
 	m.HandleFunc("GET /api/brd", s.wrap(s.brd))
 	m.HandleFunc("POST /api/brd", s.wrap(s.saveBRD))
+	// v2.7：工作空间 → 项目。项目是承接容器，新建 / 加入已有都进账本。
+	m.HandleFunc("GET /api/projects", s.wrap(s.projects))
+	m.HandleFunc("POST /api/projects", s.wrap(s.createProject))
+	m.HandleFunc("POST /api/projects/join", s.wrap(s.joinProject))
+	m.HandleFunc("POST /api/projects/{id}/brd", s.wrap(s.startBRD))
+	m.HandleFunc("POST /api/workspaces", s.wrap(s.createWorkspace))
+	m.HandleFunc("POST /api/workspaces/join", s.wrap(s.joinWorkspace))
 	m.HandleFunc("GET /api/agents", s.wrap(s.agents))
 	m.HandleFunc("GET /api/agents/{id}", s.wrap(s.agent))
 	m.HandleFunc("POST /api/agents/{id}/eval", s.wrap(s.agentEval))
@@ -472,7 +479,9 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	// 账本前缀必须由发起方带过去，不能由执行方自己猜。
 	in := wf.Input{ItemID: it.ID, PBC: it.PBC, Title: it.Title, Type: it.Type, Env: it.Env, Mode: it.Mode,
 		Ledger: s.Log.Prefix()}
-	inst := s.instanceID(it.ID)
+	// 实例号 = 账本前缀 + 单元 + 工作项。单元必须进来：不同单元下
+	// 各有一份 US-01 是常态，只带工作项号会让两份工作项抢同一个实例。
+	inst := s.instanceID(c.PBC + "_" + it.ID)
 	err = s.Dapr.StartWorkflow(r.Context(), s.Comp, s.wfName(), inst, in)
 	if errors.Is(err, dapr.ErrConflict) {
 		return fmt.Errorf("%w：%s 已有一个未结束的实例", errBadRequest, c.ItemID)
@@ -524,7 +533,7 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request, c reqCtx) error 
 		return err
 	}
 	ans := wf.Answer{Approve: in.Approve, By: string(c.Role), Note: in.Note}
-	if err := s.Dapr.RaiseEvent(r.Context(), s.Comp, s.instanceID(it.ID), wf.EventPublish, ans); err != nil {
+	if err := s.Dapr.RaiseEvent(r.Context(), s.Comp, s.instanceID(c.PBC+"_"+it.ID), wf.EventPublish, ans); err != nil {
 		return err
 	}
 	s.publish(c.PBC, "publish.decided", map[string]any{"id": it.ID, "approve": in.Approve})

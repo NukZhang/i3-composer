@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
-import { S, unitById } from '../store.js';
+import { S, unitById, projectTitle } from '../store.js';
 import { icon } from '../icons.js';
 
 const tabs = [
@@ -21,7 +21,7 @@ const list = computed(() => {
 
 const busy = computed(() => S.agents.filter((a) => (a.st || []).includes('doing')));
 const head = computed(() => (S.units.find((u) => u.id === S.pbcId) || {}).head || '—');
-const tags = computed(() => S.units.flatMap((u) => u.tags || []));
+const tags = computed(() => S.units.filter((u) => u.proj === S.projId).flatMap((u) => u.tags || []));
 
 function openItem(id) {
   S.itemId = id;
@@ -82,7 +82,7 @@ function unitName(id) {
   <div class="grid2">
     <div class="card">
       <div class="ch">
-        <span v-html="icon('git')" /><h3>项目进度</h3><span class="spacer" /><span class="small muted">悦府物业 · 收费与工单数字化</span>
+        <span v-html="icon('git')" /><h3>项目进度</h3><span class="spacer" /><span class="small muted">{{ projectTitle() }}</span>
       </div>
       <div class="tree-box">
         <div class="tree-line"><span class="k">BRD</span><span class="v">{{ (S.brd && S.brd.v) || '—' }} · 草稿 {{ S.brd ? (S.brd.versions || []).filter((v) => v.st === 'draft').length : 0 }} 项</span></div>

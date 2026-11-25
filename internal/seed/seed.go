@@ -128,6 +128,10 @@ func Run(ctx context.Context, log *store.Store, opts Options) error {
 	if err := seedProject(ctx, log); err != nil {
 		return err
 	}
+	// v2.7：工作空间 → 项目。要先有项目，单元才有地方挂。
+	if err := seedProjects(ctx, log); err != nil {
+		return err
+	}
 	if err := seedAgents(ctx, log); err != nil {
 		return err
 	}
@@ -388,6 +392,7 @@ func seedProject(ctx context.Context, log *store.Store) error {
 		op := "seed/v26/unit/" + u.ID + "/" + u.Kind + "/" + u.AgentID
 		if _, err := log.AppendOp(ctx, "units", op, store.FactUnitCreated, ActorSeed, map[string]any{
 			"id": u.ID, "name": u.Name, "code": u.Code, "kind": u.Kind, "agentId": u.AgentID,
+			"proj": store.DefaultProject,
 		}); err != nil {
 			return err
 		}
@@ -401,7 +406,7 @@ func seedProject(ctx context.Context, log *store.Store) error {
 			return err
 		}
 	}
-	brd, err := store.ProjectBRD(facts)
+	brd, err := store.ProjectBRD(facts, store.DefaultProject)
 	if err != nil {
 		return err
 	}
@@ -509,7 +514,8 @@ func seedBRD(ctx context.Context, log *store.Store) error {
 	} {
 		op := "seed/brd/" + v.V
 		if _, err := log.AppendOp(ctx, "units", op, store.FactBRDSaved, ActorSeed, map[string]any{
-			"v": v.V, "at": v.At, "by": ActorSeed, "st": v.St, "note": v.Note, "text": text,
+			"proj": store.DefaultProject,
+			"v":    v.V, "at": v.At, "by": ActorSeed, "st": v.St, "note": v.Note, "text": text,
 		}); err != nil {
 			return err
 		}
@@ -517,8 +523,34 @@ func seedBRD(ctx context.Context, log *store.Store) error {
 	return nil
 }
 
-// seedBaseline 写 v1.0.1 的制品线与基线提交。
+// seedProjects 种 v2.7 的工作空间与项目。
 //
+// 演示起点仍是「悦府物业 / 收费与工单数字化」这一组；区别是它现在
+// 是账本里的一条事实，而不是写死在前端的常量。已有账本不重复种。
+func seedProjects(ctx context.Context, log *store.Store) error {
+	if err := log.Ensure(ctx, "projects"); err != nil {
+		return err
+	}
+	facts, err := log.Load(ctx, "projects")
+	if err != nil {
+		return err
+	}
+	if len(facts) > 0 {
+		return nil
+	}
+	if _, err := log.AppendOp(ctx, "projects", "seed/v27/ws/w1", store.FactWorkspaceCreated, ActorSeed,
+		map[string]any{"id": "w1", "name": "悦府物业", "use": "org"}); err != nil {
+		return err
+	}
+	_, err = log.AppendOp(ctx, "projects", "seed/v27/proj/p1", store.FactProjectCreated, ActorSeed,
+		map[string]any{
+			"id": "p1", "ws": "w1", "name": "收费与工单数字化", "owner": "张昆",
+			"brd": map[string]any{"v": "v1.2", "file": "悦府物业收费与工单需求说明书.docx", "size": "2.4 MB", "at": "11-20 14:20"},
+		})
+	return err
+}
+
+// seedBaseline 写 v1.0.1 的制品线与基线提交。//
 // 制品带真内容：文档有 markdown 正文，代码是可编译的 Go 模块；
 // 基线提交的 digest 是真构建出来的（二进制字节的 sha256），
 // 所以「镜像与树一致」这条闸在演示数据上也是真的绿。
