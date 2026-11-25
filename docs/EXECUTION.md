@@ -20,7 +20,7 @@
 | 构建 | ✅ 真 | `go build -trimpath` 出二进制；digest = **二进制字节的 sha256**（内容寻址），不是树摘要拼的 |
 | 部署 | ✅ 真 | 起构建产物为进程，等 `GET /healthz` 真的返回 200 才记 `deploy.succeeded`；URL 与 pid 都进事实 |
 | Agent 试跑 / 对话验收 | ✅ 真（本地判定） | `internal/agentexec` 按编排图逐节点执行：读会话、检索知识库、跑合规规则、判分支、转人工；**输入变了结论就变** |
-| pub/sub | ✅ 真（收发闭环） | 声明式订阅 `components/subscription.yaml` → sidecar 建 consumer group → 事件回到 `/api/events/{topic}` → 落 `event.received` 事实 |
+| pub/sub | ✅ 真（收发闭环） | 声明式订阅 `components/subscription.yaml` → sidecar 建 consumer group → 事件回到 `/api/events/{topic}` → 落 `event.received` 事实；workflow 的**每一步**都发 `item.changed` |
 | 种子数据 | ⚠️ 演示数据（已标注） | actor 写作 `seed`，页面上标「演示数据」；真跑出来的事实 actor 是 `x-fe`/`x-qa`/`x-ops`/`SA` |
 | CI（Jenkins / GitHub Actions） | ❌ 未接 | 本地构建是**真的编译**，但它不是 CI；接真 CI 只需换掉 `internal/pipeline` 的 Build 实现 |
 | 真模型调用 | ❌ 未接 | Agent 的判定由**本地规则引擎**算（合规规则库里的 R-03/R-05/R-07/R-11），不是模型推理 |
@@ -59,11 +59,24 @@ sha256sum .i3-artifacts/blobs/sha256/<hex>   # 与事实里的 digest 一致
 现在按编排图真跑一遍，结论随输入变；样例只作为「没接执行器时的兜底」，
 且在界面上标出来。
 
-**5. pub/sub 曾经只发不收**
+**5. pub/sub 曾经只发不收，而且 workflow 的推进绕过了它**
 
 事件发进 Redis stream 就没人消费了——看起来像消息总线在工作，其实是单向的。
-现在有声明式订阅，sidecar 建 consumer group，事件回到 BFF 落成
-`event.received` 事实，页面上能看到「收到的事件」。
+更糟的是 workflow 推进走的是 `log.Notify`（事实一落就直接推 SSE），
+中间那层总线成了装饰品：谁都能看见 `tag.created` 进了 Redis stream，
+但没有任何东西消费它，也没有任何一步真的经过它。
+
+现在两端都接上了：
+
+- 收：`components/subscription.yaml` 让 sidecar 建 consumer group，
+  事件回到 BFF 落成 `event.received` 事实，页面上能看到「收到的事件」；
+- 发：**workflow 的每一步**（生成制品、收敛、提交、测试、构建、部署，
+  以及走到人工闸）都发一条 `item.changed`，不是只有后面几步发。
+  一次交付在总线上能数出 10 条 `item.changed`（6 步 + 人工闸 + 测试/构建/部署各一条）。
+
+怎么核对「总线不是装饰品」：跑完一条交付后数收到的 `item.changed`，
+条数必须盖得住步骤数。`acceptance_exec.cjs` 里那条
+「workflow 每一步都经总线发过事件」就是干这个的。
 
 **6. 种子曾经冒充历史**
 

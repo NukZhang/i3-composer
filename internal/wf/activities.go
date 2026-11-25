@@ -76,12 +76,21 @@ type StepInput struct {
 }
 
 // done 在步骤成功时记一条 item.step.done。失败不记——失败会走 Blocked。
+//
+// 顺带把这一步发到总线上：workflow 的推进本身就是一条领域事件。
+// 以前只有测试、构建、部署这几步发事件，前面几步静悄悄地过去了，
+// 总线看起来像装饰品。现在每一步都过总线，BFF 的订阅端收回来落事实，
+// 页面上的推进也就有一条公开的、可被别人订阅的事件流。
 func (a *Activities) done(ctx context.Context, in StepInput, res StepResult) (StepResult, error) {
 	p := map[string]any{"id": in.ItemID, "step": in.Step, "at": stamp()}
 	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/done",
 		store.FactItemStepDone, "i3-pipeline", p); err != nil {
 		return res, err
 	}
+	a.publish(ctx, TopicItemChanged, map[string]any{
+		"pbc": in.PBC, "item": in.ItemID, "kind": "step",
+		"step": in.Step, "ok": true, "detail": res.Detail,
+	})
 	return res, nil
 }
 
@@ -93,6 +102,10 @@ func (a *Activities) Blocked(ctx context.Context, in BlockInput) (StepResult, er
 		store.FactItemBlocked, in.By, p); err != nil {
 		return StepResult{}, err
 	}
+	a.publish(ctx, TopicItemChanged, map[string]any{
+		"pbc": in.PBC, "item": in.ItemID, "kind": "blocked",
+		"step": in.Step, "ok": false, "reason": in.Reason,
+	})
 	return StepResult{OK: false, Step: in.Step, Detail: in.Reason}, nil
 }
 
@@ -103,8 +116,15 @@ func (a *Activities) Waiting(ctx context.Context, in StepInput) (StepResult, err
 		store.FactItemWaiting, "i3-pipeline", p); err != nil {
 		return StepResult{}, err
 	}
-	return StepResult{OK: true, Step: in.Step, Detail: "已到发布闸，等待拍板"}, nil
+	a.publish(ctx, TopicItemChanged, map[string]any{
+		"pbc": in.PBC, "item": in.ItemID, "kind": "waiting",
+		"step": in.Step, "ok": true, "detail": waitingDetail,
+	})
+	return StepResult{OK: true, Step: in.Step, Detail: waitingDetail}, nil
 }
+
+// waitingDetail 是人工闸事件与步骤结果里共用的说明。
+const waitingDetail = "已到发布闸，等待拍板"
 
 // BlockInput 是 Blocked 的入参。
 type BlockInput struct {

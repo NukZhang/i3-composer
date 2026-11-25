@@ -126,6 +126,16 @@ function check(name, ok, detail) {
   const evs = (await api('/api/events')).body.events || [];
   check('7 pubsub 收到的事件落了 event.received 事实', evs.length > 0, evs.slice(0, 2).map((e) => e.payload && e.payload.topic));
 
+  // ---- 7.1 workflow 的每一步都真的过了总线 ----
+  // 这条最容易漏：以前 workflow 只在测试/构建/部署这几步发事件，
+  // 前面几步静悄悄地过去了，总线看起来像装饰品。现在每一步都发，
+  // 所以收到的 item.changed 事件数应该盖得住步骤数（6 步 + 人工闸）。
+  const itemEvents = evs.filter((e) => e.payload && e.payload.topic === 'item.changed' &&
+    e.payload.data && e.payload.data.item === id);
+  const stepEvents = itemEvents.filter((e) => e.payload.data.kind === 'step' || e.payload.data.kind === 'waiting');
+  check('7 workflow 每一步都经总线发过事件（不是装饰品）',
+    stepEvents.length >= 7, { 收到: itemEvents.length, 其中步骤: stepEvents.length });
+
   // ---- 8. 发布 ----
   await role('SA');
   const answer = await api('/api/items/' + id + '/answer?pbc=fee', {
