@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/zhangkun/i3-composer/internal/agentexec"
 	"github.com/zhangkun/i3-composer/internal/domain"
 	"github.com/zhangkun/i3-composer/internal/store"
 )
@@ -124,49 +126,149 @@ func (s *Server) agentTrial(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		return fmt.Errorf("%w：Agent %s", errNotFound, c.ItemID)
 	}
 	var in struct {
-		In    string   `json:"in"`
-		Raw   string   `json:"raw"`
-		Out   []string `json:"out"`
-		Reply string   `json:"reply"`
+		In    string         `json:"in"`
+		Vars  map[string]any `json:"vars"`
+		Raw   string         `json:"raw"`
+		Out   []string       `json:"out"`
+		Reply string         `json:"reply"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&in)
-	if a.Trial == nil && in.Raw == "" {
-		return fmt.Errorf("%w：这个 Agent 没有试跑样例，真实结果需由执行器提交", errBadRequest)
-	}
+
 	trial := domain.Trial{}
 	out := in.Out
 	raw := in.Raw
-	source := "executor"
-	if a.Trial != nil {
-		trial.In = a.Trial.In
-		if raw == "" {
-			raw, out, source = a.Trial.Raw, a.Trial.Out, "sample"
+	source := "submitted"
+
+	// 有编排就真跑一遍：输入变了，结论必须跟着变。
+	if s.Exec != nil && a.Flow != nil {
+		vars := map[string]any{}
+		for k, v := range in.Vars {
+			vars[k] = v
 		}
-	}
-	if in.In != "" {
+		if in.In != "" {
+			vars["in"] = in.In
+		}
+		run, err := s.Exec.Execute(r.Context(), a, vars)
+		if err != nil {
+			return fmt.Errorf("%w：试跑失败：%v", errBadRequest, err)
+		}
 		trial.In = in.In
-	}
-	trial.Raw = raw
-	if out != nil {
-		trial.Out = out
-	} else if a.Trial != nil {
-		trial.Out = a.Trial.Out
+		if trial.In == "" {
+			trial.In = describeVars(run.Input)
+		}
+		trial.Raw = run.Raw
+		trial.Out = summarizeRun(run)
+		trial.Branch = run.Branch
+		trial.Escalated = run.Escalated
+		trial.Source = "executor"
+		for _, n := range run.Nodes {
+			trial.Nodes = append(trial.Nodes, domain.TrialNode{
+				ID: n.ID, Name: n.Name, Type: n.Type, Ms: n.Ms,
+				Out: oneLine(n.Out), Wait: n.Wait,
+			})
+		}
+	} else {
+		// 没有编排（Agent 未定义流程）：只能由外部执行器提交结果。
+		if a.Trial == nil && in.Raw == "" {
+			return fmt.Errorf("%w：这个 Agent 没有编排，也没有可用的样例；真实结果需由执行器提交", errBadRequest)
+		}
+		if a.Trial != nil {
+			trial.In = a.Trial.In
+			if raw == "" {
+				raw, out, source = a.Trial.Raw, a.Trial.Out, "sample"
+			}
+		}
+		if in.In != "" {
+			trial.In = in.In
+		}
+		trial.Raw = raw
+		if out != nil {
+			trial.Out = out
+		} else if a.Trial != nil {
+			trial.Out = a.Trial.Out
+		}
+		trial.Source = source
 	}
 	at := time.Now().Format("01-02 15:04")
 	if _, err := s.Log.Append(r.Context(), agentsLog, store.FactAgentTrial, c.Role.String(), map[string]any{
-		"agentId": a.ID, "trial": trial, "at": at, "by": c.Role.String(), "source": source,
+		"agentId": a.ID, "trial": trial, "at": at, "by": c.Role.String(), "source": trial.Source,
 	}); err != nil {
 		return err
 	}
 	s.publish(agentsLog, "agent.trial.run", map[string]any{"id": a.ID})
 	var chain []string
-	if a.Flow != nil {
+	for _, n := range trial.Nodes {
+		chain = append(chain, fmt.Sprintf("%s %dms", n.Name, n.Ms))
+	}
+	if len(chain) == 0 && a.Flow != nil {
 		chain = a.Flow.Chain()
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"id": a.ID, "trial": trial, "chain": chain, "source": source, "at": at,
+		"id": a.ID, "trial": trial, "chain": chain, "source": trial.Source, "at": at,
 	})
 	return nil
+}
+
+// summarizeRun 把一轮执行汇成几行结论。
+func summarizeRun(run *agentexec.Run) []string {
+	out := make([]string, 0, 4)
+	if r, ok := run.Output["risk"].(string); ok {
+		out = append(out, "判定："+riskLabel(r))
+	}
+	if hits, ok := run.Output["hits"].([]any); ok && len(hits) > 0 {
+		out = append(out, fmt.Sprintf("命中 %d 条", len(hits)))
+	}
+	if d, ok := run.Output["draft"].(string); ok && d != "" {
+		out = append(out, "产物：话术草稿")
+	}
+	if esc, ok := run.Output["escalate"].(bool); ok && esc {
+		out = append(out, "处置：转人工，未出自动结论")
+	}
+	if len(out) == 0 {
+		out = append(out, "本轮无结论")
+	}
+	out = append(out, fmt.Sprintf("耗时 %dms", run.Ms))
+	return out
+}
+
+// oneLine 把节点输出压成一行。
+func oneLine(m map[string]any) string {
+	if m == nil {
+		return ""
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	s := string(b)
+	if len(s) > 160 {
+		s = s[:157] + "…"
+	}
+	return s
+}
+
+// describeVars 把输入变量描述成一行。
+func describeVars(m map[string]any) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, m[k]))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func riskLabel(r string) string {
+	switch r {
+	case "high":
+		return "风险高"
+	case "normal":
+		return "正常"
+	}
+	return r
 }
 
 // agentCase 把跑过的那一条沉淀为评测用例。
@@ -418,7 +520,19 @@ func (s *Server) verifyChat(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		return err
 	}
 	reply := "（按当前 AT 处理）已收到，正在核对。"
-	if len(a.Cases) > 0 {
+	source := "sample"
+	if s.Exec != nil && a.Flow != nil {
+		// 真跑一遍：把这句话当作会话原文喂进编排，回复是这一轮算出来的。
+		run, err := s.Exec.Execute(r.Context(), a, map[string]any{
+			"sessionText":  in.Text,
+			"customerText": in.Text,
+		})
+		if err != nil {
+			return fmt.Errorf("%w：对话验收失败：%v", errBadRequest, err)
+		}
+		reply = replyFromRun(run)
+		source = "executor"
+	} else if len(a.Cases) > 0 {
 		cse := a.Cases[0]
 		reply = cse.Out
 		if cse.Why != "" {
@@ -426,13 +540,41 @@ func (s *Server) verifyChat(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		}
 	}
 	if _, err := s.Log.Append(r.Context(), c.ItemID, store.FactVerifyChat, "x-"+agentID, map[string]any{
-		"who": "ai", "t": reply, "at": now, "from": agentID, "source": "sample",
+		"who": "ai", "t": reply, "at": now, "from": agentID, "source": source,
 	}); err != nil {
 		return err
 	}
 	s.publish(c.ItemID, "verify.chat", map[string]any{"unit": c.ItemID})
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"unit": c.ItemID, "agent": agentID, "reply": reply, "source": "sample",
+		"unit": c.ItemID, "agent": agentID, "reply": reply, "source": source,
 	})
 	return nil
+}
+
+// replyFromRun 把一轮执行的结果转成一句回复。
+func replyFromRun(run *agentexec.Run) string {
+	var b strings.Builder
+	if r, ok := run.Output["risk"].(string); ok && r != "" {
+		b.WriteString(riskLabel(r))
+		if hits, ok := run.Output["hits"].([]any); ok && len(hits) > 0 {
+			b.WriteString(" · 命中 " + fmt.Sprint(len(hits)) + " 条")
+			if h, ok := hits[0].(map[string]any); ok {
+				b.WriteString("（" + fmt.Sprint(h["rule"]) + " " + fmt.Sprint(h["why"]) + "）")
+			}
+		}
+	} else if d, ok := run.Output["draft"].(string); ok && d != "" {
+		b.WriteString(d)
+		if esc, ok := run.Output["escalate"].(bool); ok && esc {
+			b.WriteString("（已升级转人工）")
+		}
+	} else if rep, ok := run.Output["report"].(map[string]any); ok {
+		b.WriteString("已生成回执")
+		if r, ok := rep["risk"]; ok && r != "" {
+			b.WriteString("：" + fmt.Sprint(r))
+		}
+	} else {
+		b.WriteString("已收到，本轮无结论")
+	}
+	b.WriteString(fmt.Sprintf("（%dms）", run.Ms))
+	return b.String()
 }

@@ -182,6 +182,13 @@ const curRun = computed(() => evCur(props.agent));
 const baseRun = computed(() => evBase(props.agent));
 const dPass = computed(() => (curRun.value && baseRun.value ? curRun.value.pass - baseRun.value.pass : 0));
 const dRatePct = computed(() => (curRun.value && baseRun.value ? (evRate(curRun.value) - evRate(baseRun.value)) * 100 : 0));
+
+// 最近一次试跑的结果。优先用真跑的那次（trialRun），没有才回退到定义里的样例。
+const trial = computed(() => props.agent && (props.agent.trialRun || props.agent.trial) || null);
+const trialIn = computed(() => (trial.value && trial.value.in) || '');
+const trialRaw = computed(() => (trial.value && trial.value.raw) || '');
+const trialSource = computed(() => (trial.value && trial.value.source) || '');
+const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
 </script>
 
 <template>
@@ -386,7 +393,7 @@ const dRatePct = computed(() => (curRun.value && baseRun.value ? (evRate(curRun.
             <span class="spacer" style="flex: 1" />
             <span class="small muted">一条真实样例</span>
           </div>
-          <div class="as-code" style="margin: 0">{{ (agent.trial && agent.trial.in) || '（没有样例）' }}</div>
+          <div class="as-code" style="margin: 0">{{ trialIn || '（没有样例）' }}</div>
           <div class="row" style="margin-top: 7px; gap: 6px">
             <button class="btn small" @click="runTrial"><span v-html="icon('play', 11)" /> 运行</button>
             <button v-if="S.agRan" class="btn small" @click="S.agRan = false">清空</button>
@@ -401,12 +408,15 @@ const dRatePct = computed(() => (curRun.value && baseRun.value ? (evRate(curRun.
           <div v-if="!S.agRan" class="as-empty">还没跑过。点「运行」，看这一条在流程里怎么走下去、每个节点花多久。</div>
           <template v-else>
             <div class="as-code" style="margin: 0; max-height: 96px; overflow: auto">
-              {{ (agent.trialRun && agent.trialRun.raw) || (agent.trial && agent.trial.raw) || '—' }}
+              {{ trialRaw || '—' }}
             </div>
             <div class="as-chain">
-              <template v-for="(n, i) in nodes.filter((x) => x.ms > 0)" :key="n.id">
-                <span>{{ n.n }} <b>{{ msText(n.ms) }}</b></span><i v-if="i < nodes.filter((x) => x.ms > 0).length - 1">→</i>
+              <template v-for="(n, i) in trialNodes" :key="n.id">
+                <span>{{ n.n }} <b>{{ msText(n.ms) }}</b></span><i v-if="i < trialNodes.length - 1">→</i>
               </template>
+            </div>
+            <div v-if="trialSource" class="small muted" style="margin-top: 6px">
+              来源：{{ trialSource === 'executor' ? '执行器真跑（输入变了结论就会变）' : trialSource === 'sample' ? '回放定义里的样例' : '外部提交' }}
             </div>
             <div class="row" style="gap: 6px; margin-top: 7px">
               <button class="btn small" @click="toCase"><span v-html="icon('plus', 11)" /> 沉淀为评测用例</button>

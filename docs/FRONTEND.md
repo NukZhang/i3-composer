@@ -75,11 +75,11 @@ Agent 的构建产物不是一份 YAML，是**一张编排**：左边节点清�
 |---|---|---|
 | `PUT` | `/api/agents/{id}/flow` | body `{flow}`；保存编排。digest 立即变，但没构建前闸门是红的 |
 | `POST` | `/api/agents/{id}/build` | 构建：算 digest、换版本号；没改就返回 `changed:false`（不制造空版本） |
-| `POST` | `/api/agents/{id}/trial` | 记录一次试跑；执行器可提交真实结果，没有则回放定义里的样例（标 `source=sample`） |
+| `POST` | `/api/agents/{id}/trial` | 记录一次试跑：执行器按编排图真跑一遍（标 `source=executor`），输入变了结论就变 |
 | `POST` | `/api/agents/{id}/cases` | 把跑过的一条沉淀为评测用例（用例进评测集，digest 随之变化） |
 | `POST` | `/api/agents/{id}/kb/{idx}/dispatch` | 把知识库问题单派给库的 owner |
 | `POST` | `/api/checks/{id}/decide` | body `{st:"pass"\|"fail",title,sev,steps}`；不通过则同时产生 bug 与 backlog 修复项 |
-| `POST` | `/api/units/{id}/chat` | 验收对话；回复取自评测用例样例（标 `source=sample`） |
+| `POST` | `/api/units/{id}/chat` | 验收对话；回复来自执行器真跑一遍编排（标 `source=executor`） |
 
 权限仍只由服务端签名 cookie 决定。编排 / 构建 / 试跑是 `build`（DA）；验收判定与知识库问题单是 `acceptAT` / `brd`（BA）。
 
@@ -97,3 +97,22 @@ Agent 的构建产物不是一份 YAML，是**一张编排**：左边节点清�
 
 - **digest 一致** = 当前定义算出的 digest 与最后一次构建落下的 digest 相等。改了编排没构建 → 闸红。
 - **评测针对旧版本** = 最近一次评测跑在旧 digest 上 → 评测闸红，旧分数不能给新版本背书。
+
+## 6. 执行侧是真的
+
+构建 / 测试 / 部署 / Agent 试跑 / pubsub 收发这五处都换成了真实现，
+逐条证据见 [EXECUTION.md](EXECUTION.md)。页面上的「5/5 通过」来自 `go test` 的输出，
+digest 是编译产物的字节 sha256，部署地址上的 `/healthz` 真的返回 200。
+
+## 7. 验收脚本
+
+```bash
+cd web/e2e
+BASE=http://127.0.0.1:8080 node acceptance_exec.cjs   # 执行侧：真测试 / 真构建 / 真部署 / 真收发
+BASE=http://127.0.0.1:8080 node acceptance_flow.cjs  # 写路径：建任务 → 发起 → 拍板 → 发布
+BASE=http://127.0.0.1:8080 node acceptance_v26.cjs   # 界面：编排工作台 / 质量报告 / 验收台
+BASE=http://127.0.0.1:8080 node acceptance_full.cjs  # 从零：建单元 → 真跑六步 → 发布（放最后跑）
+```
+
+`acceptance_full.cjs` 会自己建交付单元，先跑它会让 `acceptance_v26.cjs`
+里「种子单元只剩三个」那条断言看到四个单元——所以它放最后。

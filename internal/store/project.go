@@ -18,11 +18,17 @@ type View struct {
 	Versions  map[domain.Artifact][]domain.Version `json:"versions"`
 	Commits   []domain.Commit                      `json:"commits"`
 	Tags      []string                             `json:"tags"`
-	Builds    map[string]string                    `json:"builds"` // commitNo → digest
+	Builds    map[string]string                    `json:"builds"`   // commitNo → digest
+	Binaries  map[string]bool                      `json:"binaries"` // commitNo → 是否产出了可执行文件
 	Deploys   []Deploy                             `json:"deploys"`
 	Items     map[string]*Item                     `json:"items"`
 	Annos     []Anno                               `json:"annos"`
 	SvcVerify *domain.SvcVerify                    `json:"svcVerify,omitempty"`
+
+	// Test 是最近一次真跑测试的结果（go test 的真实输出，不是编出来的条数）。
+	Test *TestResult `json:"test,omitempty"`
+	// Events 是通过 pub/sub 收到的事件：收发闭环的证据。
+	Events []EventRecord `json:"events,omitempty"`
 
 	// v2.5/v2.6：真人验收台的清单、判定、bug 与对话。
 	Checks  []domain.Check  `json:"checks,omitempty"`
@@ -38,7 +44,27 @@ type VerifyChat struct {
 	By   string `json:"by,omitempty"`
 }
 
+// TestResult 是一次真跑测试的结果。
+type TestResult struct {
+	Commit   string   `json:"commit"`
+	Pass     int      `json:"pass"`
+	Total    int      `json:"total"`
+	Failures []string `json:"failures,omitempty"`
+	At       string   `json:"at"`
+	By       string   `json:"by"`
+}
+
+// EventRecord 是一条经 pub/sub 收到的事件。
+type EventRecord struct {
+	Topic   string         `json:"topic"`
+	EventID string         `json:"eventId,omitempty"`
+	At      string         `json:"at"`
+	PBC     string         `json:"pbc,omitempty"`
+	Data    map[string]any `json:"data,omitempty"`
+}
+
 type Deploy struct {
+	ID     string `json:"id,omitempty"` // 工作项号：让这条部署事实能出现在「这条工作项的账本事实」里
 	Tag    string `json:"tag"`
 	Commit string `json:"commit"`
 	URL    string `json:"url"`
@@ -114,6 +140,7 @@ func Project(pbc string, facts []Fact) (*View, error) {
 		Seq:      len(facts),
 		Versions: map[domain.Artifact][]domain.Version{},
 		Builds:   map[string]string{},
+		Binaries: map[string]bool{},
 		Items:    map[string]*Item{},
 	}
 	for _, f := range facts {
@@ -207,11 +234,13 @@ func apply(v *View, f Fact) error {
 		var p struct {
 			Commit string `json:"commit"`
 			Digest string `json:"digest"`
+			Binary bool   `json:"binary"`
 		}
 		if err := dec(&p); err != nil {
 			return err
 		}
 		v.Builds[p.Commit] = p.Digest
+		v.Binaries[p.Commit] = p.Binary
 		for i := range v.Commits {
 			if v.Commits[i].No == p.Commit {
 				v.Commits[i].Digest = p.Digest
@@ -370,6 +399,22 @@ func apply(v *View, f Fact) error {
 			return err
 		}
 		v.SvcVerify = &sv
+
+	case FactTestRun:
+		var p struct {
+			Commit   string   `json:"commit"`
+			Pass     int      `json:"pass"`
+			Total    int      `json:"total"`
+			Failures []string `json:"failures"`
+			By       string   `json:"by"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		v.Test = &TestResult{
+			Commit: p.Commit, Pass: p.Pass, Total: p.Total,
+			Failures: p.Failures, At: f.At, By: p.By,
+		}
 
 	case FactBRDSaved:
 		// BRD 是项目级制品，不进 PBC 的版本树；这里只保留「最近一次保存」的指针，

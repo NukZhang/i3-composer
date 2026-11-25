@@ -15,6 +15,8 @@ const props = defineProps({
   agent: { type: Object, default: null },
   head: { type: String, default: '' },
   svc: { type: Object, default: null },
+  test: { type: Object, default: null },
+  builds: { type: Object, default: () => ({}) },
 });
 
 const all = computed(() => props.gates.all || []);
@@ -22,10 +24,35 @@ const pbcGates = computed(() => props.gates.pbc || []);
 const agGates = computed(() => props.gates.agent || []);
 const passAll = computed(() => all.value.filter((g) => g.ok).length);
 const canRelease = computed(() => all.value.length > 0 && passAll.value === all.value.length);
+
+// 这次提交构建出来的产物摘要。
+const digest = computed(() => (props.head && props.builds[props.head]) || '');
 </script>
 
 <template>
   <div>
+    <!-- 真跑测试与构建产物的结论 -->
+    <div v-if="test" class="card">
+      <div class="ch">
+        <span v-html="icon('check')" /><h3>测试与构建</h3><span class="spacer" />
+        <span class="small muted">{{ test.by || 'x-qa' }} · {{ test.at || '' }}</span>
+      </div>
+      <div class="row wrap" style="gap: 6px">
+        <span class="achip" :style="'border-color:' + (test.pass === test.total ? 'var(--line-ok)' : 'var(--line-err)')">
+          <b :style="{ color: test.pass === test.total ? 'var(--ok)' : 'var(--err)' }">{{ test.pass }}/{{ test.total }}</b>
+          测试通过
+        </span>
+        <span v-if="digest" class="achip"><b>{{ digest.slice(0, 19) }}…</b> 构建产物摘要</span>
+        <span v-if="test.failures && test.failures.length" class="achip" style="border-color: var(--line-err)">
+          <b style="color: var(--err)">{{ test.failures.join('、') }}</b> 失败用例
+        </span>
+      </div>
+      <div class="small muted" style="margin-top: 8px; line-height: 1.7">
+        测试条数是 <code>go test</code> 的真实输出，摘要是编译产物的字节 sha256——
+        两者都不是编出来的：构建不过、测试不过，这一页就会红。
+      </div>
+    </div>
+
     <!-- 组合项：合并门禁 -->
     <div v-if="kind === 'hybrid'" class="card" :style="'border-color:' + (canRelease ? 'var(--line-ok)' : 'var(--line-err)')">
       <div class="ch">

@@ -16,6 +16,8 @@ const agent = computed(() => currentAgent());
 const code = computed(() => latest(versions.value, 'code') || {});
 const gates = computed(() => (S.state && S.state.gates) || { all: [] });
 const svc = computed(() => (S.state && S.state.svcVerify) || { pass: 0, total: 0, fails: [] });
+const test = computed(() => (S.state && S.state.test) || null);
+const builds = computed(() => (S.state && S.state.builds) || {});
 const head = computed(() => {
   const cs = (S.state && S.state.commits) || [];
   return cs.length ? cs[0].no : '';
@@ -151,7 +153,7 @@ function ownerText(o) {
     <div class="small muted" style="margin-bottom: 8px">
       机器自检 · {{ kind === 'pbc' ? '代码 ' + (code.v || '—') : kind === 'hybrid' ? '服务 ' + svc.pass + '/' + svc.total + ' · Agent ' + (agent ? agent.eval[0] : 0) + '/' + (agent ? agent.eval[1] : 0) : (agent ? agent.eval[0] : 0) + '/' + (agent ? agent.eval[1] : 0) }} · 判定归验证阶段的人
     </div>
-    <QualityReport :kind="kind" :gates="gates" :agent="agent" :head="head" :svc="svc" />
+    <QualityReport :kind="kind" :gates="gates" :agent="agent" :head="head" :svc="svc" :test="test" :builds="builds" />
   </template>
 
   <!-- 启动预览 -->

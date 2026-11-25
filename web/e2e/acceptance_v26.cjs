@@ -36,8 +36,14 @@ function check(name, ok, detail) {
     };
   }, BASE);
   check('1 首屏挂载 Vue', boot.root.includes('工作台'), boot.root.slice(0, 40));
-  check('1 单元只剩三个构成（fee/qa/dun，ticket 已撤）',
-    boot.units.length === 3 && boot.units.some((u) => u.startsWith('qa:agent:x-qc')) && boot.units.some((u) => u.startsWith('dun:hybrid:x-dun')),
+  // 只数种子带来的那几个单元：别的验收脚本（acceptance_full）会在同一本账上
+  // 建新单元，那是正常的，不该让这条断言误报。
+  const seededUnits = boot.units
+    .map((u) => u.split(':')[0])
+    .filter((id) => ['fee', 'qa', 'dun', 'ticket'].indexOf(id) >= 0);
+  check('1 种子单元只剩三个构成（fee/qa/dun，ticket 已撤）',
+    seededUnits.length === 3 && seededUnits.indexOf('ticket') < 0 &&
+    boot.units.some((u) => u.startsWith('qa:agent:x-qc')) && boot.units.some((u) => u.startsWith('dun:hybrid:x-dun')),
     boot.units);
   check('1 Agent 工厂是七名 worker（含 X-质检员）',
     boot.agents.length === 7 && boot.agents.includes('x-qc'), boot.agents);

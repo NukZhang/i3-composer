@@ -17,3 +17,8 @@
 # 前端：依赖与 Vite 构建产物（由 npm run build 生成）
 /web/node_modules/
 /web/dist/
+
+# 执行侧：产物仓库与工作区（构建产物按 digest 落盘，不进版本库）
+# 用不带前导斜杠的写法：任何层级下生成的都不入库。
+.i3-artifacts/
+.i3-work/

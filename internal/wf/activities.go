@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/zhangkun/i3-composer/internal/domain"
@@ -13,9 +14,26 @@ import (
 
 // Deps 是 activity 的依赖。activity 是唯一允许产生副作用的地方。
 type Deps struct {
-	Log   *store.Store
-	Pub   Pub
-	Build Builder
+	Log *store.Store
+	Pub Pub
+	// Exec 是执行侧：真生成内容、真跑测试、真构建、真部署。
+	// 它是必需的：少了它就不构建，也不产出假的 digest。
+	Exec Executor
+	// LogFor 给出一本账的日志。账本前缀跟着工作项走，
+	// 所以 activity 必须按输入里的前缀选账本，而不是用进程自己那本。
+	//
+	// 没有它（默认 nil）时一律用 Log。
+	LogFor func(prefix string) *store.Store
+}
+
+// logOf 选出这个工作项该写哪本账。
+func (a *Activities) logOf(in Input) *store.Store {
+	if a.D.LogFor != nil {
+		if s := a.D.LogFor(in.Ledger); s != nil {
+			return s
+		}
+	}
+	return a.D.Log
 }
 
 // Pub 抽象事件出口，避免 activity 直接依赖 dapr.Client（也便于测试）。
@@ -23,10 +41,21 @@ type Pub interface {
 	Publish(ctx context.Context, topic string, data any) error
 }
 
-// Builder 是构建链路。原型标了这是唯一的大块（要接真 CI）；
-// 这里定义成接口，默认实现是模拟的——不假装接了 Jenkins。
-type Builder interface {
-	Build(ctx context.Context, pbc, commit string, tree domain.Tree) (digest string, err error)
+// Executor 是执行侧的真实实现：制品内容、测试、构建、部署。
+//
+// 它是接口而不是具体类型，是为了让 activity 不依赖 go 工具链与进程管理：
+// 单测可以塞一个假的进来，但生产路径上它必须是真干活的那个。
+type Executor interface {
+	// Doc 产出文档类制品的内容。
+	Doc(ctx context.Context, u UnitInfo, title, change string, t domain.Artifact) (string, error)
+	// Code 产出代码类制品的文件。
+	Code(ctx context.Context, u UnitInfo, title, change string) (map[string]string, error)
+	// Test 真跑测试。
+	Test(ctx context.Context, pbc, commit string, files map[string]string) (TestOut, error)
+	// Build 真构建，产出内容寻址的 digest。
+	Build(ctx context.Context, pbc, commit string, files map[string]string) (BuildOut, error)
+	// Deploy 真部署：起进程、等健康检查。
+	Deploy(ctx context.Context, pbc, env, commit, digest string, binary bool) (DeployResult, error)
 }
 
 // Activities 把所有 activity 挂成方法，便于注入依赖。
@@ -49,7 +78,7 @@ type StepInput struct {
 // done 在步骤成功时记一条 item.step.done。失败不记——失败会走 Blocked。
 func (a *Activities) done(ctx context.Context, in StepInput, res StepResult) (StepResult, error) {
 	p := map[string]any{"id": in.ItemID, "step": in.Step, "at": stamp()}
-	if _, err := a.D.Log.AppendOp(ctx, in.PBC, in.OpID+"/done",
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/done",
 		store.FactItemStepDone, "i3-pipeline", p); err != nil {
 		return res, err
 	}
@@ -60,7 +89,7 @@ func (a *Activities) done(ctx context.Context, in StepInput, res StepResult) (St
 // 事实日志里必须留下谁在等什么。
 func (a *Activities) Blocked(ctx context.Context, in BlockInput) (StepResult, error) {
 	p := map[string]any{"id": in.ItemID, "reason": in.Reason, "by": in.By}
-	if _, err := a.D.Log.AppendOp(ctx, in.PBC, in.OpID,
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID,
 		store.FactItemBlocked, in.By, p); err != nil {
 		return StepResult{}, err
 	}
@@ -70,7 +99,7 @@ func (a *Activities) Blocked(ctx context.Context, in BlockInput) (StepResult, er
 // Waiting 记录「走到人工闸了」。这条事实是 L4 卡片与待办的唯一来源。
 func (a *Activities) Waiting(ctx context.Context, in StepInput) (StepResult, error) {
 	p := map[string]any{"id": in.ItemID}
-	if _, err := a.D.Log.AppendOp(ctx, in.PBC, in.OpID,
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID,
 		store.FactItemWaiting, "i3-pipeline", p); err != nil {
 		return StepResult{}, err
 	}
@@ -86,9 +115,13 @@ type BlockInput struct {
 
 // GenArtifacts 生成影响到的制品草稿：每个制品追加一条 artifact.drafted 事实。
 // 注意它不「返回状态」给 workflow 当账本，只是写事实。
+//
+// 制品带真内容：文档类带 markdown 正文，代码类带可编译的文件。
+// 空壳制品会让下游的测试、构建、部署只能对着空气编数字。
 func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult, error) {
 	pbc := in.PBC
-	facts, err := a.D.Log.Load(ctx, pbc)
+	log := a.logOf(in.Input)
+	facts, err := log.Load(ctx, pbc)
 	if err != nil {
 		return StepResult{}, err
 	}
@@ -97,9 +130,14 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 		return StepResult{}, err
 	}
 	latest := func(t domain.Artifact) string { return domain.Latest(v.Versions, t) }
+	have := map[domain.Artifact]bool{}
+	for _, t := range domain.Order {
+		have[t] = latest(t) != ""
+	}
+	unit := a.unitOf(ctx, in.Input)
 
 	n := 0
-	for _, t := range Affected(in.Type) {
+	for _, t := range Complete(Affected(in.Type), have) {
 		cur := latest(t)
 		nv, err := domain.NextVersion(cur)
 		if err != nil {
@@ -115,8 +153,24 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 			St:     domain.StDraft,
 			Note:   trimTitle(in.Title),
 		}
+		// 内容：文档给 markdown，代码给文件。
+		if a.D.Exec != nil {
+			if t == domain.Code {
+				files, err := a.D.Exec.Code(ctx, unit, in.Title, in.Type)
+				if err != nil {
+					return StepResult{}, fmt.Errorf("生成代码制品失败：%w", err)
+				}
+				ver.Files = files
+			} else {
+				md, err := a.D.Exec.Doc(ctx, unit, in.Title, in.Type, t)
+				if err != nil {
+					return StepResult{}, fmt.Errorf("生成 %s 失败：%w", t, err)
+				}
+				ver.MD = md
+			}
+		}
 		op := fmt.Sprintf("%s/artifact/%s", in.OpID, t)
-		if _, err := a.D.Log.AppendOp(ctx, pbc, op, store.FactArtifactDrafted, workerFor(t), ver); err != nil {
+		if _, err := log.AppendOp(ctx, pbc, op, store.FactArtifactDrafted, workerFor(t), ver); err != nil {
 			return StepResult{}, err
 		}
 		n++
@@ -124,12 +178,38 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Detail: fmt.Sprintf("%d 个制品草稿", n)})
 }
 
+// unitOf 读这个工作项所属交付单元的登记信息。
+//
+// 它从「工作项该去的那本账」里读：同一个交付单元在不同账本里是不同东西
+// （名字、构成、Agent 关联都可能不同）。
+func (a *Activities) unitOf(ctx context.Context, in Input) UnitInfo {
+	u := UnitInfo{ID: in.PBC, Name: in.PBC, Kind: string(domain.KindPBC)}
+	facts, err := a.logOf(in).Load(ctx, "units")
+	if err != nil {
+		return u
+	}
+	uv, err := store.ProjectUnits(facts)
+	if err != nil {
+		return u
+	}
+	for _, x := range uv.Units {
+		if x.ID == in.PBC {
+			u.Name = x.Name
+			u.Kind = x.Kind
+			u.AgentID = x.AgentID
+			break
+		}
+	}
+	return u
+}
+
 // Converge 按依赖顺序重算过期制品，直到工作区干净（单次遍历即可，因为
 // 依赖是 DAG 且顺序固定；护栏 8 轮防止逻辑异常导致死循环）。
 func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, error) {
 	pbc := in.PBC
+	unit := a.unitOf(ctx, in.Input)
 	for round := 0; round < 8; round++ {
-		facts, err := a.D.Log.Load(ctx, pbc)
+		facts, err := a.logOf(in.Input).Load(ctx, pbc)
 		if err != nil {
 			return StepResult{}, err
 		}
@@ -152,8 +232,25 @@ func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, er
 				Source: "重算", DF: domain.DeriveRefs(s.T, latest),
 				St: domain.StDraft, Note: "按上游最新版本重算",
 			}
+			// 重算也要带真内容：否则重算出来的制品是空壳，
+			// 收敛之后的工作区反而比收敛前更假。
+			if a.D.Exec != nil {
+				if s.T == domain.Code {
+					files, err := a.D.Exec.Code(ctx, unit, in.Title, in.Type)
+					if err != nil {
+						return StepResult{}, fmt.Errorf("重算代码制品失败：%w", err)
+					}
+					ver.Files = files
+				} else {
+					md, err := a.D.Exec.Doc(ctx, unit, in.Title, in.Type, s.T)
+					if err != nil {
+						return StepResult{}, fmt.Errorf("重算 %s 失败：%w", s.T, err)
+					}
+					ver.MD = md
+				}
+			}
 			op := fmt.Sprintf("%s/recalc/%d/%s", in.OpID, round, s.T)
-			if _, err := a.D.Log.AppendOp(ctx, pbc, op, store.FactArtifactDrafted, workerFor(s.T), ver); err != nil {
+			if _, err := a.logOf(in.Input).AppendOp(ctx, pbc, op, store.FactArtifactDrafted, workerFor(s.T), ver); err != nil {
 				return StepResult{}, err
 			}
 		}
@@ -164,7 +261,7 @@ func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, er
 // Commit 原子提交整棵树。草稿或过期则拒绝——这道判定在 domain 里。
 func (a *Activities) Commit(ctx context.Context, in StepInput) (StepResult, error) {
 	pbc := in.PBC
-	facts, err := a.D.Log.Load(ctx, pbc)
+	facts, err := a.logOf(in.Input).Load(ctx, pbc)
 	if err != nil {
 		return StepResult{}, err
 	}
@@ -197,17 +294,20 @@ func (a *Activities) Commit(ctx context.Context, in StepInput) (StepResult, erro
 		Type:    in.Type,
 		TreeSHA: domain.TreeSHA(tree),
 	}
-	if _, err := a.D.Log.AppendOp(ctx, pbc, in.OpID+"/commit",
+	if _, err := a.logOf(in.Input).AppendOp(ctx, pbc, in.OpID+"/commit",
 		store.FactCommitCreated, "i3-pipeline", c); err != nil {
 		return StepResult{}, err
 	}
 	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, CommitNo: no, Detail: "已提交 " + no})
 }
 
-// Test 跑测试。真实实现应调用 harness；这里产出确定性结论，
-// 并如实把 pass/total 回报，不伪造「全绿」。
+// Test 跑测试。
+//
+// 真跑：代码制品里的文件被物化成模块，go test 真编译真执行；
+// 通过数与失败数是 go test 的输出，不是我编的条数。不过就是不过——
+// 这一步失败会阻断整条链路。
 func (a *Activities) Test(ctx context.Context, in StepInput) (StepResult, error) {
-	facts, err := a.D.Log.Load(ctx, in.PBC)
+	facts, err := a.logOf(in.Input).Load(ctx, in.PBC)
 	if err != nil {
 		return StepResult{}, err
 	}
@@ -219,16 +319,60 @@ func (a *Activities) Test(ctx context.Context, in StepInput) (StepResult, error)
 		return StepResult{OK: false, Step: in.Step, Detail: "没有可测的提交"}, nil
 	}
 	head := v.Commits[0]
-	// 单元测试 + UI 还原的条数由树上制品数量派生，保证可重放。
-	unit := 6 + len(head.Tree)
-	ui := countUI(head.Tree)
-	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Pass: unit + ui, Total: unit + ui,
-		Detail: fmt.Sprintf("单元 %d + UI 还原 %d 全过", unit, ui)})
+	files := codeFiles(v, head)
+	if len(files) == 0 {
+		return StepResult{OK: false, Step: in.Step, Detail: "提交里没有代码制品，无法测试"}, nil
+	}
+	if a.D.Exec == nil {
+		// 没有执行侧（单测夹具）：退回确定性计数，但如实说明。
+		unit := 6 + len(head.Tree)
+		ui := countUI(head.Tree)
+		return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Pass: unit + ui, Total: unit + ui,
+			Detail: fmt.Sprintf("单元 %d + UI 还原 %d 全过（未接执行侧）", unit, ui)})
+	}
+	res, err := a.D.Exec.Test(ctx, in.PBC, head.No, files)
+	if err != nil {
+		// 测试没过：如实失败，并把失败条目带出去。
+		return StepResult{OK: false, Step: in.Step, Pass: res.Pass, Total: res.Total,
+			Detail: "测试未通过：" + strings.Join(res.Failures, "、")}, nil
+	}
+	// 测试结论进账本：谁在什么版本上跑了什么，事后可查。
+	// 带上工作项号，这条事实才会出现在「这条工作项的账本事实」里。
+	p := map[string]any{
+		"id": in.ItemID, "commit": head.No, "pass": res.Pass, "total": res.Total,
+		"failures": res.Failures, "by": "x-qa",
+	}
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/test", store.FactTestRun, "x-qa", p); err != nil {
+		return StepResult{}, err
+	}
+	a.publish(ctx, TopicItemChanged, map[string]any{
+		"pbc": in.PBC, "item": in.ItemID, "kind": "test",
+		"pass": res.Pass, "total": res.Total,
+	})
+	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Pass: res.Pass, Total: res.Total,
+		Detail: fmt.Sprintf("%d/%d 通过", res.Pass, res.Total)})
 }
 
-// Build 构建镜像，产出 digest 并写回提交（事实 build.succeeded）。
+// codeFiles 取一个提交里代码制品的文件。
+func codeFiles(v *store.View, c domain.Commit) map[string]string {
+	ver := c.Tree[domain.Code]
+	if ver == "" {
+		return nil
+	}
+	for _, x := range v.Versions[domain.Code] {
+		if x.V == ver {
+			return x.Files
+		}
+	}
+	return nil
+}
+
+// Build 构建产物，产出 digest 并写回提交（事实 build.succeeded）。
+//
+// digest 是内容寻址的：编译型产物是二进制字节的 sha256，
+// 非编译型产物是文件内容的 sha256。改一个字节，digest 就变。
 func (a *Activities) Build(ctx context.Context, in StepInput) (StepResult, error) {
-	facts, err := a.D.Log.Load(ctx, in.PBC)
+	facts, err := a.logOf(in.Input).Load(ctx, in.PBC)
 	if err != nil {
 		return StepResult{}, err
 	}
@@ -240,21 +384,41 @@ func (a *Activities) Build(ctx context.Context, in StepInput) (StepResult, error
 		return StepResult{OK: false, Step: in.Step, Detail: "没有可构建的提交"}, nil
 	}
 	head := v.Commits[0]
-	digest, err := a.D.Build.Build(ctx, in.PBC, head.No, head.Tree)
+	files := codeFiles(v, head)
+	if len(files) == 0 {
+		return StepResult{OK: false, Step: in.Step, Detail: "提交里没有代码制品，无法构建"}, nil
+	}
+
+	digest, binary, detail := "", false, ""
+	if a.D.Exec == nil {
+		// 没有执行侧就不构建：宁可这一步失败，也不能记下一个假的 digest。
+		// 以前这里是 mockBuilder——用树摘要拼一个 sha256:TreeSHA-...，
+		// 看着像镜像摘要，其实什么字节都没编译过。
+		return StepResult{OK: false, Step: in.Step, Detail: "没有执行侧，无法构建（不接受假的 digest）"}, nil
+	}
+	out, err := a.D.Exec.Build(ctx, in.PBC, head.No, files)
 	if err != nil {
 		return StepResult{OK: false, Step: in.Step, Detail: "构建失败：" + err.Error()}, nil
 	}
-	p := map[string]any{"commit": head.No, "digest": digest, "treeSha": head.TreeSHA}
-	if _, err := a.D.Log.AppendOp(ctx, in.PBC, in.OpID+"/image",
+	digest, binary, detail = out.Digest, out.Binary, out.Detail
+	p := map[string]any{"id": in.ItemID, "commit": head.No, "digest": digest, "treeSha": head.TreeSHA, "binary": binary}
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/image",
 		store.FactBuildSucceeded, "x-ops", p); err != nil {
 		return StepResult{}, err
 	}
-	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Detail: digest})
+	a.publish(ctx, TopicItemChanged, map[string]any{
+		"pbc": in.PBC, "item": in.ItemID, "kind": "build",
+		"commit": head.No, "digest": digest,
+	})
+	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Detail: digest + " · " + detail})
 }
 
-// Deploy 部署到目标环境（非生产）。真的部署要走绑定，这里是可插拔的。
+// Deploy 部署到目标环境（非生产）。
+//
+// 真部署：把构建产物跑起来，等它的 /healthz 真的返回 200 才算成功。
+// 没有独立进程的产物（Agent 定义）如实说「没有独立进程」，不编 URL。
 func (a *Activities) Deploy(ctx context.Context, in StepInput) (StepResult, error) {
-	facts, err := a.D.Log.Load(ctx, in.PBC)
+	facts, err := a.logOf(in.Input).Load(ctx, in.PBC)
 	if err != nil {
 		return StepResult{}, err
 	}
@@ -269,9 +433,31 @@ func (a *Activities) Deploy(ctx context.Context, in StepInput) (StepResult, erro
 	if head.Digest == "" {
 		return StepResult{OK: false, Step: in.Step, Detail: "镜像未构建"}, nil
 	}
+	binary := v.Binaries[head.No]
+	if a.D.Exec != nil {
+		out, err := a.D.Exec.Deploy(ctx, in.PBC, in.Env, head.No, head.Digest, binary)
+		if err != nil {
+			return StepResult{OK: false, Step: in.Step, Detail: "部署失败：" + err.Error()}, nil
+		}
+		if out.Skipped {
+			return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Detail: out.Detail})
+		}
+		d := store.Deploy{ID: in.ItemID, Tag: "", Commit: head.No, URL: out.URL, At: stamp(), By: "x-ops", Status: "success"}
+		if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/deploy",
+			store.FactDeploySucceeded, "x-ops", d); err != nil {
+			return StepResult{}, err
+		}
+		a.publish(ctx, TopicItemChanged, map[string]any{
+			"pbc": in.PBC, "item": in.ItemID, "kind": "deploy",
+			"env": in.Env, "url": out.URL, "health": out.Health,
+		})
+		return a.done(ctx, in, StepResult{OK: true, Step: in.Step, URL: out.URL,
+			Detail: "已部署 " + in.Env + " · 健康检查 " + out.Health})
+	}
+	// 无执行侧：退回旧行为（单测夹具）。
 	u := "https://" + in.Env + ".i3.internal/" + in.PBC + "-" + randHex(4)
-	d := store.Deploy{Tag: "", Commit: head.No, URL: u, At: stamp(), By: "x-ops", Status: "success"}
-	if _, err := a.D.Log.AppendOp(ctx, in.PBC, in.OpID+"/deploy",
+	d := store.Deploy{ID: in.ItemID, Tag: "", Commit: head.No, URL: u, At: stamp(), By: "x-ops", Status: "success"}
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/deploy",
 		store.FactDeploySucceeded, "x-ops", d); err != nil {
 		return StepResult{}, err
 	}
@@ -284,7 +470,7 @@ func (a *Activities) Deploy(ctx context.Context, in StepInput) (StepResult, erro
 // 这里重新校验四闸，因为从「人看到卡片」到「人点发布」之间可能隔了三天，
 // 期间上游可能又变了。前端显示的通过与否不算数。
 func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, error) {
-	facts, err := a.D.Log.Load(ctx, in.PBC)
+	facts, err := a.logOf(in.Input).Load(ctx, in.PBC)
 	if err != nil {
 		return StepResult{}, err
 	}
@@ -313,7 +499,7 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 
 	tag := domain.NextTag(v.Tags)
 	p := map[string]any{"tag": tag, "commit": head.No, "treeSha": head.TreeSHA}
-	if _, err := a.D.Log.AppendOp(ctx, in.PBC, in.OpID+"/tag",
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/tag",
 		store.FactTagCreated, "SA", p); err != nil {
 		return StepResult{}, err
 	}
@@ -321,7 +507,7 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 	pub := map[string]any{
 		"id": in.ItemID, "version": head.No, "tag": tag, "url": deployURL(v),
 	}
-	if _, err := a.D.Log.AppendOp(ctx, in.PBC, in.OpID+"/published",
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/published",
 		store.FactItemPublished, "SA", pub); err != nil {
 		return StepResult{}, err
 	}
@@ -333,6 +519,17 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 }
 
 // ---------- 纯辅助 ----------
+
+// publish 发一条领域事件到总线。
+//
+// 发出去的每条事件，BFF 的订阅端都会收回来并落一条 event.received 事实：
+// 这样「事件外发」是闭环的，不是发出去就没了下文。
+func (a *Activities) publish(ctx context.Context, topic string, data map[string]any) {
+	if a.D.Pub == nil {
+		return
+	}
+	_ = a.D.Pub.Publish(ctx, topic, data)
+}
 
 func deployURL(v *store.View) string {
 	for i := len(v.Deploys) - 1; i >= 0; i-- {

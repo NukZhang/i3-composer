@@ -1,0 +1,40 @@
+# 事件订阅（声明式）。
+#
+# Dapr 的 sidecar 靠这份声明才知道「哪个主题投递到哪个路由」。
+# 没有它：事件发出去只堆在 Redis stream 里，没有消费者——
+# 看起来像「消息总线在工作」，其实是单向的。
+#
+# sidecar 挂载 /components 并开启了热加载（见 daprd 启动参数 --resources-path），
+# 所以改这份文件不用重启 sidecar。
+#
+# route 指向 BFF 的 /api/events/{topic}：收到的事件会落成 event.received 事实，
+# 并推给页面的 SSE 订阅者——发出去与收回来都在账本里可查。
+apiVersion: dapr.io/v2alpha1
+kind: Subscription
+metadata:
+  name: i3-tag-created
+spec:
+  pubsubname: pubsub
+  topic: tag.created
+  routes:
+    default: /api/events/tag.created
+---
+apiVersion: dapr.io/v2alpha1
+kind: Subscription
+metadata:
+  name: i3-item-changed
+spec:
+  pubsubname: pubsub
+  topic: item.changed
+  routes:
+    default: /api/events/item.changed
+---
+apiVersion: dapr.io/v2alpha1
+kind: Subscription
+metadata:
+  name: i3-agent-changed
+spec:
+  pubsubname: pubsub
+  topic: agent.changed
+  routes:
+    default: /api/events/agent.changed
