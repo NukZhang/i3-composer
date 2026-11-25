@@ -77,11 +77,15 @@ export function kindCls(k) {
 export const WORKER_NAME = {
   'x-fe': 'X-全栈工程师',
   'x-qa': 'X-测试工程师',
-  'x-ui': 'X-UI设计师',
+  'x-ui': 'X-原型工程师',
   'x-ops': 'X-运维工程师',
-  'x-ba': 'X-业务分析员',
-  'x-qc': 'X-质检员',
-  'x-dun': 'X-催缴专员',
+  'x-ba': 'X-业务分析工程师',
+  // v3.1 起，质检与催缴是「交付的产物」，不是平台员工。
+  // 老账本里的 id 仍可能出现在历史事实里，显示名跟着改，避免两种口径。
+  'qa-agent': '质检 Agent',
+  'dun-agent': '催缴话术 Agent',
+  'x-qc': '质检 Agent',
+  'x-dun': '催缴话术 Agent',
 };
 
 // ---------- Agent 编排（v2.6） ----------

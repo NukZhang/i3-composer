@@ -124,7 +124,7 @@ async function addAnnotationRound() {
 
   <div v-if="kind !== 'pbc' && agent" class="card">
     <div class="ch">
-      <span v-html="icon('robot')" /><h3>方案 · Agent 定义（这个交付单元里的数字员工）</h3>
+      <span v-html="icon('robot')" /><h3>方案 · Agent 定义（交付物本身，不是平台员工）</h3>
       <span class="spacer" />
       <span class="mono small" style="color: var(--info)">{{ agent.n }} v{{ agent.ver }}</span>
       <button class="btn small" style="margin-left: 8px" @click="S.agentId = agent.id; S.view = 'agent'"><span v-html="icon('robot', 11)" /> 打开</button>
@@ -248,7 +248,7 @@ async function addAnnotationRound() {
           <hr class="sep" />
           <div class="row">
             <span v-if="selCommit.tag" class="tag t-ok"><span v-html="icon('tag', 11)" /> {{ selCommit.tag }} 已交付</span>
-            <button v-if="selCommit.tag" class="btn small" style="margin-left: auto" @click="S.view = 'release'">去发布页</button>
+            <button v-if="selCommit.tag" class="btn small" style="margin-left: auto" @click="S.view = 'orch'">去发布编排</button>
             <template v-else>
               <!-- 判不了的闸不算「通过」，单独说清楚是哪几条。 -->
               <span class="tag" :class="gates.all.length && gates.all.every((g) => g.ok || g.unknown) ? 't-ok' : 't-warn'">

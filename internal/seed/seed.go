@@ -49,7 +49,13 @@ type BuildFunc func(ctx context.Context, pbc, commit string, files map[string]st
 type Options struct {
 	// Build 为 nil 时不构建，基线提交就没有 digest（四闸会如实变红）。
 	Build BuildFunc
+	// Test 为 nil 时基线没有测试事实——打 tag 会如实说「HEAD 没有测试结果」。
+	// 传进来的是真跑一遍：PBC 跑 go test，Agent 跑定义校验。
+	Test TestFunc
 }
+
+// TestFunc 真跑一遍测试，返回真实条数。
+type TestFunc func(ctx context.Context, pbc, commit string, files map[string]string) (pass, total int, failures []string, err error)
 
 // Agents 解出 7 名数字员工的定义（v2.6：新增 X-质检员，X-测试工程师回测试执行）。
 // 返回的是值拷贝，调用方可以随便改。
@@ -95,13 +101,17 @@ type Unit struct {
 	AgentID string `json:"agentId,omitempty"`
 }
 
-// Units 对应原型 v2.6 的三个单元：fee（纯 PBC）、qa（Agent）、dun（hybrid）。
-// v2.4 删掉了重复的客服工单 PBC：三个单元各代表一种构成。
+// Units 对应原型 v3.2 的四个单元：两个 PBC、两个 Agent 产物。
+//
+// v3.0 起没有「组合」这种单元：一个单元只有一个 tag，组合是发布编排里的
+// 一次勾选，不是单元的属性。催缴被拆成「催缴策略（PBC）」与
+// 「催缴话术 Agent（产物）」，两边的交付各自独立。
 func Units() []Unit {
 	return []Unit{
 		{ID: "fee", Name: "收费缴费", Code: "PBC-FEE", Kind: "pbc"},
-		{ID: "qa", Name: "交付质检 Agent", Code: "AGENT-QA", Kind: "agent", AgentID: "x-qc"},
-		{ID: "dun", Name: "智能催缴", Code: "PBC-DUN + AGENT-DUN", Kind: "hybrid", AgentID: "x-dun"},
+		{ID: "qa", Name: "交付质检 Agent", Code: "AGENT-QA", Kind: "agent", AgentID: "qa-agent"},
+		{ID: "dun", Name: "催缴策略", Code: "PBC-DUN", Kind: "pbc"},
+		{ID: "dunx", Name: "催缴话术 Agent", Code: "AGENT-DUN", Kind: "agent", AgentID: "dun-agent"},
 	}
 }
 
@@ -117,6 +127,10 @@ func Run(ctx context.Context, log *store.Store, opts Options) error {
 	// 先种三个单元自己的日志（制品、基线、提交、工作项），
 	// 再种项目级的登记与 BRD —— 顺序反了会让单元日志提前非空、跳过种子。
 	if err := seedUnits(ctx, log, opts); err != nil {
+		return err
+	}
+	// v3.0 新增的第四个单元（催缴话术 Agent）：独立 OpID，老账本原地补上。
+	if err := seedDunx(ctx, log, opts); err != nil {
 		return err
 	}
 	// 老账本（v2.1/v2.3）里的制品是空壳：没有正文、没有代码。
@@ -281,46 +295,131 @@ func writeContentVersion(ctx context.Context, log *store.Store, u Unit, spec pbc
 			return err
 		}
 	}
+	if opts.Test != nil {
+		pass, total, fails, err := opts.Test(ctx, u.ID, no, code)
+		if err != nil {
+			return fmt.Errorf("补内容后测试失败（%s）：%w", u.ID, err)
+		}
+		if _, err := log.AppendOp(ctx, u.ID, "seed/v26/content/"+u.ID+"/test", store.FactTestRun, "x-qa",
+			map[string]any{"commit": no, "pass": pass, "total": total, "failures": fails, "by": "x-qa"}); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// seedUnits 写三个交付单元各自的日志。
+// seedUnits 写四个交付单元各自的日志。
+//
+// 状态与原型 v3.0/v3.2 的当前现场一致：两个 PBC、两个 Agent 产物；
+// dun（催缴策略）验收 20/22 且打过 v2.0.0，dunx（话术 Agent）评测 35/38
+// 未达 95%、没有 tag——编排页默认打开就是「2 就绪 / 2 阻塞」。
 func seedUnits(ctx context.Context, log *store.Store, opts Options) error {
-	// fee：完整的制品基线 + 三条工作项。
+	// fee：验收 1/6，没打 tag → 阻塞。工作项带 story / task 分层。
 	if err := seedPBC(ctx, log, "fee", "收费缴费", pbcSpec{
 		title: "收费缴费基线",
 		items: []store.Item{
-			{ID: "US-01", Title: "业主账单自助查询与支付", PT: 5, St: "done", Owner: "DA",
+			{ID: "US-01", Title: "业主查看并支付账单", PT: 5, St: "done", Owner: "x-fe",
 				Kind: "Story", PBC: "fee", Type: "new", Mode: "guided", Env: "test",
-				Run: "published", Version: "1.0.2", Tag: "v1.0.0", By: ActorSeed},
-			{ID: "US-02", Title: "管家批量生成缴费单", PT: 3, St: "doing", Owner: "DA",
-				Kind: "Story", PBC: "fee", Type: "feature", Mode: "fast", Env: "test",
-				Run: "waiting", Step: 6, By: ActorSeed},
-			{ID: "US-03", Title: "报修工单 SLA 超时提醒", PT: 3, St: "todo", Owner: "BA",
+				Run: "verified", Version: "1.0.2", By: ActorSeed},
+			{ID: "T-011", Parent: "US-01", Title: "缴费单列表页 + 账期筛选", PT: 3, St: "done", Owner: "x-ui",
+				Kind: "Task", PBC: "fee", Type: "feature", Mode: "fast", Env: "test", Run: "verified", By: ActorSeed},
+			{ID: "T-012", Parent: "US-01", Title: "支付回调与幂等键", PT: 3, St: "doing", Owner: "x-fe",
+				Kind: "Task", PBC: "fee", Type: "feature", Mode: "fast", Env: "test", Run: "running", By: ActorSeed},
+			{ID: "US-02", Title: "管家批量生成缴费单", PT: 8, St: "doing", Owner: "x-fe",
 				Kind: "Story", PBC: "fee", Type: "feature", Mode: "fast", Env: "test",
 				Run: "idea", By: ActorSeed},
+			{ID: "T-021", Parent: "US-02", Title: "批量生成接口与预览", PT: 5, St: "doing", Owner: "x-fe",
+				Kind: "Task", PBC: "fee", Type: "feature", Mode: "fast", Env: "test", Run: "running", By: ActorSeed},
+			{ID: "T-022", Parent: "US-02", Title: "生成结果校验与错误回执", PT: 3, St: "todo", Owner: "",
+				Kind: "Task", PBC: "fee", Type: "feature", Mode: "fast", Env: "test", Run: "idea", By: ActorSeed},
+			{ID: "US-03", Title: "财务查看对账差异并导出", PT: 3, St: "todo", Owner: "BA",
+				Kind: "Story", PBC: "fee", Type: "feature", Mode: "fast", Env: "test",
+				Run: "idea", By: ActorSeed},
+			{ID: "T-031", Parent: "US-03", Title: "差异原因枚举与导出列", PT: 2, St: "todo", Owner: "x-ba",
+				Kind: "Task", PBC: "fee", Type: "feature", Mode: "fast", Env: "test", Run: "idea", By: ActorSeed},
+			{ID: "T-032", Parent: "US-03", Title: "按账期筛选差异清单", PT: 3, St: "todo", Owner: "",
+				Kind: "Task", PBC: "fee", Type: "feature", Mode: "fast", Env: "test", Run: "idea", By: ActorSeed},
+			{ID: "T-033", Parent: "US-03", Title: "导出 CSV 的口径对齐", PT: 2, St: "todo", Owner: "x-qa",
+				Kind: "Task", PBC: "fee", Type: "feature", Mode: "fast", Env: "test", Run: "idea", By: ActorSeed},
+			{ID: "T-101", Title: "补全 BRD §4 收费范围与账期规则", PT: 2, St: "todo", Owner: "BA",
+				Kind: "Task", PBC: "fee", Type: "doc", Mode: "fast", Env: "test", Run: "idea", By: ActorSeed},
+			{ID: "T-102", Title: "登记对账接口的外部依赖", PT: 1, St: "todo", Owner: "BA",
+				Kind: "Task", PBC: "fee", Type: "doc", Mode: "fast", Env: "test", Run: "idea", By: ActorSeed},
 		},
 	}, opts); err != nil {
 		return err
 	}
 
-	// qa：Agent 单元。制品树照样齐全——Agent 也要走五阶段。
+	// qa：Agent 产物。评测 61/64，基线打过 v1.0.0 → 就绪。
 	if err := seedPBC(ctx, log, "qa", "交付质检 Agent", pbcSpec{
 		title: "质检 Agent 基线",
 		kind:  "agent",
+		tag:   "v1.0.0",
+		items: []store.Item{
+			{ID: "US-Q1", Title: "把会话捞出来并标注", PT: 5, St: "done", Owner: "queued",
+				Kind: "Story", PBC: "qa", Type: "new", Mode: "fast", Env: "test", Run: "tagged", Tag: "v1.0.0", By: ActorSeed},
+			{ID: "T-Q01", Parent: "US-Q1", Title: "会话取数与脱敏", PT: 3, St: "done", Owner: "x-fe",
+				Kind: "Task", PBC: "qa", Type: "feature", Mode: "fast", Env: "test", Run: "verified", By: ActorSeed},
+			{ID: "T-Q02", Parent: "US-Q1", Title: "风险标签与规则引用", PT: 2, St: "done", Owner: "x-fe",
+				Kind: "Task", PBC: "qa", Type: "feature", Mode: "fast", Env: "test", Run: "verified", By: ActorSeed},
+			{ID: "US-Q2", Title: "判得出来，也说得清依据", PT: 3, St: "doing", Owner: "queued",
+				Kind: "Story", PBC: "qa", Type: "feature", Mode: "fast", Env: "test", Run: "idea", By: ActorSeed},
+			{ID: "T-Q03", Parent: "US-Q2", Title: "判定证据与原文定位", PT: 2, St: "doing", Owner: "x-fe",
+				Kind: "Task", PBC: "qa", Type: "feature", Mode: "fast", Env: "test", Run: "running", By: ActorSeed},
+			{ID: "T-Q04", Parent: "US-Q2", Title: "复核工作台的转发", PT: 2, St: "todo", Owner: "",
+				Kind: "Task", PBC: "qa", Type: "feature", Mode: "fast", Env: "test", Run: "idea", By: ActorSeed},
+		},
 	}, opts); err != nil {
 		return err
 	}
 
-	// dun：组合单元。服务侧验收 20/22 —— 故意不是全过：
-	// 组合项最怕「服务验完就发」，一个全绿的面板演示不出来这件事。
-	return seedPBC(ctx, log, "dun", "智能催缴", pbcSpec{
-		title: "催缴服务与催缴 Agent 一起交付",
-		kind:  "hybrid",
+	// dun：催缴策略（纯 PBC）。服务验收 20/22 —— 故意不是全过：
+	// 「服务验完就想发」是这里最该被拦住的事。基线打过 v2.0.0 → 就绪。
+	return seedPBC(ctx, log, "dun", "催缴策略", pbcSpec{
+		title: "催缴策略：分档 / 派发 / 频次",
+		kind:  "pbc",
+		tag:   "v2.0.0",
 		svc: &domain.SvcVerify{Pass: 20, Total: 22, Fails: []domain.FailGroup{
 			{N: "逾期 1-3 天误催", C: 1, Ex: "逾期 2 天仍进入催告模板"},
 			{N: "频次控制边界", C: 1, Ex: "7 天内第 4 次触达未被拦截"},
 		}},
+		items: []store.Item{
+			{ID: "US-D1", Title: "分档算出今天该催谁", PT: 5, St: "done", Owner: "x-fe",
+				Kind: "Story", PBC: "dun", Type: "new", Mode: "fast", Env: "test", Run: "tagged", Tag: "v2.0.0", By: ActorSeed},
+			{ID: "T-D01", Parent: "US-D1", Title: "逾期分档规则", PT: 2, St: "done", Owner: "x-fe",
+				Kind: "Task", PBC: "dun", Type: "feature", Mode: "fast", Env: "test", Run: "verified", By: ActorSeed},
+			{ID: "T-D02", Parent: "US-D1", Title: "派发任务表与领取", PT: 2, St: "done", Owner: "x-fe",
+				Kind: "Task", PBC: "dun", Type: "feature", Mode: "fast", Env: "test", Run: "verified", By: ActorSeed},
+			{ID: "US-D2", Title: "频次与转人工的硬约束", PT: 3, St: "doing", Owner: "x-fe",
+				Kind: "Story", PBC: "dun", Type: "defect", Mode: "fast", Env: "test", Run: "idea", By: ActorSeed},
+			{ID: "T-D03", Parent: "US-D2", Title: "7 天内触达次数拦截", PT: 2, St: "doing", Owner: "x-fe",
+				Kind: "Task", PBC: "dun", Type: "defect", Mode: "fast", Env: "test", Run: "running", By: ActorSeed},
+			{ID: "T-D04", Parent: "US-D2", Title: "大额与投诉转人工", PT: 2, St: "todo", Owner: "",
+				Kind: "Task", PBC: "dun", Type: "defect", Mode: "fast", Env: "test", Run: "idea", By: ActorSeed},
+		},
+	}, opts)
+}
+
+// seedDunx 是催缴话术 Agent：评测 35/38 未达 95%，没有 tag → 阻塞。
+// 放在 seedUnits 之外单独写，因为它是 v3.0 新增的第四个单元，
+// 老账本里没有它——用独立的 OpID，升级时原地补上。
+func seedDunx(ctx context.Context, log *store.Store, opts Options) error {
+	return seedPBC(ctx, log, "dunx", "催缴话术 Agent", pbcSpec{
+		title: "催缴话术 Agent 基线：分层 prompt + 升级规则",
+		kind:  "agent",
+		items: []store.Item{
+			{ID: "US-X1", Title: "按档位生成话术草稿", PT: 5, St: "done", Owner: "queued",
+				Kind: "Story", PBC: "dunx", Type: "new", Mode: "fast", Env: "test", Run: "verified", By: ActorSeed},
+			{ID: "T-X01", Parent: "US-X1", Title: "分档 prompt 与话术模板", PT: 3, St: "done", Owner: "x-fe",
+				Kind: "Task", PBC: "dunx", Type: "feature", Mode: "fast", Env: "test", Run: "verified", By: ActorSeed},
+			{ID: "T-X02", Parent: "US-X1", Title: "只出稿不发送的工具白名单", PT: 2, St: "done", Owner: "x-fe",
+				Kind: "Task", PBC: "dunx", Type: "feature", Mode: "fast", Env: "test", Run: "verified", By: ActorSeed},
+			{ID: "US-X2", Title: "该升级的时候必须升级", PT: 3, St: "doing", Owner: "queued",
+				Kind: "Story", PBC: "dunx", Type: "defect", Mode: "fast", Env: "test", Run: "idea",
+				Blocked: "大额那条不过，先补升级规则", BlockedBy: "PA", By: ActorSeed},
+			{ID: "T-X03", Parent: "US-X2", Title: "减免 / 投诉 / 大额三类拦截", PT: 2, St: "doing", Owner: "x-fe",
+				Kind: "Task", PBC: "dunx", Type: "defect", Mode: "fast", Env: "test", Run: "running", By: ActorSeed},
+		},
 	}, opts)
 }
 
@@ -328,6 +427,7 @@ func seedUnits(ctx context.Context, log *store.Store, opts Options) error {
 type pbcSpec struct {
 	title string // 基线提交说明
 	kind  string // 单元构成（决定代码制品是 Go 模块还是 Agent 定义）
+	tag   string // 基线打什么 tag；空 = 还没进池（与原型当前状态一致）
 	svc   *domain.SvcVerify
 	items []store.Item
 }
@@ -634,10 +734,25 @@ func seedBaseline(ctx context.Context, log *store.Store, pbc, name string, spec 
 			return err
 		}
 	}
-	// 基线也打一个 tag：演示数据里「发过一次」是常态。
-	if _, err := log.AppendOp(ctx, pbc, "seed/"+pbc+"/baseline/tag", store.FactTagCreated, ActorSeed,
-		map[string]any{"tag": "v1.0.0", "commit": "1.0.1"}); err != nil {
-		return err
+	// 基线也真跑一遍测试：没有测试事实的提交打不了 tag，
+	// 种子里编一个「5/5」等于伪造凭据。
+	if opts.Test != nil {
+		pass, total, fails, err := opts.Test(ctx, pbc, "1.0.1", code)
+		if err != nil {
+			return fmt.Errorf("基线测试失败（%s）：%w", pbc, err)
+		}
+		if _, err := log.AppendOp(ctx, pbc, "seed/"+pbc+"/baseline/test", store.FactTestRun, "x-qa",
+			map[string]any{"commit": "1.0.1", "pass": pass, "total": total, "failures": fails, "by": "x-qa"}); err != nil {
+			return err
+		}
+	}
+	// 基线 tag 按单元现场给：手段上必须和原型一致——
+	// 有的单元打过（dun v2.0.0），有的没打（fee / dunx），编排页才看得出「就绪 / 阻塞」。
+	if spec.tag != "" {
+		if _, err := log.AppendOp(ctx, pbc, "seed/"+pbc+"/baseline/tag", store.FactTagCreated, ActorSeed,
+			map[string]any{"tag": spec.tag, "commit": "1.0.1", "digest": digest}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

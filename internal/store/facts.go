@@ -95,6 +95,13 @@ const (
 	FactWorkspaceJoined  = "workspace.joined"
 	FactProjectCreated   = "project.created"
 	FactProjectJoined    = "project.joined"
+
+	// v3.2：单元只做到「可以交付」。机器跑完五步就停，人打 tag 进池；
+	// 上哪个环境、和谁一起上，在项目级「发布编排」里定，单元不再自己发布。
+	FactItemVerified = "item.verified"
+	// 批次是发布的单位：一个批次锁多个 tag 与 digest，只能整批回滚。
+	FactReleaseBatch    = "release.batch.created"
+	FactReleaseRollback = "release.batch.rolledback"
 )
 
 // Fact 是一条不可变事实。

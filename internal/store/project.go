@@ -95,6 +95,9 @@ type Step struct {
 }
 
 // Item 是一个工作项（backlog 行）。人和 X worker 同表。
+//
+// Parent 指向它挂在哪条 Story 下：task 自身没有 pbc 字段的语义负担，
+// 归属由 parent 决定（v3.2 的 story / task 分层渲染就靠它）。
 type Item struct {
 	ID        string `json:"id"`
 	Title     string `json:"t"`
@@ -103,6 +106,7 @@ type Item struct {
 	Owner     string `json:"owner"`
 	Kind      string `json:"kind"` // Story | Task
 	PBC       string `json:"pbc"`
+	Parent    string `json:"parent,omitempty"`
 	Type      string `json:"type"` // new | feature | defect | backlog | doc
 	Mode      string `json:"mode"` // fast | guided
 	Env       string `json:"env"`
@@ -118,16 +122,19 @@ type Item struct {
 	At        string `json:"at,omitempty"`
 }
 
-// StepPlan 是执行链路的固定七步。publish 是唯一人工闸。
+// StepPlan 是交付链路的固定六步。
+//
+// v3.2 起单元只做到「可以交付」：机器跑完前五步就停在「打 tag」，
+// 打 tag 进「发布编排」池；上哪个环境、和谁一起上，在项目级定。
+// 部署不再是单元的一步——它属于发布批次。
 func StepPlan(env string) []Step {
 	return []Step{
 		{K: "artifacts", N: "生成制品", D: "X 团队按变更类型产出 PRD / 原型 / AD / AT / Backlog", St: "todo"},
 		{K: "converge", N: "收敛过期", D: "按依赖顺序重算，直到工作区干净", St: "todo"},
 		{K: "commit", N: "原子提交", D: "整棵树落一个版本号，全落或全不落", St: "todo"},
-		{K: "test", N: "测试", D: "单元测试 + UI 还原，全过才放行", St: "todo"},
-		{K: "build", N: "构建镜像", D: "产出 digest 写回提交", St: "todo"},
-		{K: "deploy", N: "部署 " + env, D: "先上非生产环境，跑通再说", St: "todo"},
-		{K: "publish", N: "发布生产", D: "全链唯一需要人拍板的一步", St: "todo", Human: true},
+		{K: "test", N: "测试", D: "单元测试 + 验收用例，全过才放行", St: "todo"},
+		{K: "build", N: "构建产物", D: "产出 digest 写回提交", St: "todo"},
+		{K: "tag", N: "打 tag 进池", D: "验收全过才打得动；tag 是发布编排唯一认的东西", St: "todo", Human: true},
 	}
 }
 
@@ -226,6 +233,14 @@ func apply(v *View, f Fact) error {
 				if v.Commits[i].No == q.Commit {
 					v.Commits[i].Tag = q.Tag
 					break
+				}
+			}
+			// 打过 tag 的那次提交对应的工作项跟着进「已交付」：
+			// 工作项是这次交付的入口，tag 是它的结果。
+			for _, it := range v.Items {
+				if it.Version == q.Commit {
+					it.Run = "tagged"
+					it.Tag = q.Tag
 				}
 			}
 		}
@@ -329,6 +344,26 @@ func apply(v *View, f Fact) error {
 			it.Run = "published"
 			it.St = "done"
 			it.Version, it.Tag, it.URL = p.Version, p.Tag, p.URL
+		}
+
+	case FactItemVerified:
+		// 机器五步跑完：能交付了，但还没打 tag（没进发布编排池）。
+		var p struct {
+			ID      string `json:"id"`
+			Version string `json:"version"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		if it := v.Items[p.ID]; it != nil {
+			it.Run = "verified"
+			it.St = "done"
+			if p.Version != "" {
+				it.Version = p.Version
+			}
+			if n := len(it.Steps); n > 0 {
+				it.Step = n - 1
+			}
 		}
 
 	case FactItemBlocked:

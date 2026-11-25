@@ -15,6 +15,7 @@ import (
 
 	"github.com/zhangkun/i3-composer/internal/agentexec"
 	"github.com/zhangkun/i3-composer/internal/dapr"
+	"github.com/zhangkun/i3-composer/internal/pipeline"
 	"github.com/zhangkun/i3-composer/internal/store"
 	"github.com/zhangkun/i3-composer/internal/wf"
 )
@@ -31,6 +32,9 @@ type Server struct {
 	// Exec 是 Agent 执行器：试跑与对话验收都靠它真跑一遍编排，
 	// 不是把定义里存的样例端出来。
 	Exec *agentexec.Exec
+	// Pipe 是执行侧：发布批次时用它真部署、回滚时用它收进程。
+	// 为 nil 时发布编排会明确报错，而不是假装发成功。
+	Pipe *pipeline.Pipeline
 	// LocalPort 是本进程实际监听的端口（0 = 未知）。
 	// sidecar 把 pubsub 事件投到它配置的 app-port；两者不一致时事件会在别处落地，
 	// 验收里只看到「收到 0 条」，看不出原因。见 CheckPubsubWiring。
@@ -107,6 +111,11 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/projects/{id}/brd", s.wrap(s.startBRD))
 	m.HandleFunc("POST /api/workspaces", s.wrap(s.createWorkspace))
 	m.HandleFunc("POST /api/workspaces/join", s.wrap(s.joinWorkspace))
+	// v3.2：单元把 tag 打进「发布编排」池；发布是项目级动作，批次只能整批回滚。
+	m.HandleFunc("POST /api/units/{id}/tag", s.wrap(s.tagUnit))
+	m.HandleFunc("GET /api/projects/{id}/orch", s.wrap(s.orch))
+	m.HandleFunc("POST /api/projects/{id}/orch/release", s.wrap(s.release))
+	m.HandleFunc("POST /api/projects/{id}/orch/rollback", s.wrap(s.rollback))
 	m.HandleFunc("GET /api/agents", s.wrap(s.agents))
 	m.HandleFunc("GET /api/agents/{id}", s.wrap(s.agent))
 	m.HandleFunc("POST /api/agents/{id}/eval", s.wrap(s.agentEval))
@@ -214,6 +223,7 @@ type Task struct {
 	St        string       `json:"st"`
 	Owner     string       `json:"owner"`
 	Kind      string       `json:"kind"`
+	Parent    string       `json:"parent,omitempty"`
 	PBC       string       `json:"pbc"`
 	Type      string       `json:"type"`
 	Mode      string       `json:"mode"`
@@ -233,7 +243,8 @@ type Task struct {
 func toTask(it *store.Item) Task {
 	return Task{
 		ID: it.ID, Title: it.Title, PT: it.PT, St: it.St, Owner: it.Owner, Kind: it.Kind,
-		PBC: it.PBC, Type: it.Type, Mode: it.Mode, Env: it.Env, Run: it.Run, Step: it.Step,
+		Parent: it.Parent,
+		PBC:    it.PBC, Type: it.Type, Mode: it.Mode, Env: it.Env, Run: it.Run, Step: it.Step,
 		Steps: it.Steps, Version: it.Version, Tag: it.Tag, URL: it.URL, By: it.By,
 		Blocked: it.Blocked, BlockedBy: it.BlockedBy, At: it.At,
 	}

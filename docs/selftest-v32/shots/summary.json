@@ -1,0 +1,42 @@
+{
+  "run": "fin",
+  "orch": {
+    "ready": 2,
+    "blocked": 2
+  },
+  "batch": {
+    "id": "REL-20261125-01",
+    "proj": "p1",
+    "env": "SIT",
+    "mode": "full",
+    "units": [
+      {
+        "id": "qa",
+        "name": "交付质检 Agent",
+        "kind": "agent",
+        "agentId": "qa-agent",
+        "tag": "v1.0.0",
+        "commit": "1.0.1",
+        "digest": "sha256:bdbd7f0ea50958307ab7f0a92bcb9759694e56cecce947bc74e434e8299f0892",
+        "binary": false,
+        "status": "activated"
+      },
+      {
+        "id": "dun",
+        "name": "催缴策略",
+        "kind": "pbc",
+        "tag": "v2.0.0",
+        "commit": "1.0.1",
+        "digest": "sha256:33e58178426e031dd67fa156e1314ecf84c4ad69866b24d9c34a257c83372120",
+        "binary": true,
+        "url": "http://127.0.0.1:53024",
+        "status": "deployed"
+      }
+    ],
+    "by": "SA",
+    "at": "11-25 13:14",
+    "status": "active"
+  },
+  "unit": "v32xfin",
+  "tag": "v1.0.0"
+}

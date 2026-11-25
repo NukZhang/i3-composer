@@ -8,7 +8,7 @@ package codegen
 
 const prdTmpl = `# {{UNIT}} · {{TITLE}}
 
-> {{UNIT}} · 由 X-业务分析员生成 · {{AT}}
+> {{UNIT}} · 由 X-业务分析工程师生成 · {{AT}}
 
 ## 1. 背景
 {{UNIT}} 当前由「{{UNIT}}」承载。本次变更类型：{{GOAL}}。
@@ -34,7 +34,7 @@ const prdTmpl = `# {{UNIT}} · {{TITLE}}
 
 const protoTmpl = `# {{UNIT}} · {{TITLE}} · 原型说明
 
-> 由 X-UI设计师生成 · {{AT}}
+> 由 X-原型工程师生成 · {{AT}}
 
 ## 1. 这块交付物是什么
 {{TITLE}} 的界面形态：用户看到哪几屏、每屏能做什么。
@@ -96,7 +96,7 @@ const atTmpl = `# {{UNIT}} · {{TITLE}} · 验收标准
 
 const backlogTmpl = `# {{UNIT}} · {{TITLE}} · Backlog
 
-> 由 X-业务分析员生成 · {{AT}}
+> 由 X-业务分析工程师生成 · {{AT}}
 
 ## Story
 

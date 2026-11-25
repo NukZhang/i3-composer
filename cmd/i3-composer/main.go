@@ -133,6 +133,9 @@ func run() error {
 				return "", false, err
 			}
 			return out.Digest, out.Binary, nil
+		}, Test: func(ctx context.Context, pbc, commit string, files map[string]string) (int, int, []string, error) {
+			out, err := exec.Test(ctx, pbc, commit, files)
+			return out.Pass, out.Total, out.Failures, err
 		}}
 		if err := seed.Run(context.Background(), log, so); err != nil {
 			slog.Warn("种子数据写入失败", "err", err)
@@ -140,6 +143,9 @@ func run() error {
 	}
 	srv := bff.NewServer(log, dc, bff.NewSessions([]byte(sessKey)), wfComp)
 	srv.WfName = wfName
+	// 发布批次的部署与回滚都用执行侧同一套东西：构建产物在哪、进程归谁收，
+	// 不能有两份实现。
+	srv.Pipe = exec
 	srv.LocalPort = bff.PortOfAddr(addr)
 	// 启动就把 pubsub 投递地址核对一遍：sidecar 只往它的 app-port 投事件，
 	// 本实例监听别的端口时工作流照跑、事件一条也收不到，验收里极难看出原因。

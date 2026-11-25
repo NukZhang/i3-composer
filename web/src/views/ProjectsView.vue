@@ -36,7 +36,11 @@ function stText(st) {
   return st === 'done' ? '已完成' : st === 'doing' ? '进行中' : '待领取';
 }
 function runText(run) {
-  return { idea: '未发起', draft: '未发起', running: '执行中', waiting: '待发布', paused: '已介入', blocked: '受阻', published: '已发布' }[run] || run || '—';
+  return {
+    idea: '未发起', draft: '未发起', running: '执行中',
+    verified: '待打 tag', waiting: '待打 tag', tagged: '已交付',
+    paused: '已介入', blocked: '受阻', published: '已交付',
+  }[run] || run || '—';
 }
 function runCls(run) {
   return 'cr-state ' + (['published', 'running', 'waiting', 'paused', 'blocked'].includes(run) ? run : 'draft');
@@ -127,7 +131,7 @@ async function submitTask() {
         <span class="tag t-ok">{{ proj.brd.v }}</span>
       </div>
       <div class="small muted">
-        {{ proj.brd.file }} · 负责人 {{ proj.owner || '—' }} · 由 BA 渐进编写，X-业务分析员可续写
+        {{ proj.brd.file }} · 负责人 {{ proj.owner || '—' }} · 由 BA 渐进编写，X-业务分析工程师可续写
       </div>
       <div class="row" style="margin-top: 9px">
         <button class="btn small" @click="S.view = 'brd'">编辑 / 查看版本线</button>
@@ -161,7 +165,7 @@ async function submitTask() {
           <span v-html="icon('plus', 11)" /> 新建单元
         </button>
       </div>
-      <div v-for="g in [['pbc', '微服务 PBC'], ['agent', 'Agent'], ['hybrid', 'PBC + Agent']]" :key="g[0]">
+      <div v-for="g in [['pbc', '微服务 PBC'], ['agent', 'Agent']]" :key="g[0]">
         <div v-if="units.some((u) => (u.kind || 'pbc') === g[0])" class="row" style="padding: 8px 0; border-bottom: 1px solid var(--line-e); align-items: flex-start; gap: 9px">
           <span class="tag" :class="kindCls(g[0])" style="font-size: 9px; min-width: 92px; justify-content: center">{{ g[1] }}</span>
           <div class="row wrap" style="gap: 6px; flex: 1">
@@ -173,7 +177,7 @@ async function submitTask() {
         </div>
       </div>
       <div class="arch-note" style="margin-top: 8px">
-        PBC 交付微服务，验证看还原与验收；Agent 交付数字员工，验证看评测集；{{ kindText('hybrid') }} 两者一起发，两条判据都要过。
+        只有两种：PBC 和 Agent。组合不是单元的属性——一个单元只有一个 tag；要「服务 + Agent 一起上」，在发布编排里把它们勾进同一批次。
       </div>
     </div>
 
@@ -202,15 +206,14 @@ async function submitTask() {
           <label>构成</label>
           <select v-model="nf.kind" style="width: 130px">
             <option value="pbc">微服务 PBC</option>
-            <option value="agent">Agent</option>
-            <option value="hybrid">PBC + Agent</option>
+            <option value="agent">Agent（交付的产物）</option>
           </select>
         </div>
         <div v-if="nf.kind !== 'pbc'" class="field" style="margin: 0">
           <label>Agent</label>
           <select v-model="nf.agentId" style="width: 160px">
-            <option value="">选择一名 worker</option>
-            <option v-for="a in S.agents" :key="a.id" :value="a.id">{{ a.name }}</option>
+            <option value="">选择一个交付的 Agent</option>
+            <option v-for="a in S.agents.filter((x) => x.product)" :key="a.id" :value="a.id">{{ a.name }}</option>
           </select>
         </div>
         <button class="btn small primary" @click="submitUnit">创建</button>

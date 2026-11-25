@@ -58,6 +58,7 @@ func (s *Server) loadBRD(ctx context.Context, proj string) (*store.BRDView, erro
 type UnitProgress struct {
 	store.Unit
 	Head    string        `json:"head"`
+	HeadTag string        `json:"headTag,omitempty"` // HEAD 上的 tag；空 = 还没进发布编排池
 	Line    string        `json:"line"`
 	Tags    []string      `json:"tags"`
 	Commits int           `json:"commits"`
@@ -177,6 +178,7 @@ func (s *Server) units(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 			Deploys: len(v.Deploys), Items: len(v.Items)}
 		if len(v.Commits) > 0 {
 			up.Head = v.Commits[0].No
+			up.HeadTag = v.Commits[0].Tag
 			parts := strings.Split(up.Head, ".")
 			if len(parts) >= 2 {
 				up.Line = parts[0] + "." + parts[1]
@@ -218,11 +220,18 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		return fmt.Errorf("%w：名称必填且不超过 40 字", errBadRequest)
 	}
 	k := domain.ParseKind(in.Kind)
+	// v3.0 起只有两种构成：pbc / agent。组合不是单元的属性——
+	// 一个单元只有一个 tag，硬拆会在回滚时说不清回哪一半；
+	// 「服务 + Agent 一起上」改到发布编排里勾进同一批次表达。
+	if k == domain.KindHybrid {
+		return fmt.Errorf("%w：不再支持 hybrid（PBC + Agent）单元：一个单元只有一个 tag，"+
+			"要一起上就拆成两个单元、在发布编排里放进同一批次", errBadRequest)
+	}
 	if in.Kind != "" && !k.Valid() {
-		return fmt.Errorf("%w：kind 只能是 pbc / agent / hybrid", errBadRequest)
+		return fmt.Errorf("%w：kind 只能是 pbc / agent", errBadRequest)
 	}
 	if k != domain.KindPBC && in.AgentID == "" {
-		return fmt.Errorf("%w：agent / hybrid 单元必须指定 agentId", errBadRequest)
+		return fmt.Errorf("%w：agent 单元必须指定 agentId（交付的 Agent 产物）", errBadRequest)
 	}
 	// 交付单元挂在项目下：项目必须存在（v2.7）。
 	// 老账本还没有 projects 日志：此时默认项目视为存在，升级不打断。

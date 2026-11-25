@@ -9,7 +9,7 @@ import { api } from './api.js';
 
 export const S = reactive({
   // 视图
-  view: 'home',        // home | projects | brd | plan | proto | build | verify | release | agent | workers | item | notify | tech | config
+  view: 'home',        // home | projects | brd | plan | proto | build | verify | orch | agent | workers | item | notify | tech | config
   pbcId: 'fee',
   agentId: '',
   itemId: '',
@@ -63,6 +63,9 @@ export const S = reactive({
   // 纯展示态（不进账本）
   toasts: [],
   runtime: [],      // 右栏运行时日志
+  // 每次重拉投影自增：账本外的东西（如发布批次）没有状态可挂，
+  // 订阅者看它来判断「该重新读一遍了」。
+  tick: 0,
 });
 
 let seq = 0;
@@ -173,6 +176,7 @@ export function refresh() {
       await loadGlobal();
       await loadPbc();
       S.facts = S.pbcId ? (await api.facts(S.pbcId)).facts || [] : [];
+      S.tick++;
       lastError = '';
     } catch (e) {
       // 拉不到就保留上一份投影；同一条错误只提示一次（SSE 断线时不会刷屏）。

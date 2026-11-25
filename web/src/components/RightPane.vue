@@ -36,6 +36,13 @@ const IMPL = {
     ['放量', 'POST /api/agents/{id}/rollout {pct:10|50|100}'],
     ['回滚', 'POST /api/agents/{id}/rollback'],
   ],
+  // v3.2：打 tag 进池；发布是项目级批次，只能整批回滚。
+  orch: [
+    ['编排', 'GET /api/projects/{id}/orch'],
+    ['发布', 'POST /api/projects/{id}/orch/release {env,mode,units}'],
+    ['回滚', 'POST /api/projects/{id}/orch/rollback {id}'],
+    ['打 tag', 'POST /api/units/{id}/tag（SA）'],
+  ],
   agent: [
     ['定义', 'GET /api/agents/{id}'],
     ['编排', 'GET /api/agents/{id} → flow / kb'],

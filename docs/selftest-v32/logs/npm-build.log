@@ -1,0 +1,14 @@
+== npm run build ==
+
+> i3-composer-web@0.3.0 build
+> vite build
+
+vite v6.4.6 building for production...
+transforming...
+✓ 42 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.45 kB │ gzip:  0.34 kB
+dist/assets/index-CDQCOSAE.css   49.47 kB │ gzip: 10.69 kB
+dist/assets/index-DgZfxM5d.js   289.89 kB │ gzip: 96.47 kB
+✓ built in 511ms

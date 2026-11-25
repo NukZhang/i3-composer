@@ -79,13 +79,13 @@ async function waitFor(fn, ms, step) {
   const run = await api('/api/items/' + itemID + '/run?pbc=' + unitID, { method: 'POST' });
   check('4 DA 发起交付（真实 Dapr workflow）', run.code === 202, run);
 
-  // ---- 5. 走到发布闸 ----
+  // ---- 5. 机器五步跑完，停在「打 tag」 ----
   const waiting = await waitFor(async () => {
     const st = await api('/api/state?pbc=' + unitID);
     const it = st.body && st.body.items && st.body.items[itemID];
-    return it && it.run === 'waiting' ? it : null;
+    return it && it.run === 'verified' ? it : null;
   }, 120000, 1500);
-  check('5 workflow 跑完六步停在发布闸', !!waiting, waiting && { run: waiting.run, step: waiting.step });
+  check('5 workflow 跑完五步停在「打 tag」', !!waiting, waiting && { run: waiting.run, step: waiting.step });
 
   // ---- 6. 制品里有真内容 ----
   const st = await api('/api/state?pbc=' + unitID);
@@ -112,32 +112,29 @@ async function waitFor(fn, ms, step) {
   check('8 构建产物 digest 存在且是 sha256 内容摘要',
     !!digest && /^sha256:[0-9a-f]{64}$/.test(digest), digest);
 
-  // ---- 9. 部署地址真的活着 ----
+  // ---- 9. 单元自己不部署 ----
   const deployFact = (facts.body.facts || []).find((f) => f.type === 'deploy.succeeded');
-  const url = deployFact && deployFact.payload && deployFact.payload.url;
-  check('9 部署事实带真实地址', !!url && /^http:\/\/127\.0\.0\.1:\d+$/.test(url), url);
+  check('9 单元交付不部署（部署属于发布批次）', !deployFact, deployFact && deployFact.payload);
+
+  // ---- 10. 打 tag → 批次发布 ----
+  await setRole('SA');
+  const tag = await api('/api/units/' + unitID + '/tag', { method: 'POST' });
+  check('10 SA 打 tag 进池', tag.code === 201 && !!tag.body.tag, tag.body);
+  const rel = await api('/api/projects/p1/orch/release', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ env: 'UAT', mode: 'full', units: [unitID] }),
+  });
+  check('10 批次发布返回 201', rel.code === 201, rel.body && rel.body.id);
+  const ru = ((rel.body || {}).units || [])[0] || {};
+  check('10 批次锁住 tag 与 digest', ru.tag === tag.body.tag && ru.digest === digest, { tag: ru.tag, digest: ru.digest });
   let health = null;
-  if (url) {
+  if (ru.url) {
     // 从 Node 侧探活：浏览器里发跨源请求会被 CORS 挡住，
     // 那是浏览器策略，不是服务不可达。
-    const r = await fetch(url + '/healthz');
+    const r = await fetch(ru.url + '/healthz');
     health = { code: r.status, body: await r.text() };
   }
-  check('9 部署地址真的能访问，/healthz 返回 200', health && health.code === 200, health);
-
-  // ---- 10. 发布 ----
-  await setRole('SA');
-  const answer = await api('/api/items/' + itemID + '/answer?pbc=' + unitID, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ approve: true }),
-  });
-  check('10 SA 拍板发布', answer.code === 202, answer);
-  const published = await waitFor(async () => {
-    const s = await api('/api/state?pbc=' + unitID);
-    const it = s.body && s.body.items && s.body.items[itemID];
-    return it && it.run === 'published' ? it : null;
-  }, 60000, 1000);
-  check('10 发布完成（有 tag 与版本）', !!published && !!published.tag, published && { tag: published.tag, version: published.version });
+  check('10 部署地址真的能访问，/healthz 返回 200', health && health.code === 200, health);
 
   // ---- 11. pubsub 收到了事件 ----
   // 投递地址先核对：sidecar 只往 app-port 投事件，本实例端口不一致就一条也收不到。

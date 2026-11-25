@@ -7,6 +7,7 @@ import { S, unitKind, currentAgent, toast, refresh, pushRuntime } from '../store
 import { api } from '../api.js';
 import { icon } from '../icons.js';
 import { latest, kindCls, kindText, ART, WORKER_NAME } from '../derive.js';
+import { md2html } from '../md.js';
 
 const versions = computed(() => (S.state && S.state.versions) || {});
 const kind = computed(() => unitKind());
@@ -36,6 +37,34 @@ const tab = computed(() => {
 });
 
 const items = computed(() => S.inbox.filter((x) => x.pbc === S.pbcId));
+
+// v3.2：Backlog 页的顺序是「工作项 → 文档」。
+// 打开 Backlog 的人想看的是「这版要干哪些活」，不是先读一遍需求文档；
+// 文档是给它做注脚的，默认收起，点开才渲染。
+const bkVers = computed(() => (versions.value && versions.value.backlog) || []);
+const bkV = ref('');
+const showDoc = ref(false);
+watch(
+  () => [S.pbcId, bkVers.value.length],
+  () => {
+    const arr = bkVers.value;
+    bkV.value = arr.length ? arr[arr.length - 1].v : '';
+    showDoc.value = false;
+  },
+  { immediate: true },
+);
+const bkLatest = computed(() => (bkVers.value.length ? bkVers.value[bkVers.value.length - 1].v : ''));
+const bkCur = computed(() => bkVers.value.find((v) => v.v === bkV.value) || bkVers.value[bkVers.value.length - 1] || null);
+const isHist = computed(() => !!bkV.value && bkV.value !== bkLatest.value);
+const bkDoc = computed(() => (bkCur.value && (bkCur.value.md || bkCur.value.note)) || '（Backlog 文档随提交进树）');
+const bkLines = computed(() => (bkCur.value && bkCur.value.md ? String(bkCur.value.md).split('\n').length : 0));
+
+// story 与 task 分层：story 行加深加粗，task 用 └ 挂在下面；
+// 没挂 story 上的人负责任务（补 BRD、拆 PBC、登记接口）单独一段。
+const stories = computed(() => items.value.filter((x) => x.kind === 'Story'));
+const tasksOf = (sid) => items.value.filter((x) => x.kind !== 'Story' && x.parent === sid);
+const looseTasks = computed(() => items.value.filter((x) => x.kind !== 'Story' && !x.parent));
+const doingCount = computed(() => items.value.filter((x) => x.st === 'doing').length);
 
 // 代码编辑器：草稿内容从投影里取；改动只有「保存为草稿」才会落账。
 const files = ref({});
@@ -113,21 +142,59 @@ function ownerText(o) {
     <span class="small muted">机器自检在这 · 人验收在「验证」</span>
   </div>
 
-  <!-- Backlog -->
+  <!-- Backlog（v3.2）：版本下拉 → 工作项 → 文档收在最后 -->
   <template v-if="tab === 'backlog'">
     <div class="ws clean">
-      <div class="ws-h"><span v-html="icon('list')" /> Backlog {{ (latest(versions, 'backlog') || {}).v }} 是构建阶段的输入<span class="spacer" style="flex: 1" /><span class="small muted">{{ (latest(versions, 'backlog') || {}).by || '—' }} · {{ (latest(versions, 'backlog') || {}).at || '—' }}</span></div>
-      <div class="small muted">方案阶段只产出 PRD / AD / AT。到这一步才把验收标准拆成可执行任务，拆出来的每条都进需求池，由 worker 领活。</div>
+      <div class="ws-h">
+        <span v-html="icon('list')" /> Backlog
+        <select v-model="bkV" class="bug-sev" style="font-size: 10.5px; margin-left: 7px; min-width: 92px">
+          <option v-for="v in bkVers" :key="v.v" :value="v.v">{{ v.v }}{{ v.v === bkLatest ? '（当前）' : '' }}</option>
+        </select>
+        <span v-if="isHist" class="tag t-gray" style="font-size: 9px">历史版本</span>
+        <span class="spacer" style="flex: 1" />
+        <span class="small muted">{{ bkCur ? bkCur.by + ' · ' + bkCur.at : '还没有 Backlog 版本' }}</span>
+      </div>
+      <div class="small muted">文档里是 story 拆分口径、点数与待确认项；要改就去展开，要干活就看下面那张表。</div>
     </div>
-    <div class="card">
-      <div class="ch"><span v-html="icon('git')" /><h3>本单元的工作项</h3><span class="spacer" /><span class="small muted">{{ items.length }} 条 · 执行中 {{ items.filter((x) => x.st === 'doing').length }}</span></div>
-      <table class="tb">
-        <thead><tr><th style="width: 62px">编号</th><th>工作项</th><th style="width: 46px">点</th><th style="width: 86px">负责</th><th style="width: 66px">状态</th><th style="width: 56px" /></tr></thead>
+
+    <div v-if="isHist" class="card">
+      <div class="empty">历史版本只保文档，不保执行投影——工作项会被后续提交改写。</div>
+    </div>
+
+    <div v-else class="card">
+      <div class="ch">
+        <span v-html="icon('list')" /><h3>工作项</h3>
+        <span class="spacer" />
+        <span class="small muted">{{ stories.length }} story · {{ items.length - stories.length }} task · 执行中 {{ doingCount }} 条</span>
+      </div>
+      <table class="tb backlog-tb">
+        <thead><tr><th style="width: 62px">编号</th><th>工作项</th><th style="width: 46px">点</th><th style="width: 110px">负责</th><th style="width: 66px">状态</th><th style="width: 56px" /></tr></thead>
         <tbody>
           <tr v-if="!items.length"><td colspan="6" class="small muted" style="padding: 14px">这个单元还没有工作项，去项目页需求池提一条。</td></tr>
-          <tr v-for="x in items" :key="x.id">
+          <template v-for="s in stories" :key="s.id">
+            <tr class="bk-story">
+              <td class="mono small">{{ s.id }}</td>
+              <td class="small bk-title">{{ s.t }}</td>
+              <td class="small muted">{{ s.pt || '' }}</td>
+              <td class="small">{{ ownerText(s.owner) }}</td>
+              <td><span class="tag" :class="s.st === 'done' ? 't-ok' : s.st === 'doing' ? 't-warn' : 't-gray'" style="font-size: 9px">{{ s.st === 'done' ? '已完成' : s.st === 'doing' ? '执行中' : '待领' }}</span></td>
+              <td><button class="btn small" @click="S.pbcId = s.pbc; S.itemId = s.id; S.view = 'item'">查看</button></td>
+            </tr>
+            <tr v-for="x in tasksOf(s.id)" :key="x.id" class="bk-task">
+              <td class="mono small">{{ x.id }}</td>
+              <td class="small bk-title"><span class="bk-branch">└</span>{{ x.t }}</td>
+              <td class="small muted">{{ x.pt || '' }}</td>
+              <td class="small">{{ ownerText(x.owner) }}</td>
+              <td><span class="tag" :class="x.st === 'done' ? 't-ok' : x.st === 'doing' ? 't-warn' : 't-gray'" style="font-size: 9px">{{ x.st === 'done' ? '已完成' : x.st === 'doing' ? '执行中' : '待领' }}</span></td>
+              <td><button class="btn small" @click="S.pbcId = x.pbc; S.itemId = x.id; S.view = 'item'">查看</button></td>
+            </tr>
+          </template>
+          <tr v-if="looseTasks.length" class="bk-orphan">
+            <td colspan="6" class="small">人负责的任务 · 不挂在 story 下</td>
+          </tr>
+          <tr v-for="x in looseTasks" :key="x.id">
             <td class="mono small">{{ x.id }}</td>
-            <td class="small">{{ x.t }}</td>
+            <td class="small bk-title"><span class="bk-branch">└</span>{{ x.t }}</td>
             <td class="small muted">{{ x.pt || '' }}</td>
             <td class="small">{{ ownerText(x.owner) }}</td>
             <td><span class="tag" :class="x.st === 'done' ? 't-ok' : x.st === 'doing' ? 't-warn' : 't-gray'" style="font-size: 9px">{{ x.st === 'done' ? '已完成' : x.st === 'doing' ? '执行中' : '待领' }}</span></td>
@@ -136,10 +203,17 @@ function ownerText(o) {
         </tbody>
       </table>
     </div>
+
     <div class="card">
-      <div class="ch"><span v-html="icon('doc')" /><h3>Backlog 文档</h3><span class="spacer" /><span class="mono small" style="color: var(--info)">{{ (latest(versions, 'backlog') || {}).v }}.md</span></div>
-      <div class="pv" style="max-height: 380px; overflow: auto; border: 1px solid var(--line-1); border-radius: 8px; padding: 12px 18px">{{ (latest(versions, 'backlog') || {}).note || '（Backlog 文档随提交进树）' }}</div>
-      <div class="small muted" style="margin-top: 7px">这份 md 随提交进树（tree.backlog），是交付物的一部分；工作项是它的执行投影。</div>
+      <div class="ch">
+        <span v-html="icon('doc')" /><h3>Backlog 文档</h3>
+        <span class="spacer" />
+        <span class="mono small" style="color: var(--info)">{{ bkV || '—' }}.md</span>
+        <span class="small muted">{{ bkLines }} 行 · 随提交进树</span>
+        <button class="btn small" style="margin-left: 8px" @click="showDoc = !showDoc">{{ showDoc ? '收起' : '展开全文' }}</button>
+      </div>
+      <div v-if="showDoc" class="pv" style="max-height: 380px; overflow: auto; border: 1px solid var(--line-1); border-radius: 8px; padding: 12px 18px" v-html="md2html(bkDoc)" />
+      <div v-else class="small muted">文档默认收起：展开看 story 拆分口径、点数与待确认项；工作项是它的执行投影。</div>
     </div>
   </template>
 

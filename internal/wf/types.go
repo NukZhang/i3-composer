@@ -94,6 +94,9 @@ const (
 	ActPublish      = "i3-publish"
 	ActWaiting      = "i3-mark-waiting"
 	ActBlocked      = "i3-mark-blocked"
+	// ActVerified 是 v3.2 的收口：机器五步跑完，记「可以交付了」。
+	// 打 tag 不在这里——它是人在验证页按下的动作，由 BFF 校验后落账。
+	ActVerified = "i3-mark-verified"
 )
 
 // 事件名。

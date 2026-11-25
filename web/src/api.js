@@ -71,6 +71,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  // v3.2：单元打 tag 进「发布编排」池；发布会是项目级批次
+  tagUnit: (id) => request('/api/units/' + encodeURIComponent(id) + '/tag', { method: 'POST' }),
+  orch: (proj) => request('/api/projects/' + encodeURIComponent(proj) + '/orch'),
+  release: (proj, body) =>
+    request('/api/projects/' + encodeURIComponent(proj) + '/orch/release', {
+      method: 'POST',
+      body: JSON.stringify(body || {}),
+    }),
+  rollback: (proj, id, note) =>
+    request('/api/projects/' + encodeURIComponent(proj) + '/orch/rollback', {
+      method: 'POST',
+      body: JSON.stringify({ id, note: note || '' }),
+    }),
   saveBRD: (text, note, proj) => request('/api/brd' + (proj ? '?proj=' + encodeURIComponent(proj) : ''), { method: 'POST', body: JSON.stringify({ text, note }) }),
   agentEval: (id, body) =>
     request('/api/agents/' + encodeURIComponent(id) + '/eval', { method: 'POST', body: JSON.stringify(body) }),

@@ -18,7 +18,7 @@
 | 制品生成 | ✅ 真 | `internal/codegen` 产出 markdown 正文 + 可编译的 Go 模块（`go.mod` / `main.go` / `main_test.go`） |
 | 测试 | ✅ 真 | `go test -count=1 -v ./...` 的真实输出；不过就阻断链路（`test.run` 事实带 `failures`） |
 | 构建 | ✅ 真 | `go build -trimpath` 出二进制；digest = **二进制字节的 sha256**（内容寻址），不是树摘要拼的 |
-| 部署 | ✅ 真 | 起构建产物为进程，等 `GET /healthz` 真的返回 200 才记 `deploy.succeeded`；URL 与 pid 都进事实。进程归流水线管：换版本先停旧进程，服务退出时全部收掉 |
+| 部署（发布批次） | ✅ 真 | v3.2 起单元自己不再部署：打 tag 进池后，由项目级批次发布起构建产物为进程，等 `GET /healthz` 返回 200 才记 `deploy.succeeded`；批次只能整批回滚，回滚时把进程一并收掉 |
 | Agent 试跑 / 对话验收 | ✅ 真（本地判定） | `internal/agentexec` 按编排图逐节点执行：读会话、检索知识库、跑合规规则、判分支、转人工；**输入变了结论就变** |
 | pub/sub | ✅ 真（收发闭环） | 声明式订阅 `components/subscription.yaml` → sidecar 建 consumer group → 事件回到 `/api/events/{topic}` → 落 `event.received` 事实；workflow 的**每一步**都发 `item.changed` |
 | 种子数据 | ⚠️ 演示数据（已标注） | actor 写作 `seed`，页面上标「演示数据」；真跑出来的事实 actor 是 `x-fe`/`x-qa`/`x-ops`/`SA` |
@@ -71,9 +71,9 @@ sha256sum .i3-artifacts/blobs/sha256/<hex>   # 与事实里的 digest 一致
 
 - 收：`components/subscription.yaml` 让 sidecar 建 consumer group，
   事件回到 BFF 落成 `event.received` 事实，页面上能看到「收到的事件」；
-- 发：**workflow 的每一步**（生成制品、收敛、提交、测试、构建、部署，
-  以及走到人工闸）都发一条 `item.changed`，不是只有后面几步发。
-  一次交付在总线上能数出 10 条 `item.changed`（6 步 + 人工闸 + 测试/构建/部署各一条）。
+- 发：**workflow 的每一步**（生成制品、收敛、提交、测试、构建，以及 verified 收口）
+  都发一条 `item.changed`，不是只有后面几步发；测试与构建还会额外发一条细粒度事件。
+  一次交付在总线上能数出 8 条 `item.changed`（5 步 + verified + 测试/构建各一条）。
 
 怎么核对「总线不是装饰品」：跑完一条交付后数收到的 `item.changed`，
 条数必须盖得住步骤数。`acceptance_exec.cjs` 里那条
@@ -122,12 +122,13 @@ docker compose up -d
 go build -o /tmp/i3-composer-bin ./cmd/i3-composer
 /tmp/i3-composer-bin
 
-# 3. 四套验收
+# 3. 五套验收（v32 要先跑：它断言项目下只有 4 个种子单元）
 cd web/e2e
-BASE=http://127.0.0.1:8080 node acceptance_exec.cjs   # 执行侧：真测试/真构建/真部署/真收发
-BASE=http://127.0.0.1:8080 node acceptance_flow.cjs  # 写路径：建任务 → 发起 → 拍板 → 发布
-BASE=http://127.0.0.1:8080 node acceptance_v26.cjs   # v2.6 界面：编排工作台 / 质量报告 / 验收台
-BASE=http://127.0.0.1:8080 node acceptance_full.cjs  # 从零：建单元 → 建任务 → 真跑六步 → 发布
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs   # v3.2：四阶段 / 打 tag / 批次发布 / 整批回滚
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs  # 执行侧：真测试 / 真构建 / 批次部署 / 真收发
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs  # 写路径：建单元 → 发起 → 越权 → 打 tag
+BASE=http://127.0.0.1:8080 node acceptance_v26.cjs               # v2.6 界面：编排工作台 / 质量报告 / 验收台
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs  # 从零：建单元 → 建任务 → 真跑五步 → 打 tag → 批次
 ```
 
 **为什么要先编译再跑、而不是 `go run`：** `go run` 把 SIGTERM 送给 `go`

@@ -165,6 +165,12 @@ table.tb{width:100%;border-collapse:collapse;font-size:11.5px}
 table.tb th{text-align:left;color:var(--tx-10);font-weight:500;padding:6px 7px;border-bottom:1px solid var(--line-a);font-size:10.5px;white-space:nowrap}
 table.tb td{padding:7px;border-bottom:1px solid var(--line-e);color:var(--tx-4);vertical-align:middle}
 table.tb tr:hover td{background:var(--bg-hover6)}
+/* Backlog（v3.2）：story 加深加粗，task 用 └ 挂下面；人负责的任务单独一段 */
+.backlog-tb .bk-story td{background:var(--bg-el);font-weight:600}
+.backlog-tb .bk-story td.bk-title{font-weight:650;color:var(--tx-2)}
+.backlog-tb .bk-task td{color:var(--tx-6)}
+.backlog-tb .bk-branch{color:var(--tx-11);margin-right:5px;font-family:var(--mono,monospace)}
+.backlog-tb .bk-orphan td{background:var(--bg-el);color:var(--tx-10);font-size:10.5px;padding:6px 7px}
 
 /* workspace bar */
 .ws{border:1px solid var(--line-warn2);background:var(--bg-warn-soft2);border-radius:10px;padding:11px 13px;margin-bottom:11px}
@@ -617,6 +623,12 @@ details.as-exp summary::marker{color:var(--tx-11)}
 .sb-add{margin-left:auto;width:17px;height:17px;display:flex;align-items:center;justify-content:center;border-radius:4px;
   color:var(--tx-11);font-size:14px;line-height:1;cursor:pointer;letter-spacing:0;text-transform:none;transition:.12s}
 .sb-add:hover{background:var(--bg-el);color:var(--accent-tx2)}
+/* 项目行右侧的发布编排图标：颜色即状态（灰 = 没单元 / 黄 = 待交付 / 绿 = 全就绪） */
+.orch-ico{margin-left:auto;width:18px;height:18px;display:flex;align-items:center;justify-content:center;
+  border:1px solid transparent;border-radius:4px;background:transparent;cursor:pointer;padding:0;
+  opacity:.85;transition:.12s}
+.orch-ico:hover{background:var(--bg-el);opacity:1}
+.orch-ico.on{border-color:var(--accent);background:var(--bg-el)}
 .sb-ws{display:flex;align-items:center;gap:5px;padding:5px 8px 3px;margin-top:3px;font-size:9.5px;color:var(--tx-11);
   letter-spacing:.4px;cursor:pointer;text-transform:none;font-weight:500}
 .sb-ws:hover{color:var(--tx-6)}

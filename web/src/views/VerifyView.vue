@@ -30,6 +30,41 @@ const bugTitle = ref('');
 const bugSev = ref('一般');
 const bugSteps = ref('');
 
+// v3.2：打 tag 挪到验证页末尾。tag 是发布编排唯一认的东西——
+// 没有 tag 的单元不会出现在批次里，也不会被「顺手带上」。
+const head = computed(() => (S.state && S.state.commits && S.state.commits[0]) || null);
+const unitTag = computed(() => (head.value && head.value.tag) || '');
+const testsOK = computed(() => {
+  const t = S.state && S.state.test;
+  return !!(t && head.value && t.commit === head.value.no && t.pass === t.total);
+});
+const gatesOK = computed(() => {
+  const gs = (S.state && S.state.gates && S.state.gates.all) || [];
+  return gs.length > 0 && gs.every((g) => g.ok || g.unknown);
+});
+const checksPass = computed(() => checks.value.length > 0 && checks.value.every((c) => c.st === 'pass'));
+const remainAccept = computed(() => checks.value.filter((c) => c.st !== 'pass').length);
+// 没有验收清单时以机器测试与闸门为准——但页面要说清这件事，不假装「全过」。
+const tagReason = computed(() => {
+  if (!head.value) return '还没有提交';
+  if (!head.value.digest) return 'HEAD 还没构建';
+  if (!testsOK.value) return '机器测试未全过';
+  if (!gatesOK.value) return '闸门未过';
+  if (remainAccept.value) return '还差 ' + remainAccept.value + ' 条验收未通过';
+  return '';
+});
+const canTag = computed(() => !unitTag.value && !tagReason.value);
+
+async function doTag() {
+  try {
+    const j = await api.tagUnit(S.pbcId);
+    toast('已打 tag ' + j.tag + ' · 进「发布编排」池', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+  await refresh();
+}
+
 function sel(i) {
   S.vIdx = i;
   S.vBugOpen = false;
@@ -201,5 +236,34 @@ function pushDefect(d) {
       </div>
       <div class="small muted" style="margin-top: 8px">验收不通过 ≠ 打回重做。bug 进 backlog，修完这一条重验，其它条不受影响。</div>
     </div>
+
+
   </template>
+
+    <!-- v3.2：打 tag 是验证页的收口。打完进「发布编排」池，上环境在那边定。 -->
+    <div class="card">
+      <div class="ch">
+        <span v-html="icon('tag')" /><h3>交付物</h3>
+        <span class="spacer" />
+        <span class="small muted">{{ head ? ('HEAD ' + head.no + (head.digest ? ' · ' + head.digest.slice(0, 21) + '…' : '')) : '—' }}</span>
+      </div>
+      <div v-if="unitTag" class="row" style="gap: 8px; align-items: center">
+        <span class="tag t-ok" style="font-size: 9px">{{ unitTag }} 已交付</span>
+        <span class="small muted">已进「发布编排」池；上哪个环境、和谁一起上，在项目级定。</span>
+        <span class="spacer" style="flex: 1" />
+        <button class="btn small" @click="S.view = 'orch'"><span v-html="icon('layers', 11)" /> 去发布编排</button>
+      </div>
+      <template v-else>
+        <div class="row" style="gap: 8px; align-items: center">
+          <span v-if="tagReason" class="tag t-warn" style="font-size: 9px">{{ tagReason }}</span>
+          <span v-else class="tag t-ok" style="font-size: 9px">验收全过，可以打 tag</span>
+          <span v-if="!checks.length" class="small muted">这个单元还没有验收清单，打 tag 以机器测试与闸门为准。</span>
+          <span class="spacer" style="flex: 1" />
+          <button class="btn small primary" :disabled="!canTag || !can('tag')" @click="doTag">
+            <span v-html="icon('tag', 11)" /> 打 tag 固化交付物
+          </button>
+        </div>
+        <div class="small muted" style="margin-top: 6px">tag 是发布编排唯一认的东西：没有 tag 的单元不会进批次。</div>
+      </template>
+    </div>
 </template>

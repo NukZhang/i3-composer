@@ -40,13 +40,15 @@ function check(name, ok, detail) {
   // 建新单元，那是正常的，不该让这条断言误报。
   const seededUnits = boot.units
     .map((u) => u.split(':')[0])
-    .filter((id) => ['fee', 'qa', 'dun', 'ticket'].indexOf(id) >= 0);
-  check('1 种子单元只剩三个构成（fee/qa/dun，ticket 已撤）',
-    seededUnits.length === 3 && seededUnits.indexOf('ticket') < 0 &&
-    boot.units.some((u) => u.startsWith('qa:agent:x-qc')) && boot.units.some((u) => u.startsWith('dun:hybrid:x-dun')),
+    .filter((id) => ['fee', 'qa', 'dun', 'dunx', 'ticket'].indexOf(id) >= 0);
+  check('1 种子单元四个、只有 PBC / Agent 两种构成（ticket 已撤）',
+    seededUnits.length === 4 && seededUnits.indexOf('ticket') < 0 &&
+    boot.units.some((u) => u.startsWith('qa:agent:qa-agent')) &&
+    boot.units.some((u) => u.startsWith('dun:pbc:-')) &&
+    boot.units.some((u) => u.startsWith('dunx:agent:dun-agent')),
     boot.units);
-  check('1 Agent 工厂是七名 worker（含 X-质检员）',
-    boot.agents.length === 7 && boot.agents.includes('x-qc'), boot.agents);
+  check('1 Agent 工厂：5 名平台员工 + 2 个交付产物',
+    boot.agents.length === 7 && boot.agents.includes('qa-agent') && boot.agents.includes('dun-agent'), boot.agents);
 
   // ---- 2. Agent 单元的构建页 = 编排工作台 ----
   // 编排与构建是 DA 的活：先切角色（会话由服务端签发，前端改不动权限）。
@@ -86,7 +88,7 @@ function check(name, ok, detail) {
 
   // ---- 3. 改提示词 → 保存编排 → digest 变 → 构建 → 版本号变 ----
   const before = await page.evaluate(async (base) => {
-    const a = await fetch(base + '/api/agents/x-qc').then((r) => r.json());
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
     return { digest: a.digest, built: a.builtDigest, ver: a.ver };
   }, BASE);
   // 每次用唯一标记，保证「内容真的变了」——否则重复跑同一条断言没有意义。
@@ -95,7 +97,7 @@ function check(name, ok, detail) {
   await page.click('.as-top button:has-text("保存编排")');
   await page.waitForTimeout(1200);
   const afterFlow = await page.evaluate(async (base) => {
-    const a = await fetch(base + '/api/agents/x-qc').then((r) => r.json());
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
     const g = a.gates.find((x) => x.key === 'agent-digest');
     const node = (a.flow.nodes || []).find((n) => n.t === 'llm');
     return { digest: a.digest, built: a.builtDigest, gate: g.ok, detail: g.detail, prompt: (node.cfg || {}).prompt };
@@ -107,7 +109,7 @@ function check(name, ok, detail) {
   await page.click('.as-top button:has-text("构建")');
   await page.waitForTimeout(1200);
   const afterBuild = await page.evaluate(async (base) => {
-    const a = await fetch(base + '/api/agents/x-qc').then((r) => r.json());
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
     const g = a.gates.find((x) => x.key === 'agent-digest');
     return { ver: a.ver, digest: a.digest, built: a.builtDigest, gate: g.ok };
   }, BASE);
@@ -117,7 +119,7 @@ function check(name, ok, detail) {
 
   // ---- 4. 试跑这一条 → 沉淀为评测用例 ----
   const caseBefore = await page.evaluate(async (base) => {
-    const a = await fetch(base + '/api/agents/x-qc').then((r) => r.json());
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
     return (a.cases || []).length;
   }, BASE);
   await page.click('.as-top button:has-text("试跑这一条")');
@@ -130,7 +132,7 @@ function check(name, ok, detail) {
   await page.click('.as-dbg-r button:has-text("沉淀为评测用例")');
   await page.waitForTimeout(1200);
   const caseAfter = await page.evaluate(async (base) => {
-    const a = await fetch(base + '/api/agents/x-qc').then((r) => r.json());
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
     return { n: (a.cases || []).length, last: (a.cases || []).slice(-1)[0] };
   }, BASE);
   check('4 沉淀的用例进评测集', caseAfter.n === caseBefore + 1 && caseAfter.last && caseAfter.last.v === '试跑沉淀',
@@ -222,28 +224,26 @@ function check(name, ok, detail) {
     /质检复核/.test(proto.text) && /Agent 判定依据/.test(proto.text) && /转人工复核/.test(proto.text),
     proto.text.slice(0, 80));
 
-  // ---- 8. 组合单元：催缴业务台 + 合并门禁 ----
-  await page.click('.sidebar .trow.sub:has-text("智能催缴")');
+  // ---- 8. PBC 单元：催缴策略（v3.0 起没有组合单元）----
+  await page.click('.sidebar .trow.sub:has-text("催缴策略")');
   await page.waitForTimeout(800);
   await page.click('.trow.sub2:has-text("原型")');
   await page.waitForTimeout(800);
   const dunProto = await page.evaluate(() => ({
     text: (document.querySelector('.stage') || {}).textContent || '',
   }));
-  check('8 组合项原型页是「催缴业务台」（策略/任务/话术三块）',
-    /催缴业务台/.test(dunProto.text) && /策略配置/.test(dunProto.text) && /话术审核/.test(dunProto.text),
-    dunProto.text.slice(0, 80));
+  check('8 催缴策略是 PBC 单元：原型页是线框与批注（来自账本）',
+    /线框/.test(dunProto.text) && /批注/.test(dunProto.text), dunProto.text.slice(0, 80));
 
   await page.click('.trow.sub2:has-text("构建")');
   await page.waitForTimeout(600);
   await page.click('.ptab:has-text("质量报告")');
   await page.waitForTimeout(900);
-  const hybrid = await page.evaluate(() => ({
+  const dunQ = await page.evaluate(() => ({
     text: (document.querySelector('.stage') || {}).textContent || '',
   }));
-  check('8 组合项质量报告有合并门禁且不能发布',
-    /合并门禁/.test(hybrid.text) && /不能发布/.test(hybrid.text) && /20\/22/.test(hybrid.text),
-    hybrid.text.match(/不能发布|可以发布/));
+  check('8 催缴策略质量报告是四闸（不再有组合的合并门禁）',
+    /引用闭合/.test(dunQ.text) && !/合并门禁/.test(dunQ.text), dunQ.text.slice(0, 80));
 
   // ---- 9. Agent 工厂详情：编排摘要 + 去编排页 ----
   await page.click('.rolebtn.x');
@@ -251,8 +251,8 @@ function check(name, ok, detail) {
   const workers = await page.evaluate(() => ({
     rows: document.querySelectorAll('.agent-row').length,
   }));
-  check('9 Agent 工厂列出 7 名 worker', workers.rows === 7, workers.rows);
-  await page.locator('.agent-row:has-text("X-质检员")').click();
+  check('9 Agent 工厂上半列出 2 个交付产物', workers.rows === 2, workers.rows);
+  await page.locator('.agent-row:has-text("质检 Agent")').click();
   await page.waitForTimeout(700);
   const detail = await page.evaluate(() => ({
     tabs: Array.from(document.querySelectorAll('.ptab')).map((x) => x.textContent.trim()),
