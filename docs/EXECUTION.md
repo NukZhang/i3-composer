@@ -18,7 +18,7 @@
 | 制品生成 | ✅ 真 | `internal/codegen` 产出 markdown 正文 + 可编译的 Go 模块（`go.mod` / `main.go` / `main_test.go`） |
 | 测试 | ✅ 真 | `go test -count=1 -v ./...` 的真实输出；不过就阻断链路（`test.run` 事实带 `failures`） |
 | 构建 | ✅ 真 | `go build -trimpath` 出二进制；digest = **二进制字节的 sha256**（内容寻址），不是树摘要拼的 |
-| 部署 | ✅ 真 | 起构建产物为进程，等 `GET /healthz` 真的返回 200 才记 `deploy.succeeded`；URL 与 pid 都进事实 |
+| 部署 | ✅ 真 | 起构建产物为进程，等 `GET /healthz` 真的返回 200 才记 `deploy.succeeded`；URL 与 pid 都进事实。进程归流水线管：换版本先停旧进程，服务退出时全部收掉 |
 | Agent 试跑 / 对话验收 | ✅ 真（本地判定） | `internal/agentexec` 按编排图逐节点执行：读会话、检索知识库、跑合规规则、判分支、转人工；**输入变了结论就变** |
 | pub/sub | ✅ 真（收发闭环） | 声明式订阅 `components/subscription.yaml` → sidecar 建 consumer group → 事件回到 `/api/events/{topic}` → 落 `event.received` 事实；workflow 的**每一步**都发 `item.changed` |
 | 种子数据 | ⚠️ 演示数据（已标注） | actor 写作 `seed`，页面上标「演示数据」；真跑出来的事实 actor 是 `x-fe`/`x-qa`/`x-ops`/`SA` |
@@ -82,6 +82,21 @@ sha256sum .i3-artifacts/blobs/sha256/<hex>   # 与事实里的 digest 一致
 
 种子写的版本号、评测分、发布记录看起来像真干过。现在它们的 actor 是 `seed`，
 界面上标「演示数据」；真跑出来的事实 actor 是具体角色，一眼能分开。
+
+**7. 部署成功过，进程却赖着不走**
+
+部署是起真进程，那就得有人收。早先的版本只在「换版本 / 回滚」时停旧进程：
+每跑一轮验收就在机器上多留一个进程，服务退出时更是一个都不收
+（实测一轮下来攒了 11 个）。现在：
+
+- 同 (pbc, env) 换版本先停旧的；
+- 服务退出时 `StopAll()` 把起过的进程全部收掉；
+- 起进程失败/健康检查超时的路径也 Kill + Wait，不留僵尸；
+- `Alive` 用信号 0 问操作系统「这个 pid 还在吗」，不再拿 `ProcessState`
+  当判据——那个字段只有 `Wait` 之后才填，进程自己崩了它也还是 nil。
+
+判据很简单：验收跑完，`ps aux | grep app.bin` 只该看到当前在用的那几个部署；
+停掉服务，一个都不该剩。
 
 ---
 

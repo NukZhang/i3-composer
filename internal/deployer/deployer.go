@@ -50,6 +50,9 @@ type Deployer struct {
 type proc struct {
 	inst *Instance
 	cmd  *exec.Cmd
+	// done 在进程退出且被 Wait 回收之后关闭。
+	// 它是「还活着吗」的唯一可靠判据：进程自己崩了，只有 Wait 能知道。
+	done chan struct{}
 }
 
 // New 造一个部署器。
@@ -94,10 +97,10 @@ func (d *Deployer) Deploy(ctx context.Context, pbc, env, commit, digest, binary 
 	select {
 	case addr = <-addrCh:
 	case <-time.After(10 * time.Second):
-		_ = cmd.Process.Kill()
+		kill(cmd)
 		return nil, fmt.Errorf("进程没有报告监听地址")
 	case <-ctx.Done():
-		_ = cmd.Process.Kill()
+		kill(cmd)
 		return nil, ctx.Err()
 	}
 
@@ -107,15 +110,48 @@ func (d *Deployer) Deploy(ctx context.Context, pbc, env, commit, digest, binary 
 		Started: time.Now().Format("01-02 15:04:05"),
 	}
 	if err := d.waitHealth(ctx, inst.URL); err != nil {
-		_ = cmd.Process.Kill()
+		kill(cmd)
 		return nil, err
 	}
 	inst.Health = "200 OK"
 
+	// 注册前先把「谁负责 Wait」定下来：进程退出由这个 goroutine 发现并回收，
+	// 不靠信号探测（僵尸进程对信号 0 也会应答，探测不出它已经死了）。
+	p := &proc{inst: inst, cmd: cmd, done: make(chan struct{})}
+	go func() {
+		_ = cmd.Wait()
+		close(p.done)
+	}()
+
 	d.mu.Lock()
-	d.running[key(pbc, env)] = &proc{inst: inst, cmd: cmd}
+	d.running[key(pbc, env)] = p
 	d.mu.Unlock()
 	return inst, nil
+}
+
+// kill 杀掉进程并回收它。
+//
+// 只 Kill 不 Wait 会留下僵尸：进程已经死了，但没被 wait 过的子进程
+// 会一直挂在父进程的名下（ps 里是 defunct）。
+// 只用在「还没交给 proc 的 reaper」的那些路径上。
+func kill(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
+}
+
+// stopProc 停掉一个已登记的进程，并等它的 reaper 收完。
+func stopProc(p *proc) {
+	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+		return
+	}
+	_ = p.cmd.Process.Kill()
+	select {
+	case <-p.done:
+	case <-time.After(3 * time.Second):
+	}
 }
 
 // waitHealth 轮询健康检查，直到 200 或超时。
@@ -161,11 +197,25 @@ func (d *Deployer) Stop(pbc, env string) {
 	p := d.running[k]
 	delete(d.running, k)
 	d.mu.Unlock()
-	if p == nil || p.cmd == nil || p.cmd.Process == nil {
-		return
+	stopProc(p)
+}
+
+// StopAll 停掉所有还在跑的部署。
+//
+// 进程是这个部署器起的，就得由它收。服务退出时不收，
+// 每次验收都会在机器上留一堆没人管的进程——部署「成功」了，
+// 产物却赖着不走。
+func (d *Deployer) StopAll() {
+	d.mu.Lock()
+	ps := make([]*proc, 0, len(d.running))
+	for _, p := range d.running {
+		ps = append(ps, p)
 	}
-	_ = p.cmd.Process.Kill()
-	_, _ = p.cmd.Process.Wait()
+	d.running = map[string]*proc{}
+	d.mu.Unlock()
+	for _, p := range ps {
+		stopProc(p)
+	}
 }
 
 // Running 列出当前活着的部署。
@@ -180,14 +230,23 @@ func (d *Deployer) Running() []Instance {
 }
 
 // Alive 判定某个部署是否还在跑。
+//
+// 判据是 reaper 有没有收完，不是 ProcessState，也不是信号探测：
+// ProcessState 只有 Wait 之后才填；而僵尸进程对信号 0 照样应答，
+// 探测不出它已经死了。
 func (d *Deployer) Alive(pbc, env string) bool {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	p := d.running[key(pbc, env)]
-	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+	d.mu.Unlock()
+	if p == nil {
 		return false
 	}
-	return p.cmd.ProcessState == nil
+	select {
+	case <-p.done:
+		return false
+	default:
+		return true
+	}
 }
 
 func key(pbc, env string) string { return pbc + "/" + env }

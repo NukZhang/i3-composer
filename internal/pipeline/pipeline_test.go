@@ -28,6 +28,8 @@ func newTestPipeline(t *testing.T) *Pipeline {
 		t.Fatal(err)
 	}
 	p.Store = newTestStore(t)
+	// 测试起的是真进程：哪怕测试中途失败，也得把它收掉。
+	t.Cleanup(p.StopAll)
 	return p
 }
 

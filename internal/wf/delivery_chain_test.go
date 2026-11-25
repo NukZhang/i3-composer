@@ -85,6 +85,8 @@ func TestDeliveryChainReallyBuildsTestsAndDeploys(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec.Store = artifacts.New(t.TempDir())
+	// 部署起的是真进程：测试结束必须收掉，否则每次跑测试都在机器上留一个。
+	defer exec.StopAll()
 	acts := &wf.Activities{D: wf.Deps{Log: log, Exec: exec}}
 
 	ctx := context.Background()

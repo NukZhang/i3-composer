@@ -273,6 +273,10 @@ func (p *Pipeline) Deploy(ctx context.Context, pbc, env, commit, digest string, 
 // Stop 停掉某个部署（回滚用）。
 func (p *Pipeline) Stop(pbc, env string) { p.Dep.Stop(pbc, env) }
 
+// StopAll 停掉所有部署。服务退出前必须调它——
+// 部署起的进程是这个流水线起的，不收就留在机器上。
+func (p *Pipeline) StopAll() { p.Dep.StopAll() }
+
 // Alive 判定部署是否还在跑。
 func (p *Pipeline) Alive(pbc, env string) bool { return p.Dep.Alive(pbc, env) }
 

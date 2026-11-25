@@ -158,6 +158,8 @@ func run() error {
 
 	<-ctx.Done()
 	slog.Info("收尾中…")
+	// 部署起的进程归我们收：不停掉的话，进程会在机器上赖着不走。
+	exec.StopAll()
 	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return hs.Shutdown(shutCtx)
