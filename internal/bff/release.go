@@ -153,7 +153,7 @@ func (s *Server) tagUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error
 type orchUnit struct {
 	store.Unit
 	Head   string        `json:"head"`
-	Tag    string        `json:"tag"`  // HEAD 上的 tag；空 = 未进池
+	Tag    string        `json:"tag"` // HEAD 上的 tag；空 = 未进池
 	Digest string        `json:"digest"`
 	Binary bool          `json:"binary"`
 	Ready  bool          `json:"ready"`

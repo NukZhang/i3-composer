@@ -100,22 +100,22 @@ type TraceStep struct {
 // 它不是「配置项」：提示词、工具白名单、模型、评测集共同决定 digest，
 // 任何一项变化都是新版本，和 PBC 的提交模型一致。
 type Agent struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"n"`
-	Role   string   `json:"role"`
+	ID   string `json:"id"`
+	Name string `json:"n"`
+	Role string `json:"role"`
 	// Product 区分两种东西：false = 平台员工（写代码、跑测试、画原型的执行者），
 	// true = 交付给客户的 Agent 产物（随单元走四阶段、有评测集、能打 tag）。
 	// 把两者混在一个花名册里，就会出现「给测试工程师配版本号」这种概念错误。
 	Product bool     `json:"product,omitempty"`
-	Spe    string   `json:"spe"`
-	Task   string   `json:"task"`
-	Ver    string   `json:"ver"`
-	Model  string   `json:"model"`
-	Cost   string   `json:"cost"`
-	Stages []string `json:"st"`   // 方案/原型/构建/验证/发布 五阶段状态
-	Eval   [2]int   `json:"eval"` // [pass,total]
-	Tools  []string `json:"tools"`
-	Prompt string   `json:"prompt"`
+	Spe     string   `json:"spe"`
+	Task    string   `json:"task"`
+	Ver     string   `json:"ver"`
+	Model   string   `json:"model"`
+	Cost    string   `json:"cost"`
+	Stages  []string `json:"st"`   // 方案/原型/构建/验证/发布 五阶段状态
+	Eval    [2]int   `json:"eval"` // [pass,total]
+	Tools   []string `json:"tools"`
+	Prompt  string   `json:"prompt"`
 
 	Runs  []EvalRun   `json:"runs"`
 	Fails []FailGroup `json:"fails"`
