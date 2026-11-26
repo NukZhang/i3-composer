@@ -286,7 +286,55 @@ async function waitFor(fn, ms, step) {
   const proj = await page.evaluate(() => document.querySelector('.stage').textContent);
   check('10 项目页只有 PBC / Agent 两组，没有「PBC + Agent」', !proj.includes('PBC + Agent'), proj.slice(0, 120));
 
-  // ---- 11. 健康度 ----
+  // ---- 11. 回放：按 tag 打下去的那一刻重算投影 ----
+  // 「凭什么能发」要能当场核对：闸是当时算的那组，不是今天的账本重算一遍。
+  const rp = await api(`/api/units/${unitID}/replay?tag=${encodeURIComponent(tag.body.tag)}`);
+  check('11 已打 tag 的单元可回放（200）', rp.code === 200, rp.body && rp.body.tag);
+  check('11 回放停在打 tag 的那次提交', rp.code === 200 && rp.body.commit === tag.body.commit, rp.body && { commit: rp.body.commit, tagCommit: tag.body.commit });
+  check('11 回放带出当时那组闸（四条，含「判不了」）',
+    rp.code === 200 && (rp.body.gates || []).length === 4 && rp.body.gates.some((g) => g.unknown),
+    rp.body && rp.body.gates);
+  check('11 回放窗口右端是 tag.created 的 seq', rp.code === 200 && (rp.body.facts || []).some((f) => f.seq === rp.body.seq && f.type === 'tag.created'), rp.body && { seq: rp.body.seq });
+  // 证据先于凭据落账：闸那条紧挨着 tag 那条。
+  const tagFacts = (await api(`/api/facts?pbc=${unitID}`)).body.facts.map((f) => f.type);
+  check('11 账本里 gate.evaluated 紧挨着 tag.created', tagFacts.indexOf('tag.created') >= 0 && tagFacts[tagFacts.indexOf('tag.created') + 1] === 'gate.evaluated', tagFacts.slice(0, 4));
+  const rpBad = await api(`/api/units/${unitID}/replay?tag=v9.9.9`);
+  check('11 不存在的 tag 回放被 400 拒绝并列出可选', rpBad.code === 400 && /v9\.9\.9/.test(rpBad.body.error), rpBad.body);
+  const rpNone = await api('/api/units/nothing-here/replay');
+  check('11 不存在的单元回放 404', rpNone.code === 404, rpNone.body);
+  // 种子基线（dun v2.0.0）老账本没落闸：如实说没有，不拿今天补。
+  const rpSeed = await api('/api/units/dun/replay?tag=v2.0.0');
+  check('11 老基线回放 200 且如实说明「当时没记录闸门」',
+    rpSeed.code === 200 && !rpSeed.body.gates && /没有记录/.test(rpSeed.body.gatesNote || ''),
+    rpSeed.body && { gates: rpSeed.body.gates, note: rpSeed.body.gatesNote });
+
+  // 界面：验证页交付物卡下面出现回放证据区。
+  await page.evaluate((id) => {
+    const rows = Array.from(document.querySelectorAll('.sidebar .trow'));
+    const p = rows.find((x) => x.textContent.includes('收费与工单数字化'));
+    if (p) p.click();
+  }, null);
+  await page.waitForTimeout(700);
+  await page.evaluate((name) => {
+    const rows = Array.from(document.querySelectorAll('.sidebar .trow'));
+    const p = rows.find((x) => x.textContent.trim().startsWith(name));
+    if (p) p.click();
+  }, '验收单元' + RUN);
+  await page.waitForTimeout(600);
+  await page.evaluate(() => { const s = Array.from(document.querySelectorAll('.sidebar .trow.sub2')).find((x) => x.textContent.trim().startsWith('验证')); if (s) s.click(); });
+  await page.waitForTimeout(900);
+  const rpUI = await page.evaluate(() => {
+    const box = document.querySelector('.replay-box');
+    return box ? { text: box.textContent.trim().slice(0, 200), chips: box.querySelectorAll('.replay-gates .tag').length } : null;
+  });
+  check('11 验证页显示回放证据区（tag 与四闸）', !!rpUI && rpUI.text.includes(tag.body.tag) && rpUI.chips === 4, rpUI);
+  if (rpUI) {
+    await page.evaluate(() => { const b = Array.from(document.querySelectorAll('.replay-box button')).find((x) => x.textContent.includes('看依据')); if (b) b.click(); });
+    await page.waitForTimeout(400);
+  }
+  await shot('回放');
+
+  // ---- 12. 健康度 ----
   const realErrors = pageErrors.filter((e) => !/Failed to load resource/.test(e));
   check('页面无 JS 异常', realErrors.length === 0, realErrors.slice(0, 3));
   const unexpected = httpErrors.filter((e) => !e.endsWith('/favicon.ico') && !/events\//.test(e)

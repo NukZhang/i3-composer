@@ -590,6 +590,27 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 	}
 
 	tag := domain.NextTag(v.Tags)
+	// 与 BFF 的打 tag 同一条规矩：先定格「凭什么是这组闸」，再落 tag。
+	ev := store.GateEvaluation{Tag: tag, Commit: head.No, Gates: gates, By: "SA"}
+	if v.Test != nil {
+		t := *v.Test
+		ev.Test = &t
+	}
+	for _, c := range v.Checks {
+		ev.Checks.Total++
+		switch c.ST {
+		case domain.CheckPass:
+			ev.Checks.Pass++
+		case domain.CheckFail:
+			ev.Checks.Fail++
+		default:
+			ev.Checks.Todo++
+		}
+	}
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/gates",
+		store.FactGateEvaluated, "SA", ev); err != nil {
+		return StepResult{}, err
+	}
 	p := map[string]any{"tag": tag, "commit": head.No, "treeSha": head.TreeSHA}
 	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/tag",
 		store.FactTagCreated, "SA", p); err != nil {

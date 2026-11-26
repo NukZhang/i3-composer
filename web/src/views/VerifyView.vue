@@ -4,7 +4,7 @@
 // 这一步不是看报告，是人自己上手跑一遍：照着清单操作、判过不过，
 // 不过就提 bug。机器自检（四闸 / 评测台 / 知识库准确度）已经挪到
 // 构建页的「质量报告」——那是构建结果的查看，不算验收。
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import AcceptTerminal from '../components/AcceptTerminal.vue';
 import { S, unitKind, currentAgent, currentUnit, toast, refresh } from '../store.js';
@@ -63,6 +63,36 @@ async function doTag() {
     toast(e.message, 'err');
   }
   await refresh();
+  await loadReplay(unitTag.value);
+}
+
+// 回放：这个 tag 打下去的那一刻，账本是什么样、闸依据是什么。
+//
+// 它只读 /replay，并且允许失败：老账本没有 gate.evaluated 时接口照样 200，
+// 只是 gatesNote 说明「当时没记录闸门」。失败就说失败，不拿今天的闸顶上。
+const replay = ref(null);
+const replayErr = ref('');
+const replayOpen = ref(false);
+async function loadReplay(tag) {
+  replay.value = null;
+  replayErr.value = '';
+  if (!tag) return;
+  try {
+    replay.value = await api.replay(S.pbcId, tag);
+  } catch (e) {
+    replayErr.value = e.message;
+  }
+}
+watch(
+  () => [S.pbcId, unitTag.value],
+  ([id, t]) => {
+    if (id && t) loadReplay(t);
+  },
+  { immediate: true },
+);
+function gateText(g) {
+  if (g.unknown) return '判不了';
+  return g.ok ? '通过' : '未通过';
 }
 
 function sel(i) {
@@ -265,5 +295,35 @@ function pushDefect(d) {
         </div>
         <div class="small muted" style="margin-top: 6px">tag 是发布编排唯一认的东西：没有 tag 的单元不会进批次。</div>
       </template>
+
+      <!-- 回放：打在 tag.created 那一刻的账本上。读的是当时落账的闸，
+           不是按今天的账本重算一遍——那算的是现在，不是当时。 -->
+      <div v-if="replay" class="replay-box">
+        <div class="row" style="align-items: center; gap: 8px">
+          <span class="tag t-info" style="font-size: 9px">回放 {{ replay.tag }}</span>
+          <span class="small muted">取自 seq {{ replay.seq }} · {{ replay.at }} · 证据 {{ replay.facts.length }} 条</span>
+          <span class="spacer" style="flex: 1" />
+          <button class="btn small" @click="replayOpen = !replayOpen">
+            {{ replayOpen ? '收起依据' : '看依据' }}
+          </button>
+        </div>
+        <div class="small muted" style="margin-top: 5px">
+          这一刻 HEAD 是 {{ replay.commit }}，测试 {{ replay.test ? (replay.test.pass + '/' + replay.test.total) : '没有记录' }}；
+          验收 {{ replay.checks.length ? (replay.checks.filter((c) => c.st === 'pass').length + '/' + replay.checks.length + ' 通过') : '无清单' }}。
+        </div>
+        <div v-if="replay.gatesNote" class="small" style="margin-top: 6px; color: var(--warn)">{{ replay.gatesNote }}</div>
+        <div v-else class="replay-gates">
+          <span v-for="g in replay.gates" :key="g.key" class="tag" :class="g.ok && !g.unknown ? 't-ok' : g.unknown ? 't-gray' : 't-err'" style="font-size: 9px">
+            {{ g.label }} · {{ gateText(g) }}
+          </span>
+        </div>
+        <div v-if="replayOpen" class="replay-facts">
+          <div v-for="f in replay.facts" :key="f.seq" class="replay-fact">
+            <span class="mono small muted">#{{ f.seq }}</span>
+            <span class="tag t-gray" style="font-size: 9px">{{ f.type }}</span>
+            <span class="small muted">{{ f.actor }} · {{ f.at }}</span>
+          </div>
+        </div>
+      </div>
     </div>
 </template>

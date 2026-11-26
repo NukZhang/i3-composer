@@ -1,17 +1,17 @@
 PASS 1 pubsub 订阅端在线（声明了主题与路由） :: {"pubsubname":"pubsub","topic":"tag.created","route":"/api/events/tag.created"}
-PASS 2 从零建单元（PBC 构成） :: {"code":201,"body":{"id":"e2e29519","kind":"pbc","proj":"p1"}}
+PASS 2 从零建单元（PBC 构成） :: {"code":201,"body":{"id":"e2e14034","kind":"pbc","proj":"p1"}}
 PASS 3 建任务 :: {"id":"US-07"}
-PASS 4 DA 发起交付（真实 Dapr workflow） :: {"code":202,"body":{"id":"US-07","instance":"v33b_e2e29519_US-07"}}
+PASS 4 DA 发起交付（真实 Dapr workflow） :: {"code":202,"body":{"id":"US-07","instance":"v34b_e2e14034_US-07"}}
 PASS 5 workflow 跑完五步停在「打 tag」 :: {"run":"verified","step":5}
 PASS 6 代码制品带可编译的文件（go.mod / main.go / main_test.go） :: ["go.mod","main.go","main_test.go"]
-PASS 6 AT 制品有验收标准正文 :: "# 端到端验收单元 · 端到端验收-1795698529554 · 验收标准\n\n> 由 X-测试工程师生成 · 11-2"
+PASS 6 AT 制品有验收标准正文 :: "# 端到端验收单元 · 端到端验收-1795703514064 · 验收标准\n\n> 由 X-测试工程师生成 · 11-2"
 PASS 7 账本里有 test.run 事实（真跑过测试） :: ["item.created","item.run.started","item.step.done","item.step.done","item.step.done","test.run","item.step.done","build.succeeded","item.step.done","item.verified"]
-PASS 8 构建产物 digest 存在且是 sha256 内容摘要 :: "sha256:9094c40bf84a61ed0e485553df02054247171f06d0d58504aa68a9f595fa6744"
+PASS 8 构建产物 digest 存在且是 sha256 内容摘要 :: "sha256:fc3e6b0961f037a1d78735eaa254d68b9a45da9730fedc5e5d861e8c63d62ec2"
 PASS 9 单元交付不部署（部署属于发布批次）
-PASS 10 SA 打 tag 进池 :: {"commit":"1.0.1","digest":"sha256:9094c40bf84a61ed0e485553df02054247171f06d0d58504aa68a9f595fa6744","pooled":true,"tag":"v1.0.0","unit":"e2e29519"}
+PASS 10 SA 打 tag 进池 :: {"commit":"1.0.1","digest":"sha256:fc3e6b0961f037a1d78735eaa254d68b9a45da9730fedc5e5d861e8c63d62ec2","pooled":true,"tag":"v1.0.0","unit":"e2e14034"}
 PASS 10 批次发布返回 201 :: "REL-20261126-03"
-PASS 10 批次锁住 tag 与 digest :: {"tag":"v1.0.0","digest":"sha256:9094c40bf84a61ed0e485553df02054247171f06d0d58504aa68a9f595fa6744"}
-PASS 10 部署地址真的能访问，/healthz 返回 200 :: {"code":200,"body":"{\"name\":\"端到端验收单元\",\"ok\":true,\"unit\":\"e2e29519\"}\n"}
+PASS 10 批次锁住 tag 与 digest :: {"tag":"v1.0.0","digest":"sha256:fc3e6b0961f037a1d78735eaa254d68b9a45da9730fedc5e5d861e8c63d62ec2"}
+PASS 10 部署地址真的能访问，/healthz 返回 200 :: {"code":200,"body":"{\"name\":\"端到端验收单元\",\"ok\":true,\"unit\":\"e2e14034\"}\n"}
 PASS 11 pubsub 投递地址与本实例端口一致 :: {"checked":true,"detail":"sidecar 的 app-port=8080，与本实例一致","localPort":8080,"ok":true,"sidecarAddress":"host.docker.internal","sidecarAppPort":8080}
 PASS 11 pubsub 收到的事件落了 event.received 事实 :: ["item.changed","item.changed"]
 PASS 11 事件确实经由总线（收到的条数 ≥ 1） :: 32

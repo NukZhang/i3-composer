@@ -1,13 +1,14 @@
+go vet exit=0
 ?   	github.com/zhangkun/i3-composer/cmd/i3-composer	[no test files]
-ok  	github.com/zhangkun/i3-composer/internal/agentexec	(cached)
+ok  	github.com/zhangkun/i3-composer/internal/agentexec	1.012s
 ?   	github.com/zhangkun/i3-composer/internal/artifacts	[no test files]
-ok  	github.com/zhangkun/i3-composer/internal/bff	(cached)
+ok  	github.com/zhangkun/i3-composer/internal/bff	3.010s
 ?   	github.com/zhangkun/i3-composer/internal/builder	[no test files]
-ok  	github.com/zhangkun/i3-composer/internal/codegen	(cached)
+ok  	github.com/zhangkun/i3-composer/internal/codegen	4.981s
 ?   	github.com/zhangkun/i3-composer/internal/dapr	[no test files]
-ok  	github.com/zhangkun/i3-composer/internal/deployer	(cached)
-ok  	github.com/zhangkun/i3-composer/internal/domain	(cached)
-ok  	github.com/zhangkun/i3-composer/internal/pipeline	(cached)
+ok  	github.com/zhangkun/i3-composer/internal/deployer	2.207s
+ok  	github.com/zhangkun/i3-composer/internal/domain	2.349s
+ok  	github.com/zhangkun/i3-composer/internal/pipeline	5.223s
 ?   	github.com/zhangkun/i3-composer/internal/seed	[no test files]
-ok  	github.com/zhangkun/i3-composer/internal/store	(cached)
-ok  	github.com/zhangkun/i3-composer/internal/wf	(cached)
+ok  	github.com/zhangkun/i3-composer/internal/store	4.035s
+ok  	github.com/zhangkun/i3-composer/internal/wf	6.424s

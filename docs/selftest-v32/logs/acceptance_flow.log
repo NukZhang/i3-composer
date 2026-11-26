@@ -1,20 +1,20 @@
-PASS 0 建写路径验收单元 :: {"id":"flowv33b","kind":"pbc","proj":"p1"}
+PASS 0 建写路径验收单元 :: {"id":"flowv34b","kind":"pbc","proj":"p1"}
 PASS 1 BA 建任务走真实接口 :: "US-06"
 PASS 1 新项 run=idea 且六步链路齐全 :: "idea"
 PASS 1 刷新后仍在（事实日志而非前端内存）
 PASS 2 BA 发起交付被 403 拒绝 :: {"code":403,"body":{"error":"权限不足"}}
 PASS 3 角色切换写入服务端会话 :: "DA"
-PASS 3 DA 发起返回 202（实例号绑定工作项） :: {"code":202,"body":{"id":"US-06","instance":"v33b_flowv33b_US-06"}}
+PASS 3 DA 发起返回 202（实例号绑定工作项） :: {"code":202,"body":{"id":"US-06","instance":"v34b_flowv34b_US-06"}}
 PASS 3 运行中重复发起被 400 拒绝（Dapr 实例锁） :: {"code":400,"body":{"error":"请求不合法：US-06 已在执行中（run=running）"}}
 PASS 3 页面自动推进到 run=verified（SSE 驱动，无需手动刷新） :: {"run":"verified","step":5}
 PASS 3 第六步是人工闸且未执行 :: {"k":"tag","n":"打 tag 进池","d":"验收全过才打得动；tag 是发布编排唯一认的东西","st":"todo","human":true}
 PASS 3 前五步全部完成 :: ["done","done","done","done","done","todo"]
 PASS 4 DA 打 tag 被 403 拒绝 :: {"code":403,"body":{"error":"权限不足"}}
 PASS 4 越权后账本状态没变（无 tag） :: {}
-PASS 5 SA 打 tag 返回 201 :: {"commit":"1.0.1","digest":"sha256:0e4997565fdead4aae54a2a721c3749ad82405c80c2a0729164b5299a71b428c","pooled":true,"tag":"v1.0.0","unit":"flowv33b"}
+PASS 5 SA 打 tag 返回 201 :: {"commit":"1.0.1","digest":"sha256:4fcb1675b612c7d512f7a09102d94516800d6ab9de1dae09bff9c557e5c2c74c","pooled":true,"tag":"v1.0.0","unit":"flowv34b"}
 PASS 5 单元 HEAD 上有 tag（进池） :: {"head":"1.0.1","headTag":"v1.0.0"}
 PASS 5 账本里有 tag.created 与 item.verified :: ["tag.created","item.verified"]
-PASS 6 通知中心出现该单元的 tag 事件 :: [{"at":"2026-11-26T13:08:47Z","type":"tag.created","text":"写路径验收单元 · 打了 tag v1.0.0","unit":"flowv33b"},{"at":"2026-11-26T13:08:36Z","type":"deploy.succeeded","text":"执行侧验收单元 · 部署 v1.0.0 成功","unit":"execv33b"}]
+PASS 6 通知中心出现该单元的 tag 事件 :: [{"at":"2026-11-26T14:31:36Z","type":"tag.created","text":"写路径验收单元 · 打了 tag v1.0.0","unit":"flowv34b"},{"at":"2026-11-26T14:31:14Z","type":"deploy.succeeded","text":"执行侧验收单元 · 部署 v1.0.0 成功","unit":"execv34b"}]
 PASS 页面无 JS 异常 :: []
 PASS 除脚本自造的 403/400 外无 HTTP 错误 :: []
 SUMMARY 19/19 passed

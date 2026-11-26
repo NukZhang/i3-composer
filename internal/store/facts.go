@@ -102,6 +102,14 @@ const (
 	// 批次是发布的单位：一个批次锁多个 tag 与 digest，只能整批回滚。
 	FactReleaseBatch    = "release.batch.created"
 	FactReleaseRollback = "release.batch.rolledback"
+
+	// 打 tag 的那一刻闸门算出了什么，落一条事实。
+	//
+	// 宪法 I：状态只能由事实重放得出。三个月后有人问「1.0.4 凭什么能发」，
+	// 光有 tag.created 只能回答「打了 tag」，回答不了「当时四闸、验收、测试分别是什么」。
+	// 这条事实把那组判定定格在打 tag 的 seq 上，回放才不用「按今天的账本重算一遍」
+	// ——那种重算给的从来不是「当时」，而是「现在」。
+	FactGateEvaluated = "gate.evaluated"
 )
 
 // Fact 是一条不可变事实。

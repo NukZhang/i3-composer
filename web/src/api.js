@@ -73,6 +73,9 @@ export const api = {
     }),
   // v3.2：单元打 tag 进「发布编排」池；发布会是项目级批次
   tagUnit: (id) => request('/api/units/' + encodeURIComponent(id) + '/tag', { method: 'POST' }),
+  // 只读回放：按 tag 打下去的那一刻重算投影，回答「凭什么能发」。
+  replay: (id, tag) =>
+    request('/api/units/' + encodeURIComponent(id) + '/replay' + (tag ? '?tag=' + encodeURIComponent(tag) : '')),
   orch: (proj) => request('/api/projects/' + encodeURIComponent(proj) + '/orch'),
   release: (proj, body) =>
     request('/api/projects/' + encodeURIComponent(proj) + '/orch/release', {

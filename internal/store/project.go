@@ -34,6 +34,32 @@ type View struct {
 	Checks  []domain.Check  `json:"checks,omitempty"`
 	Defects []domain.Defect `json:"defects,omitempty"`
 	Chats   []VerifyChat    `json:"chats,omitempty"`
+
+	// GateEvals 是历次打 tag 时算出的那组闸。它是「当时」的证据，
+	// 不是按今天的账本重算的结果——重算给的永远是现在。
+	GateEvals []GateEvaluation `json:"gateEvals,omitempty"`
+}
+
+// GateEvaluation 是打 tag 那一刻的判定快照。
+//
+// 它存在的理由只有一个：tag 是交付凭据，凭据要能自证。
+// 只看 tag.created 能回答「打了 tag」，回答不了「当时四闸、验收、测试分别是什么」。
+type GateEvaluation struct {
+	Tag    string        `json:"tag"`
+	Commit string        `json:"commit"`
+	Gates  []domain.Gate `json:"gates"`
+	Checks CheckSummary  `json:"checks"`
+	Test   *TestResult   `json:"test,omitempty"`
+	By     string        `json:"by"`
+	At     string        `json:"at"`
+}
+
+// CheckSummary 是验收清单在打 tag 那一刻的分布。
+type CheckSummary struct {
+	Total int `json:"total"`
+	Pass  int `json:"pass"`
+	Fail  int `json:"fail"`
+	Todo  int `json:"todo"`
 }
 
 // VerifyChat 是验收台里「你来当那个客户」的一段对话。
@@ -158,6 +184,31 @@ func Project(pbc string, facts []Fact) (*View, error) {
 	return v, nil
 }
 
+// UpTo 截出「seq 及之前」的事实窗口。它不排序、不去重、不改写：
+// 调用方传入的就是账本顺序（Load 按 seq 升序返回）。
+//
+// seq <= 0 返回 nil（空账本），而不是偷偷给全量——「指定了一个不存在的
+// 时间点」和「什么也没发生」是两件事，调用方要能分得开。
+func UpTo(facts []Fact, seq int) []Fact {
+	if seq <= 0 {
+		return nil
+	}
+	if seq >= len(facts) {
+		// 传的 seq 比账本还长：多半是拿旧账本的 seq 查新账本。
+		// 仍然只给已有部分，让投影按真实内容算，不编造。
+		return facts[:len(facts)]
+	}
+	return facts[:seq]
+}
+
+// ProjectAsOf 是 Project 的「按时间点」版本：只折叠 seq 及之前的事实。
+//
+// 它仍然是纯函数：切片是确定的，折叠是确定的，不读时钟也不读环境。
+// 与 Project(facts) 的关系只有一条约定：tag 之后没有新增事实时，两者结果一致。
+func ProjectAsOf(pbc string, facts []Fact, seq int) (*View, error) {
+	return Project(pbc, UpTo(facts, seq))
+}
+
 func apply(v *View, f Fact) error {
 	dec := func(dst any) error {
 		if len(f.Payload) == 0 {
@@ -244,6 +295,21 @@ func apply(v *View, f Fact) error {
 				}
 			}
 		}
+
+	case FactGateEvaluated:
+		// 只记录「当时算出了什么」，不反过来改任何判定：
+		// 闸的结论永远由 domain 现算，这条事实是证据，不是新的真相来源。
+		var p GateEvaluation
+		if err := dec(&p); err != nil {
+			return err
+		}
+		if p.At == "" {
+			p.At = f.At
+		}
+		if p.By == "" {
+			p.By = f.Actor
+		}
+		v.GateEvals = append(v.GateEvals, p)
 
 	case FactBuildSucceeded:
 		var p struct {

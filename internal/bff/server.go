@@ -113,6 +113,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/workspaces/join", s.wrap(s.joinWorkspace))
 	// v3.2：单元把 tag 打进「发布编排」池；发布是项目级动作，批次只能整批回滚。
 	m.HandleFunc("POST /api/units/{id}/tag", s.wrap(s.tagUnit))
+	// 只读回放：按 tag.created 的时点重算当时的投影，回答「凭什么能发」。
+	m.HandleFunc("GET /api/units/{id}/replay", s.wrap(s.replay))
 	m.HandleFunc("GET /api/projects/{id}/orch", s.wrap(s.orch))
 	m.HandleFunc("POST /api/projects/{id}/orch/release", s.wrap(s.release))
 	m.HandleFunc("POST /api/projects/{id}/orch/rollback", s.wrap(s.rollback))
