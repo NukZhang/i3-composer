@@ -67,6 +67,8 @@ BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs   # 从零建单
 
 ## 文档
 
+- `README.md`：项目门面与快速开始
+- `docs/whitepaper.md`：白皮书（问题 / 模型 / 架构 / 商业模式 / 边界）
 - `docs/EXECUTION.md`：执行链哪些是真、哪些没接
 - `docs/FRONTEND.md`、`docs/SPEC-frontend-wiring.md`：前后端接线与排障
 - `docs/prototypes/`：v2.x 交互原型
