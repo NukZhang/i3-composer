@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func line(vs ...Version) map[Artifact][]Version {
 	m := map[Artifact][]Version{}
@@ -64,11 +67,40 @@ func TestNextVersion(t *testing.T) {
 }
 
 func TestNextTag(t *testing.T) {
-	if got := NextTag(nil); got != "v1.0.0" {
-		t.Errorf("空 tag 列表应得 v1.0.0，实际 %s", got)
+	// 每个用例都断言「结果大于列表里最大的那个」——这是 NextTag 唯一不能破的承诺，
+	// 因为 tag 是交付凭据，倒退会撞号。硬编码期望值只是把承诺写得更具体。
+	cases := []struct {
+		name string
+		in   []string
+		want string
+	}{
+		{"空列表", nil, "v1.0.0"},
+		{"只有非法字符串", []string{"abc", "", "v1"}, "v1.0.0"},
+		{"同 minor 取最大 patch", []string{"v1.0.0", "v1.0.2"}, "v1.0.3"},
+		{"乱序输入", []string{"v1.0.2", "v1.0.0", "v1.0.1"}, "v1.0.3"},
+		{"跨 minor", []string{"v1.0.0", "v1.2.0"}, "v1.2.1"},
+		{"跨 major", []string{"v2.0.0"}, "v2.0.1"},
+		{"两位 minor", []string{"v1.10.0"}, "v1.10.1"},
+		{"major 大但 patch 小", []string{"v2.0.0", "v1.0.9"}, "v2.0.1"},
+		{"非法字符串夹在中间", []string{"abc", "v1.0.1", "v3.4"}, "v1.0.2"},
 	}
-	if got := NextTag([]string{"v1.0.0", "v1.0.2"}); got != "v1.0.3" {
-		t.Errorf("应得 v1.0.3，实际 %s", got)
+	for _, c := range cases {
+		got := NextTag(c.in)
+		if got != c.want {
+			t.Errorf("%s：NextTag(%v) = %s，期望 %s", c.name, c.in, got, c.want)
+		}
+		for _, tag := range c.in {
+			var a, b, p int
+			if n, err := fmt.Sscanf(tag, "v%d.%d.%d", &a, &b, &p); n == 3 && err == nil {
+				var x, y, z int
+				if _, err2 := fmt.Sscanf(got, "v%d.%d.%d", &x, &y, &z); err2 != nil {
+					t.Fatalf("%s：返回值 %s 自己都解析不了", c.name, got)
+				}
+				if lessTuple([3]int{x, y, z}, [3]int{a, b, p}) {
+					t.Errorf("%s：结果 %s 比已有 tag %s 小，会撞号", c.name, got, tag)
+				}
+			}
+		}
 	}
 }
 

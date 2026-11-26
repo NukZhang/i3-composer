@@ -139,19 +139,40 @@ func GatesPass(gs []Gate) bool {
 }
 
 // NextTag 基于已有 tag 列表算出下一个 tag：v1.0.0 → v1.0.1。
+//
+// 按 (major, minor, patch) 整个元组取最大，再把 patch 进一位。只看 patch 的话，
+// 一条手工打的 v2.0.0 会被算成 v1.0.1——比现有 tag 还小，撞上旧号就是「回滚指向不明」。
+// tag 是交付凭据，这里只能往前走：结果永远大于列表里的每一个合法 tag。
+// 解析不了的 tag 跳过；一个都解析不出来时从 v1.0.0 起。
 func NextTag(tags []string) string {
-	if len(tags) == 0 {
-		return "v1.0.0"
-	}
-	max := -1
+	var best [3]int
+	found := false
 	for _, t := range tags {
 		var major, minor, patch int
-		if _, err := fmt.Sscanf(t, "v%d.%d.%d", &major, &minor, &patch); err == nil && patch > max {
-			max = patch
+		// "v1.2" 这种缺一段的写法 n=2 且 err != nil，正好一并跳过。
+		if n, err := fmt.Sscanf(t, "v%d.%d.%d", &major, &minor, &patch); n != 3 || err != nil {
+			continue
+		}
+		if major < 0 || minor < 0 || patch < 0 {
+			continue
+		}
+		v := [3]int{major, minor, patch}
+		if !found || lessTuple(best, v) {
+			best, found = v, true
 		}
 	}
-	if max < 0 {
+	if !found {
 		return "v1.0.0"
 	}
-	return fmt.Sprintf("v1.0.%d", max+1)
+	return fmt.Sprintf("v%d.%d.%d", best[0], best[1], best[2]+1)
+}
+
+// lessTuple 是三元组的字典序比较，避开每个版本号都要 import slices 的麻烦。
+func lessTuple(a, b [3]int) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
 }
