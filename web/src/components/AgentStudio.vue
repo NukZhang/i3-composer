@@ -12,7 +12,7 @@ import { computed, ref, watch } from 'vue';
 import { S, toast, refresh, pushRuntime } from '../store.js';
 import { api } from '../api.js';
 import { icon } from '../icons.js';
-import { agX, agY, nodeType, msText, tokText, toolWiring, flowStats, evCur, evBase, evRate } from '../derive.js';
+import { agX, agY, nodeType, msText, tokText, toolWiring, toolsOutside, flowStats, evCur, evBase, evRate } from '../derive.js';
 
 const props = defineProps({
   agent: { type: Object, default: null },
@@ -39,6 +39,8 @@ const edges = computed(() => (flow.value && flow.value.edges) || []);
 const cur = computed(() => nodes.value.find((n) => n.id === sel.value) || null);
 const stats = computed(() => flowStats(flow.value));
 const wiring = computed(() => toolWiring(props.agent));
+// 编排越界的工具在页面上也要点名：只在后端红一条闸，写 Agent 的人看不到是哪一步。
+const outside = computed(() => toolsOutside(props.agent));
 const kb = computed(() => (props.agent && props.agent.kb) || null);
 const built = computed(() => (props.agent && props.agent.builtDigest) || '');
 const dirtyBuild = computed(() => {
@@ -189,6 +191,10 @@ const trialIn = computed(() => (trial.value && trial.value.in) || '');
 const trialRaw = computed(() => (trial.value && trial.value.raw) || '');
 const trialSource = computed(() => (trial.value && trial.value.source) || '');
 const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
+// 被拒的节点单独拣出来：只说「跑通」会让人以为工具真的调过了。
+const trialBlocked = computed(() =>
+  trialNodes.value.filter((n) => n.blocked && n.blocked.length),
+);
 </script>
 
 <template>
@@ -403,7 +409,7 @@ const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
           <div class="as-dbg-h">
             <span v-html="icon('check', 11)" /> 输出
             <span class="spacer" style="flex: 1" />
-            <span class="tag" :class="S.agRan ? 't-ok' : 't-gray'" style="font-size: 9px">{{ S.agRan ? '跑通' : '未运行' }}</span>
+            <span class="tag" :class="!S.agRan ? 't-gray' : trialBlocked.length ? 't-err' : 't-ok'" style="font-size: 9px">{{ !S.agRan ? '未运行' : trialBlocked.length ? '跑完 · 被拒 ' + trialBlocked.length + ' 步' : '跑通' }}</span>
           </div>
           <div v-if="!S.agRan" class="as-empty">还没跑过。点「运行」，看这一条在流程里怎么走下去、每个节点花多久。</div>
           <template v-else>
@@ -412,7 +418,13 @@ const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
             </div>
             <div class="as-chain">
               <template v-for="(n, i) in trialNodes" :key="n.id">
-                <span>{{ n.n }} <b>{{ msText(n.ms) }}</b></span><i v-if="i < trialNodes.length - 1">→</i>
+                <span :class="{ 'is-blocked': n.blocked && n.blocked.length }">{{ n.n }} <b>{{ msText(n.ms) }}</b></span><i v-if="i < trialNodes.length - 1">→</i>
+              </template>
+            </div>
+            <div v-if="trialBlocked.length" class="small" style="margin-top: 6px; color: var(--err)">
+              工具白名单拒了 {{ trialBlocked.length }} 步（这些工具没有真的被调用，只是流程继续往下走了）：
+              <template v-for="(n, i) in trialBlocked" :key="'b' + n.id">
+                <span>{{ n.n }}：{{ (n.blocked || []).join('；') }}</span><i v-if="i < trialBlocked.length - 1"> · </i>
               </template>
             </div>
             <div v-if="trialSource" class="small muted" style="margin-top: 6px">
@@ -459,6 +471,10 @@ const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
     <div class="card">
       <div class="ch"><span v-html="icon('lock')" /><h3>工具权限</h3><span class="spacer" />
         <span class="small muted">白名单之外一律拒绝，不做「灵活处理」</span>
+      </div>
+      <div v-if="outside.length" class="small" style="margin: 0 0 8px; padding: 7px 9px; border-radius: 7px; background: var(--bg-err-soft3); border: 1px solid var(--line-err3); color: var(--err); line-height: 1.7">
+        编排用了名单外的工具：<template v-for="(o, i) in outside" :key="o.tool"><b>{{ o.tool }}</b> 在 {{ o.nodes.join(' / ') }}<i v-if="i < outside.length - 1">；</i></template>
+        ——试跑会拒这些节点，这条闸也红。
       </div>
       <table class="tb">
         <thead><tr><th style="width: 150px">工具</th><th style="width: 74px">类型</th><th style="width: 110px">审批</th><th>用在哪</th></tr></thead>

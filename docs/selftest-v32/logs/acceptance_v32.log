@@ -4,26 +4,26 @@ PASS 2 编排链列出项目下全部单元 :: ["fee:pbc","qa:agent","dun:pbc","
 PASS 2 就绪 / 阻塞与账本一致（种子 2 就绪 2 阻塞） :: {"ready":2,"blocked":2}
 PASS 2 页面渲染 4 张单元卡 :: 4
 PASS 2 筛选「只 Agent」后选中 2 个单元 :: 2
-PASS 3 SA 发布混合批次返回 201 :: "REL-20261125-01"
+PASS 3 SA 发布混合批次返回 201 :: "REL-20261126-01"
 PASS 3 批次锁住两个 tag :: ["交付质检 Agent v1.0.0","催缴策略 v2.0.0"]
-PASS 3 PBC 真部署（有 URL），Agent 产物没有进程（无 URL） :: {"pbc":"http://127.0.0.1:53024"}
+PASS 3 PBC 真部署（有 URL），Agent 产物没有进程（无 URL） :: {"pbc":"http://127.0.0.1:58737"}
 PASS 3 部署地址 /healthz 真的 200 :: 200
-PASS 3 页面历史批次里出现该批次 :: "REL-20261125-01"
-PASS 4 整批回滚返回 200 :: {"id":"REL-20261125-01","status":"rolledback"}
+PASS 3 页面历史批次里出现该批次 :: "REL-20261126-01"
+PASS 4 整批回滚返回 200 :: {"id":"REL-20261126-01","status":"rolledback"}
 PASS 4 回滚后部署进程真的停了 :: 0
-PASS 4 重复回滚被拒（批次已经回滚过） :: {"error":"请求不合法：批次 REL-20261125-01 已经回滚过"}
+PASS 4 重复回滚被拒（批次已经回滚过） :: {"error":"请求不合法：批次 REL-20261126-01 已经回滚过"}
 PASS 5 未打 tag 的单元被拦，且点名 :: {"error":"请求不合法：收费缴费 还没打 tag，不能进批次"}
 PASS 6 验收未全过的单元打不了 tag（点名还差几条） :: {"error":"请求不合法：还差 5 条验收未通过（1/6），不能打 tag"}
 PASS 6 话术 Agent 打不了 tag（评测/验收未过） :: {"error":"请求不合法：还差 1 条验收未通过（4/5），不能打 tag"}
-PASS 7 PA 建单元（只剩 pbc / agent 两种） :: {"id":"v32xfin","kind":"pbc","proj":"p1"}
+PASS 7 PA 建单元（只剩 pbc / agent 两种） :: {"id":"v32xv33b","kind":"pbc","proj":"p1"}
 PASS 7 hybrid 被拒（一个单元只有一个 tag） :: {"error":"请求不合法：不再支持 hybrid（PBC + Agent）单元：一个单元只有一个 tag，要一起上就拆成两个单元、在发布编排里放进同一批次"}
 PASS 7 BA 建工作项 :: "US-04"
-PASS 7 DA 发起交付 :: "v32i_v32xfin_US-04"
+PASS 7 DA 发起交付 :: "v33b_v32xv33b_US-04"
 PASS 7 五步跑完，停在「打 tag」 :: {"run":"verified","step":5}
 PASS 7 账本有 test.run / build.succeeded，且没有 deploy.succeeded :: ["item.created","item.run.started","item.step.done","item.step.done","item.step.done","test.run","item.step.done","build.succeeded","item.step.done","item.verified"]
 PASS 7 测试是真跑出来的 :: {"by":"x-qa","commit":"1.0.1","failures":null,"id":"US-04","pass":5,"total":5}
-PASS 7 digest 是 sha256 内容摘要 :: "sha256:901e51041f9ddc1e6e0737a216eaf912186074bc9986dbb3a3e866e6aca63de8"
-PASS 7 SA 打 tag 进池 :: {"commit":"1.0.1","digest":"sha256:901e51041f9ddc1e6e0737a216eaf912186074bc9986dbb3a3e866e6aca63de8","pooled":true,"tag":"v1.0.0","unit":"v32xfin"}
+PASS 7 digest 是 sha256 内容摘要 :: "sha256:4661f52975ea22e9ee6882c5813f3a87ee908118a68b65137d0f7ac92221dfed"
+PASS 7 SA 打 tag 进池 :: {"commit":"1.0.1","digest":"sha256:4661f52975ea22e9ee6882c5813f3a87ee908118a68b65137d0f7ac92221dfed","pooled":true,"tag":"v1.0.0","unit":"v32xv33b"}
 PASS 7 重复打 tag 被拒 :: {"error":"请求不合法：HEAD 1.0.1 已经打过 tag v1.0.0"}
 PASS 7 单元 HEAD 上有 tag :: {"head":"1.0.1","headTag":"v1.0.0"}
 PASS 7 打 tag 后编排里就绪 :: {"ready":true}

@@ -142,6 +142,33 @@ export function toolWiring(agent) {
   });
 }
 
+// toolsOutside 是编排在用、白名单里却没有的工具。
+//
+// 只认结构化的 tool / tools：`pre` 是给人看的一句话，从里面猜工具名会把
+// 「不要调用 shell.exec」也当成在用 shell.exec。后端 domain.Flow.ToolsOutside
+// 用的是同一条规则——两边对不上，闸红了页面却说没越界。
+export function toolsOutside(agent) {
+  const allow = (agent && agent.tools) || [];
+  const nodes = (agent && agent.flow && agent.flow.nodes) || [];
+  const out = [];
+  const index = {};
+  nodes.forEach((n) => {
+    const c = n.cfg || {};
+    const names = [];
+    if (typeof c.tool === 'string' && c.tool) names.push(c.tool);
+    if (Array.isArray(c.tools)) c.tools.forEach((x) => typeof x === 'string' && x && names.push(x));
+    names.forEach((t) => {
+      if (allow.indexOf(t) >= 0) return;
+      if (index[t] === undefined) {
+        index[t] = out.length;
+        out.push({ tool: t, nodes: [] });
+      }
+      out[index[t]].nodes.push(n.n || n.id);
+    });
+  });
+  return out;
+}
+
 // 编排整体统计：一轮多久、花多少 token。
 export function flowStats(flow) {
   const nodes = (flow && flow.nodes) || [];

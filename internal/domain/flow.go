@@ -99,6 +99,91 @@ type ToolUse struct {
 	Wired bool     `json:"wired"`
 }
 
+// ToolNode 指向一个用了某个工具的节点：id 拿去对代码，名字拿去给人看。
+type ToolNode struct {
+	ID string `json:"id"`
+	N  string `json:"n"`
+}
+
+// ToolOutside 是「编排在用、白名单里没有」的一个工具，以及所有用它的节点。
+type ToolOutside struct {
+	Tool  string     `json:"tool"`
+	Nodes []ToolNode `json:"nodes"`
+}
+
+// ToolsOutside 返回编排里用到、但不在白名单里的工具。
+//
+// 只看节点配置里能确定的东西（`tool` 一个、`tools` 一串）：`pre` 是给人看的
+// 一句话，从里面猜工具名会把「不要调用 shell.exec」也当成在用 shell.exec。
+// 白名单为空时调用方不该调它——那是「没给名单」，不是「一个都不越界」。
+func (f *Flow) ToolsOutside(tools []string) []ToolOutside {
+	if f == nil {
+		return nil
+	}
+	allow := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		allow[t] = true
+	}
+	var out []ToolOutside
+	index := map[string]int{}
+	for _, n := range f.Nodes {
+		for _, t := range declaredTools(n) {
+			// 同一个工具用在不同节点上，合成一条：闸的 Detail 要能一眼读完。
+			i, seen := index[t]
+			if allow[t] {
+				continue
+			}
+			if !seen {
+				index[t] = len(out)
+				out = append(out, ToolOutside{Tool: t})
+				i = index[t]
+			}
+			out[i].Nodes = append(out[i].Nodes, ToolNode{ID: n.ID, N: n.N})
+		}
+	}
+	return out
+}
+
+// declaredTools 是一个节点声称要用的工具。
+//
+// 只认结构化的两个字段：执行器跑的是 `tool`，`tools` 是画布上给的候选清单。
+// 两者都要过闸——候选清单里留着越界工具，等于把权限写在了没人核对的地方。
+func declaredTools(n FlowNode) []string {
+	if n.Cfg == nil {
+		return nil
+	}
+	var out []string
+	if s, _ := n.Cfg["tool"].(string); s != "" {
+		out = append(out, s)
+	}
+	if arr, ok := n.Cfg["tools"].([]any); ok {
+		for _, v := range arr {
+			if s, _ := v.(string); s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// DescribeOutside 把越界项写成一行能读的话：工具名 + 用它的节点（带 id，好去改）。
+// 闸的 Detail、执行器的拒绝理由、日志里用的都是这一句，不各写一份。
+func DescribeOutside(outside []ToolOutside) string {
+	parts := make([]string, 0, len(outside))
+	for _, o := range outside {
+		names := make([]string, 0, len(o.Nodes))
+		for _, n := range o.Nodes {
+			if n.N == "" {
+				names = append(names, n.ID)
+				continue
+			}
+			names = append(names, n.N+"("+n.ID+")")
+		}
+		parts = append(parts, o.Tool+" 在 "+strings.Join(names, "、"))
+	}
+	return "编排用了名单外的工具：" + strings.Join(parts, "；")
+}
+
 // ToolWiring 从节点配置里反查每个白名单工具用在哪。
 func ToolWiring(a *Agent) []ToolUse {
 	if a == nil {
@@ -167,6 +252,9 @@ type TrialNode struct {
 	Ms   int64  `json:"ms"`
 	Out  string `json:"out,omitempty"`
 	Wait string `json:"wait,omitempty"`
+	// Blocked 记录这一节点被拦下的原因（目前只有越界工具）。
+	// 页面要显示被拒次数：只显示「跑通」会让人以为工具真的调过了。
+	Blocked []string `json:"blocked,omitempty"`
 }
 
 // Chain 返回这一轮的逐节点耗时链（只取真正耗时的节点）。

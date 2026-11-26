@@ -164,7 +164,7 @@ func (s *Server) agentTrial(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		for _, n := range run.Nodes {
 			trial.Nodes = append(trial.Nodes, domain.TrialNode{
 				ID: n.ID, Name: n.Name, Type: n.Type, Ms: n.Ms,
-				Out: oneLine(n.Out), Wait: n.Wait,
+				Out: oneLine(n.Out), Wait: n.Wait, Blocked: n.Notes,
 			})
 		}
 	} else {
@@ -513,12 +513,6 @@ func (s *Server) verifyChat(w http.ResponseWriter, r *http.Request, c reqCtx) er
 	if a == nil {
 		return fmt.Errorf("%w：Agent %s", errNotFound, agentID)
 	}
-	now := time.Now().Format("01-02 15:04")
-	if _, err := s.Log.Append(r.Context(), c.ItemID, store.FactVerifyChat, c.Role.String(), map[string]any{
-		"who": "me", "t": in.Text, "at": now, "by": c.Role.String(), "from": "customer",
-	}); err != nil {
-		return err
-	}
 	reply := "（按当前 AT 处理）已收到，正在核对。"
 	source := "sample"
 	if s.Exec != nil && a.Flow != nil {
@@ -530,6 +524,15 @@ func (s *Server) verifyChat(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		if err != nil {
 			return fmt.Errorf("%w：对话验收失败：%v", errBadRequest, err)
 		}
+		// 试跑页可以「跑完但某几步被拒」，对话不行：客户拿到的那句话必须真的
+		// 走过工具。拿一轮被拦下的执行拼回复，等于把「没读过会话」说成「读过了」。
+		if blocked := run.Blocked(); len(blocked) > 0 {
+			names := make([]string, 0, len(blocked))
+			for _, n := range blocked {
+				names = append(names, n.Name)
+			}
+			return fmt.Errorf("%w：编排有节点被工具白名单拒绝（%s），这一轮不能出回复", errBadRequest, strings.Join(names, "、"))
+		}
 		reply = replyFromRun(run)
 		source = "executor"
 	} else if len(a.Cases) > 0 {
@@ -538,6 +541,14 @@ func (s *Server) verifyChat(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		if cse.Why != "" {
 			reply += " 回执：" + cse.Why
 		}
+	}
+	// 问与答一起落账：这一轮没跑通就一条都不落，账本上不会留下
+	// 「客户问过、AI 答过」的假记录（拒绝时事实是零）。
+	now := time.Now().Format("01-02 15:04")
+	if _, err := s.Log.Append(r.Context(), c.ItemID, store.FactVerifyChat, c.Role.String(), map[string]any{
+		"who": "me", "t": in.Text, "at": now, "by": c.Role.String(), "from": "customer",
+	}); err != nil {
+		return err
 	}
 	if _, err := s.Log.Append(r.Context(), c.ItemID, store.FactVerifyChat, "x-"+agentID, map[string]any{
 		"who": "ai", "t": reply, "at": now, "from": agentID, "source": source,

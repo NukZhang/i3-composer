@@ -592,6 +592,8 @@ body.light .as-canvas{background-image:radial-gradient(rgba(0,0,0,.09) 1px,trans
 .as-chain{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:6px;font-size:9.5px;color:var(--tx-9)}
 .as-chain span{background:var(--bg-chip);border:1px solid var(--line-f);border-radius:4px;padding:1px 5px}
 .as-chain span b{color:var(--tx-2);font-weight:600}
+/* 被工具白名单拒掉的节点要和别的节点区别开：一排一样的格子会让人以为整条链都调过了。 */
+.as-chain span.is-blocked{background:var(--bg-err-soft3);border-color:var(--line-err3);color:var(--err)}
 .as-chain i{color:var(--tx-13);font-style:normal}
 details.as-exp{margin-top:10px;border:1px solid var(--line-b);border-radius:9px;background:var(--bg-inset);padding:9px 12px}
 details.as-exp summary{cursor:pointer;font-size:11.5px;color:var(--tx-3);display:flex;align-items:center;gap:6px;outline:none}

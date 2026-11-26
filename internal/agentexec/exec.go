@@ -131,6 +131,23 @@ type Run struct {
 	Escalated bool `json:"escalated,omitempty"`
 }
 
+// Blocked 返回这一轮里被工具白名单拒掉的节点。
+//
+// 试跑页要把它显示出来（只显示「跑通」等于把「没真调用」说成了「调过了」）；
+// 面向客户的对话则不能拿这样一轮去拼回复。
+func (r *Run) Blocked() []NodeRun {
+	if r == nil {
+		return nil
+	}
+	var out []NodeRun
+	for _, n := range r.Nodes {
+		if n.Out != nil && n.Out["blocked"] == true {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // Exec 是执行器。
 type Exec struct {
 	// Now 可注入，便于测试。
@@ -232,6 +249,16 @@ func (e *Exec) runNode(a *domain.Agent, n *domain.FlowNode, input map[string]any
 
 	case domain.NodeTool:
 		tool, _ := cfg["tool"].(string)
+		// 白名单是执行侧的边界，不是文档里的约定：闸红了也要拦，因为试跑
+		// 不经过闸。越界时不调用工具，返回一条结构化拒绝让页面看得见。
+		if !a.Allows(tool) {
+			reason := "工具 " + tool + " 不在白名单内"
+			if len(a.Tools) == 0 {
+				reason = "这个 Agent 没有工具白名单，任何工具都不许调用（" + tool + " 被拒）"
+			}
+			return map[string]any{"blocked": true, "tool": tool, "reason": reason}, "",
+				[]string{"tool.blocked：" + reason}
+		}
 		return e.runTool(tool, cfg, input, vars, outs), "", nil
 
 	case domain.NodeKB:

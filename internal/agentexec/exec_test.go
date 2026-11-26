@@ -2,6 +2,7 @@ package agentexec
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/zhangkun/i3-composer/internal/domain"
@@ -41,8 +42,11 @@ func qcFlow() *domain.Flow {
 	}
 }
 
+// 白名单要和编排对得上：执行器现在按名单拦，没写名单的 Agent 一个工具都调不了。
+// 这组用例测的是判定逻辑本身，所以给一份刚好够用的名单。
 func qcAgent() *domain.Agent {
-	return &domain.Agent{ID: "x-qc", Name: "X-质检员", Flow: qcFlow()}
+	return &domain.Agent{ID: "x-qc", Name: "X-质检员", Flow: qcFlow(),
+		Tools: []string{"session.read", "report.write"}}
 }
 
 // 命中红线的会话应判 high 并走人工分支。
@@ -150,7 +154,8 @@ func TestDunEscalatesLargeAmount(t *testing.T) {
 			{"n4", "n5", "需确认"}, {"n4", "n6", "直接出稿"}, {"n5", "n6", "人处理后"},
 		},
 	}
-	a := &domain.Agent{ID: "x-dun", Name: "X-催缴专员", Flow: flow}
+	a := &domain.Agent{ID: "x-dun", Name: "X-催缴专员", Flow: flow,
+		Tools: []string{"bill.read"}}
 	run, err := e.Execute(context.Background(), a, map[string]any{"customerId": "C-40914"})
 	if err != nil {
 		t.Fatal(err)
@@ -164,6 +169,70 @@ func TestDunEscalatesLargeAmount(t *testing.T) {
 	draft, _ := run.Output["draft"].(string)
 	if draft == "" {
 		t.Fatal("应生成话术草稿")
+	}
+}
+
+// 越界工具不许执行：闸红了不算数，试跑也不经过闸，执行器自己得拦。
+//
+// 拦的方式是「这个节点不调工具、留一条 tool.blocked」，不是让整轮失败：
+// 试跑的价值是让人看见「这一版编排在哪儿会被拒」，整轮报错反而看不出
+// 还有几个节点越界、后面会不会又踩到。被拒节点不许产出该工具的正常输出。
+func TestExecuteBlocksToolOutsideAllowlist(t *testing.T) {
+	e := &Exec{}
+	a := qcAgent()
+	a.Tools = []string{"report.write"} // 编排要用 session.read，名单里只给了另一个
+
+	run, err := e.Execute(context.Background(), a, map[string]any{"sessionId": "S-20261124-0912"})
+	if err != nil {
+		t.Fatalf("越界不该让整轮失败（否则试跑页看不到被拒次数）：%v", err)
+	}
+	var blocked *NodeRun
+	for i := range run.Nodes {
+		if run.Nodes[i].ID == "n2" {
+			blocked = &run.Nodes[i]
+		}
+	}
+	if blocked == nil {
+		t.Fatalf("应记录到 n2 这个节点：%+v", run.Nodes)
+	}
+	if blocked.Out["blocked"] != true {
+		t.Fatalf("n2 应被标成 blocked：%v", blocked.Out)
+	}
+	if blocked.Out["tool"] != "session.read" {
+		t.Fatalf("被拒记录要点名工具：%v", blocked.Out)
+	}
+	// 真的没调用：会话读取才有的字段一个都不许出现。
+	for _, k := range []string{"customerText", "agentText", "account", "silenceMinutes"} {
+		if _, leaked := blocked.Out[k]; leaked {
+			t.Fatalf("被拒的节点不许产出工具的正常输出，泄漏了 %s：%v", k, blocked.Out)
+		}
+	}
+	if len(blocked.Notes) == 0 || !strings.Contains(strings.Join(blocked.Notes, " "), "tool.blocked") {
+		t.Fatalf("要留下可查的 tool.blocked 记录：%v", blocked.Notes)
+	}
+}
+
+// 白名单为空是「没给权限」，不是「不限制」：每个工具节点都被拦。
+func TestExecuteBlocksWhenAllowlistIsEmpty(t *testing.T) {
+	e := &Exec{}
+	a := qcAgent()
+	a.Tools = nil
+
+	run, err := e.Execute(context.Background(), a, map[string]any{"sessionId": "S-20261124-0912"})
+	if err != nil {
+		t.Fatalf("空名单不该让整轮失败：%v", err)
+	}
+	blockedCount := 0
+	for _, n := range run.Nodes {
+		if n.Out != nil && n.Out["blocked"] == true {
+			blockedCount++
+			if !strings.Contains(strings.Join(n.Notes, " "), "没有工具白名单") {
+				t.Fatalf("理由要说清是「没给名单」而不是「名单里没有它」：%v", n.Notes)
+			}
+		}
+	}
+	if blockedCount == 0 {
+		t.Fatalf("没有白名单时，编排里每个工具节点都该被拦：%+v", run.Nodes)
 	}
 }
 
