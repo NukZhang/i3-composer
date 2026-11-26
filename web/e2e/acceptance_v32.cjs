@@ -35,6 +35,15 @@ async function waitFor(fn, ms, step) {
   fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch({ executablePath: CHROME });
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
+  // 截图统一用明主题：正文是白底黑字，贴进文档和文章里不会变成一块黑屏。
+  // 在应用启动前写入偏好，App.vue 挂载时按它加 body.light。
+  await ctx.addInitScript(() => {
+    try {
+      localStorage.setItem('i3-theme', 'light');
+    } catch {
+      /* 忽略 */
+    }
+  });
   const page = await ctx.newPage();
   const pageErrors = [];
   const httpErrors = [];

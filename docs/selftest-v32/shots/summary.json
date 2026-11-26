@@ -5,7 +5,7 @@
     "blocked": 2
   },
   "batch": {
-    "id": "REL-20261125-01",
+    "id": "REL-20261126-01",
     "proj": "p1",
     "env": "SIT",
     "mode": "full",
@@ -29,12 +29,12 @@
         "commit": "1.0.1",
         "digest": "sha256:33e58178426e031dd67fa156e1314ecf84c4ad69866b24d9c34a257c83372120",
         "binary": true,
-        "url": "http://127.0.0.1:53024",
+        "url": "http://127.0.0.1:61423",
         "status": "deployed"
       }
     ],
     "by": "SA",
-    "at": "11-25 13:14",
+    "at": "11-26 04:21",
     "status": "active"
   },
   "unit": "v32xfin",
