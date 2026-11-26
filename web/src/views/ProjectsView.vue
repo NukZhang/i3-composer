@@ -94,6 +94,11 @@ const newTitle = computed({
   get: () => S.newTask || '',
   set: (v) => (S.newTask = v),
 });
+// 入口准入要的三项硬输入（验收口径 / 数据范围 / 责任人）。建单时带上就能直接发起；
+// 不带也能建（需求池先记一笔），但发起时会被准入挡下并点名缺什么、找谁、补哪。
+const admitForm = ref({ accept: '', data: '', acceptBy: '', complyBy: '' });
+const splitLines = (s) => String(s || '').split('\n').map((x) => x.trim()).filter(Boolean);
+const splitList = (s) => String(s || '').split(/[\n,，、]/).map((x) => x.trim()).filter(Boolean);
 async function submitTask() {
   const t = (S.newTask || '').trim();
   if (!t) {
@@ -101,8 +106,15 @@ async function submitTask() {
     return;
   }
   try {
-    const j = await api.createTask(S.pbcId, { title: t, type: 'feature', env: 'test' });
+    const j = await api.createTask(S.pbcId, {
+      title: t, type: 'feature', env: 'test',
+      accept: splitLines(admitForm.value.accept),
+      data: splitList(admitForm.value.data),
+      acceptBy: admitForm.value.acceptBy.trim(),
+      complyBy: admitForm.value.complyBy.trim(),
+    });
     S.newTask = '';
+    admitForm.value = { accept: '', data: '', acceptBy: '', complyBy: '' };
     toast('已创建 ' + j.id + '；发起交付请切到 DA 点「发起」', 'ok');
   } catch (e) {
     toast(e.message, 'err');
@@ -230,6 +242,20 @@ async function submitTask() {
       <div v-if="canBacklog" class="cr-form" style="margin-bottom: 10px">
         <input id="cr-title" v-model="newTitle" placeholder="要做什么（一句话）" @keyup.enter="submitTask" />
         <button class="btn primary small" @click="submitTask">提交并直通</button>
+      </div>
+      <!-- 建单时顺手把准入输入带上：不填也能建，但发起时准入会点名缺什么 -->
+      <div v-if="canBacklog" class="admit-fix" style="margin-bottom: 10px; border-top: none; padding-top: 0">
+        <div class="small muted">发起前准入要判的四项（可选，现在不填发起时会点名叫你补）</div>
+        <label>验收口径（每行一条，写成「当……则……」）
+          <textarea v-model="admitForm.accept" rows="2" placeholder="当业主提交缴费单，则应生成幂等键且重复提交不重复入账" /></label>
+        <div class="row" style="gap: 8px">
+          <label style="flex: 1">数据范围（逗号或换行分隔）
+            <input v-model="admitForm.data" placeholder="fee.bill.amount, fee.bill.due_date" /></label>
+        </div>
+        <div class="row" style="gap: 8px">
+          <label style="flex: 1">验收人<input v-model="admitForm.acceptBy" placeholder="BA 业务" /></label>
+          <label style="flex: 1">合规背责人<input v-model="admitForm.complyBy" placeholder="SA 系统" /></label>
+        </div>
       </div>
       <table class="tb">
         <thead>

@@ -148,6 +148,18 @@ func seedItem(t *testing.T, st *store.Store, it store.Item) {
 	}
 }
 
+// admittedItem 是一条「入口准入放得过」的工作项：验收口径可断言、
+// 写了数据范围与两个责任人。它只差软项（没拆 task），所以发起会带 waiver。
+func admittedItem() store.Item {
+	return store.Item{
+		ID: "US-01", Title: "业主查看并支付账单", Kind: "Story", PBC: "fee",
+		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA",
+		Accept:   []string{"当业主进入账单页，则应看到本期应缴金额与到期日"},
+		Data:     []string{"fee.bill.amount"},
+		AcceptBy: "BA 业务", ComplyBy: "SA 系统",
+	}
+}
+
 func TestRoleCannotCreateTaskWithoutBacklogAct(t *testing.T) {
 	h := newHarness(t)
 	// DA 没有 backlog 权限。
@@ -217,8 +229,7 @@ func TestAnswerRequiresTagActAndCorrectGate(t *testing.T) {
 
 func TestRunItemUsesItemIDAsInstanceLock(t *testing.T) {
 	h := newHarness(t)
-	seedItem(t, h.st, store.Item{ID: "US-01", Title: "t", Kind: "Story", PBC: "fee",
-		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
+	seedItem(t, h.st, admittedItem())
 
 	// BA 无 build 权限。
 	resp, _ := h.do(t, http.MethodPost, "/api/items/US-01/run?pbc=fee", nil, RoleBA)
@@ -242,6 +253,98 @@ func TestRunItemUsesItemIDAsInstanceLock(t *testing.T) {
 	}
 	if len(h.fake.calls) != before {
 		t.Fatal("被拒绝的重复发起不应再调 sidecar")
+	}
+}
+
+// 入口准入：硬项不过 → 400，点名「缺什么」，且账本不留 item.run.started、不调 sidecar。
+func TestRunItemRejectedByAdmission(t *testing.T) {
+	h := newHarness(t)
+	// 只有标题、没有任何准入输入：三项硬项全缺。
+	seedItem(t, h.st, store.Item{ID: "US-01", Title: "优化一下", Kind: "Story", PBC: "fee",
+		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
+
+	before := len(h.fake.calls)
+	resp, out := h.do(t, http.MethodPost, "/api/items/US-01/run?pbc=fee", nil, RoleDA)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("准入不过应 400，实际 %d %v", resp.StatusCode, out)
+	}
+	msg, _ := out["error"].(string)
+	for _, want := range []string{"目标可断言", "数据与权限", "责任人", "找 BA 业务", "找 SA 系统"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("400 应点名缺什么、找谁，缺 %q；实际：%s", want, msg)
+		}
+	}
+	if len(h.fake.calls) != before {
+		t.Fatal("准入拒绝时绝不能调 sidecar 起实例")
+	}
+
+	// 账本里有 rejected 事实，但没有 run.started。
+	facts, err := h.st.Load(t.Context(), "fee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rejected, started bool
+	for _, f := range facts {
+		switch f.Type {
+		case store.FactItemAdmitRejected:
+			rejected = true
+		case store.FactItemRunStarted:
+			started = true
+		}
+	}
+	if !rejected {
+		t.Fatal("被拒的发起应落一条 item.admit.rejected")
+	}
+	if started {
+		t.Fatal("被拒的发起绝不能落 item.run.started（不留半条链）")
+	}
+}
+
+// 硬项补齐后可以再次发起：补输入走 /inputs，发起时重判。
+func TestAdmitInputsThenRun(t *testing.T) {
+	h := newHarness(t)
+	seedItem(t, h.st, store.Item{ID: "US-01", Title: "优化一下", Kind: "Story", PBC: "fee",
+		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
+
+	if resp, out := h.do(t, http.MethodPost, "/api/items/US-01/run?pbc=fee", nil, RoleDA); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("先应被准入拒绝，实际 %d %v", resp.StatusCode, out)
+	}
+	// DA 没有 backlog 权限，补输入应 403。
+	if resp, _ := h.do(t, http.MethodPost, "/api/items/US-01/inputs?pbc=fee", map[string]any{
+		"acceptBy": "BA 业务", "complyBy": "SA 系统",
+	}, RoleDA); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("补输入应仅 BA 可做，实际 %d", resp.StatusCode)
+	}
+	// BA 补三项硬项输入。
+	resp, out := h.do(t, http.MethodPost, "/api/items/US-01/inputs?pbc=fee", map[string]any{
+		"accept":   []string{"当业主进入账单页，则应看到应缴金额"},
+		"data":     []string{"fee.bill.amount"},
+		"acceptBy": "BA 业务", "complyBy": "SA 系统",
+	}, RoleBA)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("补输入应 200，实际 %d %v", resp.StatusCode, out)
+	}
+	// 再发起：硬项齐了，放行。
+	resp, out = h.do(t, http.MethodPost, "/api/items/US-01/run?pbc=fee", nil, RoleDA)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("补齐后应 202，实际 %d %v", resp.StatusCode, out)
+	}
+	// 放行事实带 waiver：这是 Story 没拆 task，软项不过但放行。
+	facts, err := h.st.Load(t.Context(), "fee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var admitted bool
+	for _, f := range facts {
+		if f.Type == store.FactItemAdmitted {
+			admitted = true
+			if !strings.Contains(string(f.Payload), "waivers") {
+				t.Fatalf("item.admitted 应带 waivers 字段：%s", string(f.Payload))
+			}
+		}
+	}
+	if !admitted {
+		t.Fatal("放行应落 item.admitted")
 	}
 }
 

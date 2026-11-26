@@ -1,5 +1,5 @@
 PASS 1 首屏挂载 Vue :: "i3i3构建工作台 · 编辑 → 提交 → 构建 → 交付蓝图构建运营配置隐藏右"
-PASS 1 种子单元四个、只有 PBC / Agent 两种构成（ticket 已撤） :: ["fee:pbc:-","qa:agent:qa-agent","dun:pbc:-","dunx:agent:dun-agent","v32xv34b:pbc:-","execv34b:pbc:-","flowv34b:pbc:-","e2e14034:pbc:-"]
+PASS 1 种子单元四个、只有 PBC / Agent 两种构成（ticket 已撤） :: ["fee:pbc:-","qa:agent:qa-agent","dun:pbc:-","dunx:agent:dun-agent","v32x586497:pbc:-","exec610113:pbc:-","flow620769:pbc:-","e2e41327:pbc:-"]
 PASS 1 Agent 工厂：5 名平台员工 + 2 个交付产物 :: ["x-fe","x-qa","x-ui","x-ops","x-ba","qa-agent","dun-agent"]
 PASS 2 构建页有 Agent 编排 / 质量报告两个新 tab :: ["Backlog 6","Agent 编排","质量报告"]
 PASS 2 编排工作台有 7 个节点 + 连线 :: {"li":7,"node":7,"edge":8}
@@ -8,8 +8,8 @@ PASS 2 工具权限表多一列「用在哪」 :: ["工具类型审批用在哪"
 PASS 2 知识库依赖卡在编排页 :: ["知识库依赖"]
 PASS 2 导出 Dapr Agent 定义（折叠） :: null
 PASS 2 模型节点配置面板显示提示词（可编辑） :: "合规判定模型节点 ID n4模型deepseek-v3 · DSHtemp 0提示词输出变量verdict{risk, hits[]}改这段字就是新版本：dig"
-PASS 3 改编排后 digest 变了 :: {"before":"sha256:687d461c69cf","after":"sha256:9f242fdfad5c"}
-PASS 3 改了没构建：digest 闸变红 :: "编排改了但没构建（当前 sha256:9f242fdfad5c）"
+PASS 3 改编排后 digest 变了 :: {"before":"sha256:687d461c69cf","after":"sha256:3e9487615138"}
+PASS 3 改了没构建：digest 闸变红 :: "编排改了但没构建（当前 sha256:3e9487615138）"
 PASS 3 构建后版本号前进且 digest 闸转绿 :: {"ver":"1.2.1","gate":true}
 PASS 4 试跑有输出与逐节点耗时链 :: {"chain":6,"out":" 输出 跑通{\n  \"branch\": [\n    \"常规\"\n  ],\n  \"output\": {\n    \"agent"}
 PASS 4 沉淀的用例进评测集 :: {"before":7,"after":8}
@@ -20,8 +20,8 @@ PASS 6 验证页是验收台（AC 清单 + 对话终端） :: ["✓AR-1 承诺�
 PASS 6 判定面板有 Given/When/Then :: null
 PASS 6 判定「通过」进账本 :: ["AR-1:pass","AR-2:pass","AR-3:todo","AR-4:todo","AR-5:todo"]
 PASS 6 「不提过」展开 bug 表单（标题预填、步骤自动带入） :: {"open":true,"title":"情绪没接住要标红：判为「风险」，引用 R-","steps":"客户：你们这个热玛吉能维持多久？"}
-PASS 6 bug 落账且 AC 标不通过 :: {"checks":["AR-1:pass","AR-2:pass","AR-3:fail","AR-4:todo","AR-5:todo"],"defects":["BUG-118/AR-3/一般"],"backlog":["US-08:修复：情绪没接住：客户不满时客服直接报价"]}
-PASS 6 bug 进 backlog（成了一条修复项） :: ["US-08:修复：情绪没接住：客户不满时客服直接报价"]
+PASS 6 bug 落账且 AC 标不通过 :: {"checks":["AR-1:pass","AR-2:pass","AR-3:fail","AR-4:todo","AR-5:todo"],"defects":["BUG-118/AR-3/一般"],"backlog":["US-09:修复：情绪没接住：客户不满时客服直接报价"]}
+PASS 6 bug 进 backlog（成了一条修复项） :: ["US-09:修复：情绪没接住：客户不满时客服直接报价"]
 PASS 7 Agent 原型页是「质检复核」一屏（可点会话 + 判定依据 + 人工动作） :: "原型 1.0.1Agent 交付的是一屏工具：它的产出（判定 / 草稿）在这里被人看、被人改、被人拍板。就这一屏，没有别的。 回方案页Agent制品原型 1.0"
 PASS 8 催缴策略是 PBC 单元：原型页是线框与批注（来自账本） :: "原型 1.0.1线框与批注都来自账本：批注是 annotation.added 事实，坐标归一化存储，可定位。 框选批注 回方案页PBC制品原型 1.0.1 ·"
 PASS 8 催缴策略质量报告是四闸（不再有组合的合并门禁） :: "构建 代码 1.0.1Backlog → 代码 → 镜像。机器自检（四闸 / 还原 / 测试）在这一页的「质量报告」里；人上手验收在「验证」阶段。 去验证 Ba"
@@ -30,7 +30,7 @@ PASS 9 质检员详情有五个阶段 tab :: ["✓ 方案","✓ 原型","✓ 构
 PASS 9 Agent 详情构建页是编排摘要 + 节点一览 :: ["会话进入开始","读会话工具","检索口径知识库","合规判定模型","风险分级分支","转人工人工","回执入库结束"]
 PASS 9 有「去编排页」按钮 :: null
 PASS 10 工具闸的说法与编排一致（没有越界就不许红，有就越界点名） :: {"outside":[],"gate":{"key":"agent-tools","label":"工具白名单","ok":true,"detail":"4 个，无越权"}}
-PASS 10 越界编排可以保存（越界不是保存错误，是闸的事） :: {"builtDigest":"sha256:9f242fdfad5c","digest":"sha256:4850cbc324d9","dirty":true,"id":"qa-agent"}
+PASS 10 越界编排可以保存（越界不是保存错误，是闸的事） :: {"builtDigest":"sha256:3e9487615138","digest":"sha256:8f2314a77a2f","dirty":true,"id":"qa-agent"}
 PASS 10 名单外的工具让 agent-tools 闸变红（不是「判不了」），并点名工具与节点 :: {"key":"agent-tools","label":"工具白名单","ok":false,"detail":"编排用了名单外的工具：bill.read 在 读会话(n2)"}
 PASS 10 越界时 Detail 不再写「无越权」 :: "编排用了名单外的工具：bill.read 在 读会话(n2)"
 PASS 10 编排页工具权限卡点名越界（写 Agent 的人看得见是哪一步） :: null

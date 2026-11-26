@@ -185,7 +185,12 @@ async function waitFor(fn, ms, step) {
   await role('BA');
   const t = await api('/api/tasks?pbc=' + unitID, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: '验收单元 · 首次交付', type: 'new', env: 'test', mode: 'fast' }),
+    body: JSON.stringify({
+      title: '验收单元 · 首次交付', type: 'new', env: 'test', mode: 'fast',
+      // 入口准入要的硬输入：可断言的验收口径 / 数据范围 / 验收人 / 合规背责人。
+      accept: ['当业主提交缴费单，则应生成幂等键且重复提交不重复入账'],
+      data: ['fee.bill.amount'], acceptBy: 'BA 业务', complyBy: 'SA 系统',
+    }),
   });
   const itemID = t.body && t.body.id;
   check('7 BA 建工作项', t.code === 201 && !!itemID, itemID);

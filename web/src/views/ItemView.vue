@@ -44,11 +44,48 @@ const deployURL = computed(() => {
 const note = ref('');
 const busy = ref(false);
 
+// 入口准入的结论挂在工作项上（admit 字段，来自 item.admitted / item.admit.rejected）。
+const admit = computed(() => (item.value && item.value.admit) || null);
+// 被拒的原因：一人一行。它是后端 err 原文的一部分，这里只负责把三行摊开显示，
+// 不改写措辞——「缺什么 / 找谁 / 补哪」是后端给的，前端不发明。
+const rejectLines = computed(() => (admit.value && admit.value.reasons) || []);
+const waivers = computed(() => (admit.value && admit.value.waivers) || []);
+
+// 补输入的表单：只补三项硬项（验收口径 / 数据范围 / 责任人）。
+const fixing = ref(false);
+const fix = ref({ accept: '', data: '', acceptBy: '', complyBy: '' });
+
 async function run() {
   busy.value = true;
   try {
     const j = await api.runItem(item.value.id, item.value.pbc);
     toast(item.value.id + ' 已发起（实例 ' + j.instance + '）', 'ok');
+    fixing.value = false;
+  } catch (e) {
+    toast(e.message, 'err');
+    // 被准入挡下时，直接把「补哪」的表单摊出来，不让用户猜怎么补。
+    if (e.status === 400 && /准入/.test(e.message)) fixing.value = true;
+  }
+  busy.value = false;
+  await refresh();
+}
+
+async function submitFix() {
+  const body = {
+    accept: fix.value.accept.split('\n').map((s) => s.trim()).filter(Boolean),
+    data: fix.value.data.split(/[\n,，、]/).map((s) => s.trim()).filter(Boolean),
+    acceptBy: fix.value.acceptBy.trim(),
+    complyBy: fix.value.complyBy.trim(),
+  };
+  if (!body.accept.length && !body.data.length && !body.acceptBy && !body.complyBy) {
+    toast('至少补一项再提交', 'err');
+    return;
+  }
+  busy.value = true;
+  try {
+    await api.admitInputs(item.value.id, body, item.value.pbc);
+    toast('准入输入已补进账本，可以再发起', 'ok');
+    fixing.value = false;
   } catch (e) {
     toast(e.message, 'err');
   }
@@ -84,6 +121,9 @@ function stepMark(st) {
 function factText(f) {
   return {
     'item.created': '工作项创建',
+    'item.admitted': '入口准入放行',
+    'item.admit.rejected': '入口准入拒绝',
+    'item.admit.inputs': '补准入输入',
     'item.run.started': '发起交付（workflow 已启动）',
     'item.step.done': '一步完成',
     'item.waiting': '到发布闸，等待拍板',
@@ -150,6 +190,45 @@ function factDetail(f) {
         </span>
         <span class="spacer" style="flex: 1" />
         <span class="small muted">{{ item.pbc }} · 作者 {{ item.by }}</span>
+      </div>
+    </div>
+
+    <!-- 入口准入：放行了但软项没补 → 黄条（别把自己卡死，也别假装五项全判过） -->
+    <div v-if="admit && admit.st === 'admitted' && waivers.length" class="ws warn" style="margin-bottom: 11px">
+      <div class="ws-h">
+        <span v-html="icon('alert')" /> 准入放行，但这两项还没补齐（waiver）
+      </div>
+      <ul class="admit-list">
+        <li v-for="(w, i) in waivers" :key="i">{{ w }}</li>
+      </ul>
+      <div class="small muted">放行不等于判过：这些是软项，不挡发起，但会一直挂在账本上，直到补上。</div>
+    </div>
+
+    <!-- 入口准入：硬项不过被拒 → 三行「缺什么 / 找谁 / 补哪」，并就地补 -->
+    <div v-if="admit && admit.st === 'rejected'" class="gate" style="flex-direction: column; align-items: stretch; gap: 8px">
+      <div class="row" style="gap: 8px; align-items: center">
+        <span v-html="icon('lock')" />
+        <b>入口准入没过 · {{ admit.at }} 由 {{ admit.by }} 判</b>
+        <span class="spacer" style="flex: 1" />
+        <button v-if="canBacklog" class="btn small" @click="fixing = !fixing">{{ fixing ? '收起补录' : '补输入' }}</button>
+      </div>
+      <ul class="admit-list">
+        <li v-for="(r, i) in rejectLines" :key="i">{{ r }}</li>
+      </ul>
+      <div v-if="!canBacklog" class="small muted">补准入输入是 BA 的业务动作；当前角色只能看，补不了。</div>
+      <div v-if="fixing && canBacklog" class="admit-fix">
+        <div class="small muted">按「补哪」的顺序逐项补。补的是输入，发起时会重新判。</div>
+        <label>验收口径（每行一条，写成「当……则……」）
+          <textarea v-model="fix.accept" rows="2" placeholder="当业主提交缴费单，则应生成幂等键且重复提交不重复入账" /></label>
+        <label>数据范围（库表 / 字段，逗号或换行分隔）
+          <input v-model="fix.data" placeholder="fee.bill.amount, fee.bill.due_date" /></label>
+        <div class="row" style="gap: 8px">
+          <label style="flex: 1">验收人<input v-model="fix.acceptBy" placeholder="BA 业务" /></label>
+          <label style="flex: 1">合规背责人<input v-model="fix.complyBy" placeholder="SA 系统" /></label>
+        </div>
+        <div class="row" style="gap: 6px">
+          <button class="btn primary small" :disabled="busy" @click="submitFix">补进账本</button>
+        </div>
       </div>
     </div>
 

@@ -103,6 +103,21 @@ const (
 	FactReleaseBatch    = "release.batch.created"
 	FactReleaseRollback = "release.batch.rolledback"
 
+	// v3.3：入口准入。工作项进流水线之前，先判五件事（三项硬、两项软）。
+	//
+	// 为什么是两条事实而不是一条：准入的结论只有放行和拒绝两种，
+	// 而「放行但没判」必须留下痕迹（软项不过 / 判不了）。合成一条带 pass 字段
+	// 的事实，读的时候还得先看字段再分支，而且拒绝的那些「缺什么 / 找谁 / 补哪」
+	// 会被写成放行事实里的一个数组——两种语义挤在一起，迟早被谁读错。
+	FactItemAdmitted      = "item.admitted"
+	FactItemAdmitRejected = "item.admit.rejected"
+
+	// 准入输入可以补：验收口径、数据范围、责任人随后补上，同样进账本。
+	//
+	// 没有这条，准入就是个死胡同：被拒的提示说「补哪」，而账本里没有地方可补，
+	// 工作项从此再也发起不了。补的是输入，不是结论——准入每次发起都重判。
+	FactItemInputs = "item.admit.inputs"
+
 	// 打 tag 的那一刻闸门算出了什么，落一条事实。
 	//
 	// 宪法 I：状态只能由事实重放得出。三个月后有人问「1.0.4 凭什么能发」，

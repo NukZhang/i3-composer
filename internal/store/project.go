@@ -146,6 +146,32 @@ type Item struct {
 	Blocked   string `json:"blocked,omitempty"`
 	BlockedBy string `json:"blockedBy,omitempty"`
 	At        string `json:"at,omitempty"`
+
+	// 准入输入：建单时由人写下的目标断言、数据范围与责任人。
+	//
+	// 它们和别的状态一样是事实的一部分（随 item.created 落账），
+	// 不是 BFF 的临时变量——否则重启一次，「谁验收、碰哪些表」就没了，
+	// 而准入的门槛还在，工作项会变成永远进不去也说不清缺什么的孤儿。
+	Accept   []string `json:"accept,omitempty"`   // 验收口径，Given/When/Then
+	Data     []string `json:"data,omitempty"`     // 要碰的库表 / 字段
+	AcceptBy string   `json:"acceptBy,omitempty"` // 验收人
+	ComplyBy string   `json:"complyBy,omitempty"` // 合规背责人
+
+	// Admit 是最近一次入口准入的结论。它不参与 run 状态机——
+	// 那是 workflow 的事；这里只回答「进流水线之前判过什么」。
+	Admit *AdmitInfo `json:"admit,omitempty"`
+}
+
+// AdmitInfo 是入口准入的落账结论。
+//
+// St 只有 admitted / rejected 两种。admitted 时 Waivers 非空表示「放行但没判全」；
+// rejected 时 Reasons 一人一行，是「缺什么 / 找谁 / 补哪」拆开的三段。
+type AdmitInfo struct {
+	St      string   `json:"st"`
+	Waivers []string `json:"waivers,omitempty"`
+	Reasons []string `json:"reasons,omitempty"`
+	By      string   `json:"by,omitempty"`
+	At      string   `json:"at,omitempty"`
 }
 
 // StepPlan 是交付链路的固定六步。
@@ -347,6 +373,72 @@ func apply(v *View, f Fact) error {
 			it.Steps = StepPlan(it.Env)
 		}
 		v.Items[it.ID] = &it
+
+	case FactItemAdmitted:
+		// 准入放行。它不改 run（run 是 workflow 的事），只记「判过什么、哪几项没判全」。
+		// waivers 为空 = 五项全过；非空 = 软项没过，页面要挂黄条。
+		var p struct {
+			ID      string   `json:"id"`
+			Waivers []string `json:"waivers"`
+			By      string   `json:"by"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		if it := v.Items[p.ID]; it != nil {
+			by := p.By
+			if by == "" {
+				by = f.Actor
+			}
+			it.Admit = &AdmitInfo{St: "admitted", Waivers: p.Waivers, By: by, At: f.At}
+		}
+
+	case FactItemAdmitRejected:
+		// 被入口拒掉：不产生 item.run.started，也就没有半条链。
+		// 这条事实是「为什么没发起」的唯一凭据——说完三行话之后还得能查到。
+		var p struct {
+			ID      string   `json:"id"`
+			Reasons []string `json:"reasons"`
+			By      string   `json:"by"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		if it := v.Items[p.ID]; it != nil {
+			by := p.By
+			if by == "" {
+				by = f.Actor
+			}
+			it.Admit = &AdmitInfo{St: "rejected", Reasons: p.Reasons, By: by, At: f.At}
+		}
+
+	case FactItemInputs:
+		// 补的是准入输入，不是准入结论：结论只在真正发起时重判一次。
+		// 空数组不覆盖已有值——「这次只补了数据范围」不该把责任人清空。
+		var p struct {
+			ID       string   `json:"id"`
+			Accept   []string `json:"accept"`
+			Data     []string `json:"data"`
+			AcceptBy string   `json:"acceptBy"`
+			ComplyBy string   `json:"complyBy"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		if it := v.Items[p.ID]; it != nil {
+			if len(p.Accept) > 0 {
+				it.Accept = p.Accept
+			}
+			if len(p.Data) > 0 {
+				it.Data = p.Data
+			}
+			if p.AcceptBy != "" {
+				it.AcceptBy = p.AcceptBy
+			}
+			if p.ComplyBy != "" {
+				it.ComplyBy = p.ComplyBy
+			}
+		}
 
 	case FactItemRunStarted:
 		var p struct {
