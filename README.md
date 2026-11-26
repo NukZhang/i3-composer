@@ -255,7 +255,7 @@ docs/                     白皮书、执行说明、前端接线、自测报告
 
 ## 贡献
 
-- 规格先行：新特性先写 `specs/NNN-name/spec.md`（`/speckit-specify`），再实现；
+- 开发约定见 [AGENTS.md](AGENTS.md)。在 Codex 对话中用 `$speckit-specify` 开始规格，再依次调用 `$speckit-plan`、`$speckit-tasks` 和 `$speckit-implement`。Claude Code 使用对应的 `/speckit-…` 命令。
 - 提交前跑通：`go vet` / `go test` / `npm run build` / 五套 e2e；
 - 改门禁、部署或账本语义时，同一轮更新自测报告与截图；
 - 提交信息用中文，说明「改了什么、为什么」。
