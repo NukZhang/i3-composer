@@ -1,12 +1,13 @@
 <script setup>
 import { computed } from 'vue';
-import { S, unitKind, toast, unitsOfProject } from '../store.js';
+import { S, unitKind, toast, unitsOfProject, refresh } from '../store.js';
 import { icon } from '../icons.js';
 
-// 单元 badge：pbc 显示 HEAD，agent 显示 A，hybrid 显示 P+A（原型同款）。
+// 单元 badge：pbc 显示 HEAD；agent 显示「产物」——它是交付出去的东西，
+// 不是平台员工（员工不对外交付，也不单独打 tag）。
 function badge(u) {
   const k = u.kind || 'pbc';
-  if (k === 'agent') return 'A';
+  if (k === 'agent') return '产物';
   if (k === 'hybrid') return 'P+A';
   return u.head || '—';
 }
@@ -15,15 +16,16 @@ function badgeColor(k) {
 }
 
 const todoCount = computed(
-  () => S.inbox.filter((x) => x.run === 'waiting' || (x.owner === S.role && x.st !== 'done' && x.run !== 'waiting' && x.run !== 'published')).length,
+  () => S.inbox.filter((x) => x.run === 'waiting' || (x.owner === S.role && x.st !== 'done' && x.run !== 'waiting' && x.run !== 'tagged')).length,
 );
 const unread = computed(() => S.notifications.length);
+// v3.2：单元只剩四个阶段。发布被提到项目级——「发布编排」不是第五个阶段，
+// 它是对整批单元做的动作，入口挂在项目行上。
 const STAGES = [
   ['plan', '方案', 'git'],
   ['proto', '原型', 'layout'],
   ['build', '构建', 'cpu'],
   ['verify', '验证', 'check'],
-  ['release', '发布', 'cloud'],
 ];
 
 // 两级结构：工作空间（文件夹）→ 项目。项目可以不属于任何工作空间。
@@ -62,6 +64,31 @@ function openUnit(id) {
   if (u && u.head) S.selCommit = u.head;
   S.view = 'plan';
 }
+// v3.1：发布编排是项目级动作，入口是项目行右侧的图标，不占单元列表的一行。
+// 点项目名进项目页，点图标进编排——两个动作分开。
+function openOrch(pid) {
+  S.projId = pid;
+  const mine = unitsOfProject(pid);
+  S.pbcId = mine.length ? mine[0].id : '';
+  S.view = 'orch';
+  refresh();
+}
+// 图标颜色即状态：灰 = 还没有单元；黄 = 有单元待交付；绿 = 全部就绪。
+function orchState(pid) {
+  const us = unitsOfProject(pid);
+  if (!us.length) return 'none';
+  return us.every((u) => u.headTag) ? 'ready' : 'pending';
+}
+function orchTitle(pid) {
+  const us = unitsOfProject(pid);
+  if (!us.length) return '发布编排 · 还没有交付单元';
+  const pending = us.filter((u) => !u.headTag).length;
+  return pending ? '发布编排 · ' + pending + ' 待交付' : '发布编排 · 全部就绪';
+}
+function orchColor(pid) {
+  const st = orchState(pid);
+  return st === 'ready' ? 'var(--ok)' : st === 'pending' ? 'var(--warn)' : 'var(--tx-9)';
+}
 function add() {
   S.addOpen = true;
   S.addTab = 'new';
@@ -96,13 +123,20 @@ function grayModule(name) {
         <template v-for="p in g.projects" :key="p.id">
           <div
             class="trow sub"
-            :class="{ on: S.projId === p.id }"
+            :class="{ on: S.projId === p.id && S.view !== 'orch' }"
             :title="p.owner || ''"
             style="padding-left:18px"
             @click="openProject(p.id)"
           >
             <span v-html="icon('box', 12)" /> {{ p.name }}
             <span v-if="p.shared" class="cnt" style="color: var(--info)">共享</span>
+            <button
+              class="orch-ico"
+              :class="{ on: S.view === 'orch' && S.projId === p.id }"
+              :style="{ color: orchColor(p.id) }"
+              :title="orchTitle(p.id)"
+              @click.stop="openOrch(p.id)"
+            ><span v-html="icon('layers', 12)" /></button>
           </div>
           <template v-if="S.projId === p.id">
             <div class="trow sub" :class="{ on: S.view === 'brd' }" @click="go('brd')">
@@ -113,14 +147,14 @@ function grayModule(name) {
             <template v-for="u in curUnits" :key="u.id">
               <div
                 class="trow sub"
-                :class="{ on: S.pbcId === u.id }"
+                :class="{ on: S.pbcId === u.id && S.view !== 'orch' }"
                 :title="'v' + (u.head || '—') + ' · ' + (u.kind === 'agent' ? 'Agent' : u.kind === 'hybrid' ? 'PBC + Agent' : 'PBC')"
                 @click="openUnit(u.id)"
               >
                 <span v-html="icon(u.kind === 'agent' ? 'robot' : 'layers', 12)" /> {{ u.name }}
                 <span class="cnt" :style="{ color: badgeColor(u.kind), fontWeight: 600 }">{{ badge(u) }}</span>
               </div>
-              <template v-if="S.pbcId === u.id">
+              <template v-if="S.pbcId === u.id && S.view !== 'orch'">
                 <div
                   v-for="m in STAGES"
                   :key="m[0]"
@@ -146,9 +180,16 @@ function grayModule(name) {
     <template v-if="solo.length">
       <div class="sb-solo">未归入工作空间</div>
       <template v-for="p in solo" :key="p.id">
-        <div class="trow sub" :class="{ on: S.projId === p.id }" :title="p.owner || ''" style="padding-left:18px" @click="openProject(p.id)">
+        <div class="trow sub" :class="{ on: S.projId === p.id && S.view !== 'orch' }" :title="p.owner || ''" style="padding-left:18px" @click="openProject(p.id)">
           <span v-html="icon('box', 12)" /> {{ p.name }}
           <span v-if="p.shared" class="cnt" style="color: var(--info)">共享</span>
+          <button
+            class="orch-ico"
+            :class="{ on: S.view === 'orch' && S.projId === p.id }"
+            :style="{ color: orchColor(p.id) }"
+            :title="orchTitle(p.id)"
+            @click.stop="openOrch(p.id)"
+          ><span v-html="icon('layers', 12)" /></button>
         </div>
         <template v-if="S.projId === p.id">
           <div class="trow sub" :class="{ on: S.view === 'brd' }" @click="go('brd')">
@@ -159,14 +200,14 @@ function grayModule(name) {
           <template v-for="u in unitsOfProject(p.id)" :key="u.id">
             <div
               class="trow sub"
-              :class="{ on: S.pbcId === u.id }"
+              :class="{ on: S.pbcId === u.id && S.view !== 'orch' }"
               :title="'v' + (u.head || '—')"
               @click="openUnit(u.id)"
             >
               <span v-html="icon(u.kind === 'agent' ? 'robot' : 'layers', 12)" /> {{ u.name }}
               <span class="cnt" :style="{ color: badgeColor(u.kind), fontWeight: 600 }">{{ badge(u) }}</span>
             </div>
-            <template v-if="S.pbcId === u.id">
+            <template v-if="S.pbcId === u.id && S.view !== 'orch'">
               <div v-for="m in STAGES" :key="m[0]" class="trow sub2" :class="{ on: S.view === m[0] }" @click="go(m[0])">
                 <span v-html="icon(m[2], 11)" /> {{ m[1] }}
               </div>

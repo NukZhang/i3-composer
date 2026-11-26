@@ -1,16 +1,19 @@
 // 验收「执行侧是真的」：跑完一条交付后，逐条核对账本里的证据。
 //
+// v3.2 起单元只做到「可以交付」：
 //   - 制品里的代码能编译（有 go.mod / main.go / main_test.go）
 //   - test.run 的条数是 go test 的真实输出（不是编的条数）
 //   - build.succeeded 的 digest 是内容摘要（sha256: + 64 位十六进制）
-//   - deploy.succeeded 的地址真的能访问，/healthz 返回 200
+//   - 单元自己不再部署：账本里没有 deploy.succeeded，工作项停在「待打 tag」
+//   - 打 tag 后由项目级批次真部署：deploy.succeeded 的地址真的能访问，/healthz 200
 //   - 种子写的历史 actor 是 seed，与真跑出来的事实区分得开
 //   - pubsub 收到的事件落了 event.received 事实
 //
-// 用法：BASE=http://127.0.0.1:8098 node acceptance_exec.cjs
+// 用法：BASE=http://127.0.0.1:8080 node acceptance_exec.cjs
 const { chromium } = require('playwright');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
-const BASE = process.env.BASE || 'http://127.0.0.1:8098';
+const BASE = process.env.BASE || 'http://127.0.0.1:8080';
+const RUN = process.env.RUN_TAG || String(Date.now()).slice(-6);
 
 const results = [];
 function check(name, ok, detail) {
@@ -37,10 +40,18 @@ function check(name, ok, detail) {
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1500);
 
-  // ---- 1. 建一条工作项并跑完整条链 ----
+  // ---- 1. 建一个单元，在它上面跑完整条链 ----
+  await role('PA');
+  const unit = 'exec' + RUN;
+  const cu = await api('/api/units', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: unit, name: '执行侧验收单元', kind: 'pbc', proj: 'p1' }),
+  });
+  check('0 建执行侧验收单元', cu.code === 201, cu.body);
+
   await role('BA');
   const title = '执行侧验收-' + Date.now();
-  const task = await api('/api/tasks?pbc=fee', {
+  const task = await api('/api/tasks?pbc=' + unit, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ title, type: 'feature', env: 'test', mode: 'fast' }),
   });
@@ -48,22 +59,22 @@ function check(name, ok, detail) {
   const id = task.body && task.body.id;
 
   await role('DA');
-  const run = await api('/api/items/' + id + '/run?pbc=fee', { method: 'POST' });
+  const run = await api('/api/items/' + id + '/run?pbc=' + unit, { method: 'POST' });
   check('1 发起交付（真实 Dapr workflow）', run.code === 202, run.body);
 
-  // 等它走到发布闸（真跑测试 + 真构建 + 真部署都要时间）。
+  // 等机器五步跑完（真跑测试 + 真构建要时间）。
   let item = null;
   const deadline = Date.now() + 5 * 60 * 1000;
   while (Date.now() < deadline) {
-    const st = await api('/api/state?pbc=fee');
+    const st = await api('/api/state?pbc=' + unit);
     const it = st.body && st.body.items && st.body.items[id];
-    if (it && (it.run === 'waiting' || it.run === 'blocked' || it.run === 'published')) { item = it; break; }
+    if (it && ['verified', 'blocked', 'waiting', 'published'].includes(it.run)) { item = it; break; }
     await new Promise((r) => setTimeout(r, 2000));
   }
-  check('1 workflow 跑到发布闸', !!item && item.run === 'waiting', item && { run: item.run, blocked: item.blocked });
+  check('1 workflow 五步跑完，停在「打 tag」', !!item && item.run === 'verified', item && { run: item.run, blocked: item.blocked, step: item.step });
 
   // ---- 2. 制品里有真内容（能编译） ----
-  const st = (await api('/api/state?pbc=fee')).body;
+  const st = (await api('/api/state?pbc=' + unit)).body;
   const codeVers = (st.versions && st.versions.code) || [];
   const last = codeVers[codeVers.length - 1] || {};
   const files = last.files || {};
@@ -85,39 +96,43 @@ function check(name, ok, detail) {
   check('4 构建产物 digest 是 sha256 内容摘要',
     !!digest && /^sha256:[0-9a-f]{64}$/.test(digest), digest);
 
-  // ---- 5. 部署地址真的活着 ----
+  // ---- 5. 单元自己不部署 ----
   const deploys = st.deploys || [];
-  const url = deploys.length ? deploys[deploys.length - 1].url : '';
-  check('5 有部署事实', !!url, url);
-  let health = null;
-  if (url) {
-    // 从 Node 侧探活：浏览器里发跨源请求会被 CORS 挡住，
-    // 那是浏览器策略，不是服务不可达。
-    health = await fetch(url + '/healthz');
-    const body = await health.text();
-    health = { code: health.status, body };
-  }
-  check('5 部署地址能访问且 /healthz 返回 200', health && health.code === 200, health);
+  check('5 单元交付不部署：账本里没有 deploy.succeeded', deploys.length === 0, deploys.length);
 
   // ---- 5.1 人能在页面上直接看到这些证据 ----
-  // 不必去翻 Redis：工作项页的「账本事实」列表里就该写着
-  // 「几条测试过 / digest 是哪个 / 部署在哪」。
-  await page.click('.home-tab:has-text("待我确认")');
-  await page.waitForTimeout(800);
-  const row = page.locator('.task:has-text("' + id + '")').first();
-  if (await row.count()) {
-    await row.click();
-  }
-  await page.waitForTimeout(1200);
+  await page.evaluate((u) => {
+    const rows = Array.from(document.querySelectorAll('.sidebar .trow'));
+    const p = rows.find((x) => x.textContent.includes('收费与工单数字化'));
+    if (p) p.click();
+  }, unit);
+  await page.waitForTimeout(700);
+  await page.evaluate((name) => {
+    const rows = Array.from(document.querySelectorAll('.sidebar .trow'));
+    const p = rows.find((x) => x.textContent.trim().startsWith(name));
+    if (p) p.click();
+  }, '执行侧验收单元');
+  await page.waitForTimeout(700);
+  await page.evaluate(() => {
+    const s = Array.from(document.querySelectorAll('.sidebar .trow.sub2')).find((x) => x.textContent.trim().startsWith('构建'));
+    if (s) s.click();
+  });
+  await page.waitForTimeout(600);
+  await page.evaluate(() => {
+    const t = Array.from(document.querySelectorAll('.ptab')).find((x) => x.textContent.includes('质量报告'));
+    if (t) t.click();
+  });
+  await page.waitForTimeout(900);
   const pageText = await page.evaluate(() => (document.querySelector('#app') || {}).textContent || '');
   const shortDigest = String(digest).slice(0, 19);
-  check('5 页面上看得到真证据（测试条数 / digest / 部署地址）',
-    /\d+\/\d+ 通过/.test(pageText) && pageText.includes(shortDigest) && pageText.includes(url),
-    { digest: shortDigest, url, hasPass: /\d+\/\d+ 通过/.test(pageText) });
+  check('5 质量报告里看得到真证据（测试条数 / digest）',
+    /\d+\/\d+ 通过/.test(pageText) && pageText.includes(shortDigest),
+    { digest: shortDigest, hasPass: /\d+\/\d+ 通过/.test(pageText) });
 
   // ---- 6. 种子写的历史与真跑的事实分得开 ----
-  const facts = (await api('/api/facts?pbc=fee')).body.facts || [];
-  const seedFacts = facts.filter((f) => f.actor === 'seed');
+  // 种子事实查种子单元（fee）；真跑的事实查这次新建的单元。
+  const facts = (await api('/api/facts?pbc=' + unit)).body.facts || [];
+  const seedFacts = (await api('/api/facts?pbc=fee')).body.facts.filter((f) => f.actor === 'seed');
   const realFacts = facts.filter((f) => f.actor !== 'seed');
   check('6 种子事实 actor 是 seed（演示数据可识别）', seedFacts.length > 0, seedFacts.length);
   check('6 真跑出来的事实 actor 不是 seed', realFacts.length > 0, realFacts.map((f) => f.actor).slice(0, 4));
@@ -131,30 +146,47 @@ function check(name, ok, detail) {
   check('7 pubsub 收到的事件落了 event.received 事实', evs.length > 0, evs.slice(0, 2).map((e) => e.payload && e.payload.topic));
 
   // ---- 7.1 workflow 的每一步都真的过了总线 ----
-  // 这条最容易漏：以前 workflow 只在测试/构建/部署这几步发事件，
-  // 前面几步静悄悄地过去了，总线看起来像装饰品。现在每一步都发，
-  // 所以收到的 item.changed 事件数应该盖得住步骤数（6 步 + 人工闸）。
+  // 五步 + verified 收口 = 6 条 item.changed。
   const itemEvents = evs.filter((e) => e.payload && e.payload.topic === 'item.changed' &&
     e.payload.data && e.payload.data.item === id);
-  const stepEvents = itemEvents.filter((e) => e.payload.data.kind === 'step' || e.payload.data.kind === 'waiting');
+  const stepEvents = itemEvents.filter((e) => e.payload.data.kind === 'step' || e.payload.data.kind === 'verified');
   check('7 workflow 每一步都经总线发过事件（不是装饰品）',
-    stepEvents.length >= 7, { 收到: itemEvents.length, 其中步骤: stepEvents.length });
+    stepEvents.length >= 6, { 收到: itemEvents.length, 其中步骤: stepEvents.length });
 
-  // ---- 8. 发布 ----
+  // ---- 8. 打 tag + 批次发布：部署挪到项目级 ----
   await role('SA');
-  const answer = await api('/api/items/' + id + '/answer?pbc=fee', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve: true }),
+  const tag = await api('/api/units/' + unit + '/tag', { method: 'POST' });
+  check('8 SA 打 tag 进池', tag.code === 201 && !!tag.body.tag, tag.body);
+
+  const rel = await api('/api/projects/p1/orch/release', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ env: 'UAT', mode: 'full', units: [unit] }),
   });
-  check('8 SA 拍板发布', answer.code === 202, answer.body);
-  let published = null;
-  const dl = Date.now() + 90 * 1000;
-  while (Date.now() < dl) {
-    const s2 = (await api('/api/state?pbc=fee')).body;
-    const it = s2.items && s2.items[id];
-    if (it && it.run === 'published') { published = it; break; }
-    await new Promise((r) => setTimeout(r, 1500));
+  check('8 批次发布返回 201', rel.code === 201, rel.body && rel.body.id);
+  const b = rel.body || {};
+  const ru = (b.units || [])[0] || {};
+  check('8 批次锁住该单元的 tag 与 digest', ru.tag === tag.body.tag && ru.digest === digest, { tag: ru.tag, digest: ru.digest });
+  check('8 部署事实落在单元账本（deploy.succeeded 带批次号）',
+    !!(await api('/api/state?pbc=' + unit)).body.deploys.find((d) => d.url === ru.url), ru.url);
+  let health = null;
+  if (ru.url) {
+    health = await fetch(ru.url + '/healthz');
+    health = { code: health.status, body: await health.text() };
   }
-  check('8 发布完成', !!published && !!published.tag, published && { tag: published.tag, version: published.version });
+  check('8 部署地址能访问且 /healthz 返回 200', health && health.code === 200, health);
+
+  // ---- 9. 整批回滚，进程真的收掉 ----
+  const rb = await api('/api/projects/p1/orch/rollback', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: b.id, note: '执行侧验收回滚' }),
+  });
+  check('9 整批回滚返回 200', rb.code === 200, rb.body);
+  if (ru.url) {
+    await new Promise((r) => setTimeout(r, 600));
+    let after = null;
+    try { after = (await fetch(ru.url + '/healthz')).status; } catch { after = 0; }
+    check('9 回滚后部署进程真的停了', after !== 200, after);
+  }
 
   check('页面无 JS 异常', pageErrors.length === 0, pageErrors.slice(0, 3));
 

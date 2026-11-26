@@ -56,7 +56,7 @@ async function suggest() {
   const name = (proj.value && proj.value.name) || '本项目';
   const add = [
     '',
-    '### 待确认事项（X-业务分析员整理）',
+    '### 待确认事项（X-业务分析工程师整理）',
     '- ' + name + '：谁在什么场景下用、现在怎么解决',
     '- 做完之后哪个数会变（量化口径）',
     '- 不做的话哪个数不会变',
@@ -65,14 +65,14 @@ async function suggest() {
   ].join('\n');
   text.value = text.value.replace(/\n## 4\. 关键规则[\s\S]*$/, '') + '\n## 4. 关键规则\n' + add;
   dirty.value = true;
-  toast('X-业务分析员已续写一版「待确认事项」（未保存），请 BA 检查后保存', 'warn');
+  toast('X-业务分析工程师已续写一版「待确认事项」（未保存），请 BA 检查后保存', 'warn');
 }
 </script>
 
 <template>
   <PageHeader
     :title="title"
-    :sub="'项目级制品。渐进编写：每次保存生成草稿版本，走同一套提交模型；X-业务分析员可续写，BA 确认。' + (proj && !proj.brd ? ' 这一份还没建过：先保存一次就是 v0.1。' : '')"
+    :sub="'项目级制品。渐进编写：每次保存生成草稿版本，走同一套提交模型；X-业务分析工程师可续写，BA 确认。' + (proj && !proj.brd ? ' 这一份还没建过：先保存一次就是 v0.1。' : '')"
   >
     <button class="btn small" @click="S.view = 'projects'"><span v-html="icon('box', 12)" /> 返回项目</button>
     <button class="btn small" @click="suggest"><span v-html="icon('robot', 12)" /> 让 X 续写下一节</button>

@@ -11,7 +11,7 @@ import PlanView from './views/PlanView.vue';
 import ProtoView from './views/ProtoView.vue';
 import BuildView from './views/BuildView.vue';
 import VerifyView from './views/VerifyView.vue';
-import ReleaseView from './views/ReleaseView.vue';
+import OrchView from './views/OrchView.vue';
 import WorkersView from './views/WorkersView.vue';
 import AgentView from './views/AgentView.vue';
 import ItemView from './views/ItemView.vue';
@@ -28,7 +28,7 @@ const VIEWS = {
   proto: ProtoView,
   build: BuildView,
   verify: VerifyView,
-  release: ReleaseView,
+  orch: OrchView,
   workers: WorkersView,
   agent: AgentView,
   item: ItemView,
@@ -78,7 +78,7 @@ watch(
 
 // v2.7：空项目没有当前单元。凡是「必须先有交付单元」的视图，
 // 直接回项目页——不让它渲染空白再报错（原型 §五 的容错）。
-const STAGE_VIEWS = ['plan', 'proto', 'build', 'verify', 'release', 'agent', 'item'];
+const STAGE_VIEWS = ['plan', 'proto', 'build', 'verify', 'agent', 'item'];
 watch(
   () => [S.view, S.pbcId],
   () => {
@@ -136,7 +136,7 @@ onUnmounted(() => closeStream && closeStream());
         @click="setRole(id)"
       >{{ id }}</button>
       <button class="rolebtn x" @click="S.view = 'workers'">
-        <span v-html="icon('robot', 12)" /> Agent 工厂 {{ S.agents.filter((a) => (a.st || []).includes('doing')).length }}
+        <span v-html="icon('robot', 12)" /> Agent 工厂 {{ S.agents.filter((a) => a.product).length }}
       </button>
     </div>
     <div class="avatar">{{ (S.roleName || 'BA').slice(0, 2) }}</div>

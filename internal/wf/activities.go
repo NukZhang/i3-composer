@@ -94,6 +94,47 @@ func (a *Activities) done(ctx context.Context, in StepInput, res StepResult) (St
 	return res, nil
 }
 
+// Verified 记录「机器五步跑完，可以交付了」。
+//
+// 这里再核对一次：HEAD 有真构建的 digest，最近一次测试就是针对 HEAD 且全过。
+// 不满足就不收口——让它停在 blocked，而不是先写「可交付」再让人去发现是假的。
+//
+// 打 tag 不在这里：那是人在验证页按下的动作，BFF 会重新校验闸门后落账。
+func (a *Activities) Verified(ctx context.Context, in StepInput) (StepResult, error) {
+	facts, err := a.logOf(in.Input).Load(ctx, in.PBC)
+	if err != nil {
+		return StepResult{}, err
+	}
+	v, err := store.Project(in.PBC, facts)
+	if err != nil {
+		return StepResult{}, err
+	}
+	if len(v.Commits) == 0 {
+		return StepResult{OK: false, Step: in.Step, Detail: "没有提交，无法交付"}, nil
+	}
+	head := v.Commits[0]
+	if head.Digest == "" {
+		return StepResult{OK: false, Step: in.Step, Detail: "HEAD 未构建：没有 digest 的提交不能进池"}, nil
+	}
+	if v.Test == nil || v.Test.Commit != head.No {
+		return StepResult{OK: false, Step: in.Step, Detail: "HEAD 没有对应的测试结果"}, nil
+	}
+	if v.Test.Pass != v.Test.Total {
+		return StepResult{OK: false, Step: in.Step, Detail: fmt.Sprintf("测试未全过（%d/%d）", v.Test.Pass, v.Test.Total)}, nil
+	}
+	p := map[string]any{"id": in.ItemID, "version": head.No}
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/verified",
+		store.FactItemVerified, "i3-pipeline", p); err != nil {
+		return StepResult{}, err
+	}
+	a.publish(ctx, TopicItemChanged, map[string]any{
+		"pbc": in.PBC, "item": in.ItemID, "kind": "verified",
+		"step": in.Step, "commit": head.No,
+	})
+	return StepResult{OK: true, Step: in.Step, CommitNo: head.No,
+		Detail: "已可交付 · " + head.No + "（待打 tag）"}, nil
+}
+
 // Blocked 记录「卡住了」。它不是错误：流程正常停在等人或等修复，
 // 事实日志里必须留下谁在等什么。
 func (a *Activities) Blocked(ctx context.Context, in BlockInput) (StepResult, error) {

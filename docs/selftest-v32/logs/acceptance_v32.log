@@ -1,0 +1,39 @@
+PASS 1 单元只有四个阶段（方案/原型/构建/验证） :: ["方案","原型","构建","验证"]
+PASS 1 项目行有「发布编排」图标
+PASS 2 编排链列出项目下全部单元 :: ["fee:pbc","qa:agent","dun:pbc","dunx:agent"]
+PASS 2 就绪 / 阻塞与账本一致（种子 2 就绪 2 阻塞） :: {"ready":2,"blocked":2}
+PASS 2 页面渲染 4 张单元卡 :: 4
+PASS 2 筛选「只 Agent」后选中 2 个单元 :: 2
+PASS 3 SA 发布混合批次返回 201 :: "REL-20261125-01"
+PASS 3 批次锁住两个 tag :: ["交付质检 Agent v1.0.0","催缴策略 v2.0.0"]
+PASS 3 PBC 真部署（有 URL），Agent 产物没有进程（无 URL） :: {"pbc":"http://127.0.0.1:53024"}
+PASS 3 部署地址 /healthz 真的 200 :: 200
+PASS 3 页面历史批次里出现该批次 :: "REL-20261125-01"
+PASS 4 整批回滚返回 200 :: {"id":"REL-20261125-01","status":"rolledback"}
+PASS 4 回滚后部署进程真的停了 :: 0
+PASS 4 重复回滚被拒（批次已经回滚过） :: {"error":"请求不合法：批次 REL-20261125-01 已经回滚过"}
+PASS 5 未打 tag 的单元被拦，且点名 :: {"error":"请求不合法：收费缴费 还没打 tag，不能进批次"}
+PASS 6 验收未全过的单元打不了 tag（点名还差几条） :: {"error":"请求不合法：还差 5 条验收未通过（1/6），不能打 tag"}
+PASS 6 话术 Agent 打不了 tag（评测/验收未过） :: {"error":"请求不合法：还差 1 条验收未通过（4/5），不能打 tag"}
+PASS 7 PA 建单元（只剩 pbc / agent 两种） :: {"id":"v32xfin","kind":"pbc","proj":"p1"}
+PASS 7 hybrid 被拒（一个单元只有一个 tag） :: {"error":"请求不合法：不再支持 hybrid（PBC + Agent）单元：一个单元只有一个 tag，要一起上就拆成两个单元、在发布编排里放进同一批次"}
+PASS 7 BA 建工作项 :: "US-04"
+PASS 7 DA 发起交付 :: "v32i_v32xfin_US-04"
+PASS 7 五步跑完，停在「打 tag」 :: {"run":"verified","step":5}
+PASS 7 账本有 test.run / build.succeeded，且没有 deploy.succeeded :: ["item.created","item.run.started","item.step.done","item.step.done","item.step.done","test.run","item.step.done","build.succeeded","item.step.done","item.verified"]
+PASS 7 测试是真跑出来的 :: {"by":"x-qa","commit":"1.0.1","failures":null,"id":"US-04","pass":5,"total":5}
+PASS 7 digest 是 sha256 内容摘要 :: "sha256:901e51041f9ddc1e6e0737a216eaf912186074bc9986dbb3a3e866e6aca63de8"
+PASS 7 SA 打 tag 进池 :: {"commit":"1.0.1","digest":"sha256:901e51041f9ddc1e6e0737a216eaf912186074bc9986dbb3a3e866e6aca63de8","pooled":true,"tag":"v1.0.0","unit":"v32xfin"}
+PASS 7 重复打 tag 被拒 :: {"error":"请求不合法：HEAD 1.0.1 已经打过 tag v1.0.0"}
+PASS 7 单元 HEAD 上有 tag :: {"head":"1.0.1","headTag":"v1.0.0"}
+PASS 7 打 tag 后编排里就绪 :: {"ready":true}
+PASS 8 Backlog 有版本下拉
+PASS 8 story / task 分层渲染 :: {"stories":3,"tasks":7}
+PASS 8 工作项在工作项表里、文档默认收起且在后面 :: {"sel":true,"stories":3,"tasks":7,"docCollapsed":true,"order":true}
+PASS 9 平台员工 5 名 / 交付产物 2 个 :: {"workers":5,"products":2}
+PASS 9 页面上没有「质检工程师 / 催缴专员」这类错位命名 :: "Agent 工厂员工是平台自带的执行者；被交付、被评测、被版本化的是他们生产出来的 Agent。两者不混在一个花名册里。平台员工5 名交付的 Agent2 个在"
+PASS 10 项目页只有 PBC / Agent 两组，没有「PBC + Agent」 :: "项目 · 悦府物业 / 收费与工单数字化项目是承接容器：一个项目一份 BRD，BRD 拆成多个交付单元，每个单元各自交付。归属工作空间「悦府物业」。 打开 BRDBRD（项目级制品）v1.2收费与工单数字化 · 需求说明书 · 负责人 张昆"
+PASS 页面无 JS 异常 :: []
+PASS 无意外 HTTP 错误（脚本自造的 400 除外） :: []
+SUMMARY 37/37 passed
+SHOTS /Users/nukzhang/projects/i3-composer/docs/selftest-v32/shots

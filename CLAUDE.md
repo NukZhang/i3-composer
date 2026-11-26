@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-i3 构建工作台：一份 BRD → 拆成交付单元（PBC / Agent / 组合）→ 每个单元各自跑完「方案 / 原型 / 构建 / 验证 / 发布」五阶段。核心不是把页面画出来，而是让交付过程**可回放、可核对、不掺假**。
+i3 构建工作台：一份 BRD → 拆成交付单元（PBC / Agent）→ 每个单元跑完「方案 / 原型 / 构建 / 验证」四阶段并打 tag → 项目级发布编排按批次上环境。核心不是把页面画出来，而是让交付过程**可回放、可核对、不掺假**。
 
 项目宪法在 `.specify/memory/constitution.md`，冲突时以它为准。
 
@@ -22,8 +22,9 @@ i3 构建工作台：一份 BRD → 拆成交付单元（PBC / Agent / 组合）
 1. **事实日志是唯一权威**：任何状态变化必须先落事实；投影是纯函数；前端不做乐观更新。
 2. **判不了就说判不了**：没有证据的闸输出 `Unknown`，不画绿勾；不产出假 URL / 假 digest / 假测试条数。
 3. **隔离**：`LEDGER_PREFIX` 隔离账本，`WORKFLOW_NAME` 隔离 workflow；实例号 = 前缀 + 单元 + 工作项；重复发起靠 Dapr 409。
-4. **权限只认会话**：请求体里的 `role` 不读；越权 403 且不留事实。
-5. **注释写「为什么」**（中文），不写「是什么」。
+4. **单元只做到可以交付**：机器五步（制品/收敛/提交/测试/构建）跑完停在「打 tag」，部署不在单元里；tag 是发布编排唯一认的东西，批次锁 tag 与 digest、只能整批回滚。
+5. **权限只认会话**：请求体里的 `role` 不读；越权 403 且不留事实。
+6. **注释写「为什么」**（中文），不写「是什么」。
 
 ## 起服务
 
@@ -48,11 +49,11 @@ cd web && npm run build
 
 # 行为验收（Playwright；仓库根的端口按需改）
 cd web/e2e
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v27.cjs   # 全链路 + 重建截图
-BASE=http://127.0.0.1:8080 node acceptance_exec.cjs             # 执行链真证据 + pubsub
-BASE=http://127.0.0.1:8080 node acceptance_flow.cjs             # 写路径与权限
-BASE=http://127.0.0.1:8080 node acceptance_v26.cjs              # 工具体验回归
-BASE=http://127.0.0.1:8080 node acceptance_full.cjs             # 从零建单元全流程
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs   # v3.2 全链路（四阶段/tag/批次/回滚）
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs   # 执行链真证据 + 批次部署 + pubsub
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs   # 写路径与权限（发起 / 打 tag）
+BASE=http://127.0.0.1:8080 node acceptance_v26.cjs                 # 工具体验回归
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs   # 从零建单元全流程
 ```
 
 验收约定：
@@ -60,15 +61,19 @@ BASE=http://127.0.0.1:8080 node acceptance_full.cjs             # 从零建单�
 - **用干净账本**（新 `LEDGER_PREFIX` + 新 `WORK_DIR`）。同一账本跑第二轮会重名重号，断言会乱。
 - 断言查事实流（`/api/items/{id}` 的 `facts`），不查 DOM 文案。
 - 截图与事实同轮生成；`SHOTS`、`RUN_TAG` 可覆盖输出目录与命名。
-- `acceptance_v26` 会真正编辑 Agent 编排并重建，跑完后该账本里 Agent 单元的 digest/评测闸会变红——这是真实反应，不是回归；所以 v27 的闸门截图必须在 v26 之前、同一轮里截。
+- `acceptance_v26` 会真正编辑 Agent 编排并重建，跑完后该账本里 Agent 单元的 digest/评测闸会变红——这是真实反应，不是回归；所以 v32 的截图必须在 v26 之前、同一轮里截。
+- 各套件都会建自己的单元；`acceptance_v32` 断言「项目下 4 个种子单元」，所以它必须跑在别的套件之前（干净账本第一棒）。
 - 依赖：`NODE_PATH=<有 playwright 的 node_modules>`，Chrome 用 ms-playwright 缓存里的 Chromium（见脚本顶部 `CHROME`）。
 
 ## 文档
 
+- `README.md`：项目门面与快速开始
+- `docs/whitepaper.md`：白皮书（问题 / 模型 / 架构 / 边界 / 路线图）
 - `docs/EXECUTION.md`：执行链哪些是真、哪些没接
 - `docs/FRONTEND.md`、`docs/SPEC-frontend-wiring.md`：前后端接线与排障
 - `docs/prototypes/`：v2.x 交互原型
 - `docs/selftest-v27/自测报告.md`：v2.7 全链路自测（含截图与问题清单）
+- `docs/selftest-v32/自测报告.md`：v3.2 全链路自测（四阶段 / 打 tag / 发布批次）
 
 ## 规格驱动开发（spec-kit）
 

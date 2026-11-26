@@ -3,7 +3,6 @@ package wf
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/dapr/durabletask-go/workflow"
 )
@@ -12,10 +11,13 @@ import (
 type RetryPolicy = workflow.RetryPolicy
 
 // Delivery 是一条 backlog 的交付编排：生成制品 → 收敛 → 提交 → 测试 → 构建 →
-// 部署非生产 → 【等人拍板】→ 打 tag 发布。
+// 【机器到这里收手】。打 tag 与发布都不在 workflow 里：
 //
-// 这个函数必须纯粹：所有 IO 都在 activity 里。它唯一「等」的地方是第 7 步，
-// 而那个等待由 Dapr 引擎落盘，进程随时可以死。
+//   - 打 tag 是人在验证页的显式动作，BFF 会重新校验闸门后落账；
+//   - 上哪个环境、和谁一起上，在项目级「发布编排」里定。
+//
+// 这个函数必须纯粹：所有 IO 都在 activity 里。v3.2 起它没有需要等人工的地方，
+// 所以也不会挂起——六步跑完就结束，进程随时可以死。
 func Delivery(ctx *workflow.WorkflowContext) (any, error) {
 	var in Input
 	if err := ctx.GetInput(&in); err != nil {
@@ -25,7 +27,7 @@ func Delivery(ctx *workflow.WorkflowContext) (any, error) {
 	// 每一步的幂等键 = instanceID/step。Dapr 重放同一 activity 时 OpID 不变。
 	op := func(step int) string { return fmt.Sprintf("%s/%d", ctx.ID(), step) }
 
-	steps := []string{ActGenArtifacts, ActConverge, ActCommit, ActTest, ActBuild, ActDeploy}
+	steps := []string{ActGenArtifacts, ActConverge, ActCommit, ActTest, ActBuild}
 
 	for i, name := range steps {
 		in2 := StepInput{Input: in, Step: i, OpID: op(i)}
@@ -44,51 +46,20 @@ func Delivery(ctx *workflow.WorkflowContext) (any, error) {
 		}
 	}
 
-	// 第七步：发布闸。先把「在等」写成事实（L4 靠这条事实发卡片），再挂起。
-	const stepPublish = 6
-	w := StepInput{Input: in, Step: stepPublish, OpID: op(stepPublish) + "/waiting"}
-	var wr StepResult
-	if err := ctx.CallActivity(ActWaiting, workflow.WithActivityInput(w)).Await(&wr); err != nil {
-		return nil, fmt.Errorf("记录等待事实失败：%w", err)
+	// 收口：写「可以交付了」这条事实，工作项停在「打 tag」。
+	const stepVerify = 5
+	v := StepInput{Input: in, Step: stepVerify, OpID: op(stepVerify)}
+	var vr StepResult
+	if err := ctx.CallActivity(ActVerified, workflow.WithActivityInput(v)).Await(&vr); err != nil {
+		return nil, fmt.Errorf("记录交付完成失败：%w", err)
 	}
-
-	// 回答事件：payload 只是「决定 + 谁拍的板」，权限在 BFF 已经判定过。
-	var answer Answer
-	ev := ctx.WaitForExternalEvent(EventPublish, publishWait)
-	if err := ev.Await(&answer); err != nil {
-		// 超时不是失败：记一条 blocked，把决定权交回给人。
-		b := BlockInput{StepInput: StepInput{Input: in, Step: stepPublish, OpID: op(stepPublish) + "/timeout"},
-			Reason: "等待发布确认超时（" + publishWait.String() + "）", By: "i3-pipeline"}
+	if !vr.OK {
+		b := BlockInput{StepInput: StepInput{Input: in, Step: stepVerify, OpID: op(stepVerify) + "/blocked"},
+			Reason: vr.Detail, By: "i3-pipeline"}
 		_ = ctx.CallActivity(ActBlocked, workflow.WithActivityInput(b)).Await(nil)
-		return map[string]any{"ok": false, "step": stepPublish, "reason": "等待发布确认超时"}, nil
+		return map[string]any{"ok": false, "step": stepVerify, "reason": vr.Detail}, nil
 	}
-	if !answer.Approve {
-		b := BlockInput{StepInput: StepInput{Input: in, Step: stepPublish, OpID: op(stepPublish) + "/rejected"},
-			Reason: "发布被拒：" + answer.By, By: answer.By}
-		_ = ctx.CallActivity(ActBlocked, workflow.WithActivityInput(b)).Await(nil)
-		return map[string]any{"ok": false, "step": stepPublish, "reason": "发布被拒"}, nil
-	}
-
-	// 真正发布。注意：这里到「人看到卡片」之间可能隔了三天，
-	// 所以 Publish 内部会重新校验四闸。
-	p := StepInput{Input: in, Step: stepPublish, OpID: op(stepPublish)}
-	var pr StepResult
-	t := ctx.CallActivity(ActPublish, workflow.WithActivityInput(p), workflow.WithActivityRetryPolicy(&RetryPolicy{
-		MaxAttempts:          2,
-		InitialRetryInterval: time.Second,
-		BackoffCoefficient:   2,
-	}))
-	if err := t.Await(&pr); err != nil {
-		return nil, fmt.Errorf("发布失败：%w", err)
-	}
-	if !pr.OK {
-		b := BlockInput{StepInput: StepInput{Input: in, Step: stepPublish, OpID: op(stepPublish) + "/gate"},
-			Reason: pr.Detail, By: "SA"}
-		_ = ctx.CallActivity(ActBlocked, workflow.WithActivityInput(b)).Await(nil)
-		return map[string]any{"ok": false, "step": stepPublish, "reason": pr.Detail}, nil
-	}
-
-	return map[string]any{"ok": true, "tag": pr.Tag, "commit": pr.CommitNo}, nil
+	return map[string]any{"ok": true, "verified": true, "commit": vr.CommitNo}, nil
 }
 
 // Answer 是人通过卡片 / 工作台给出的发布决定。
@@ -140,6 +111,7 @@ func RegisterAs(r *workflow.Registry, a *Activities, name string) error {
 		{ActBuild, activity(a.Build)},
 		{ActDeploy, activity(a.Deploy)},
 		{ActPublish, activity(a.Publish)},
+		{ActVerified, activity(a.Verified)},
 		{ActWaiting, activity(a.Waiting)},
 		{ActBlocked, activity(a.Blocked)},
 	}

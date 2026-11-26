@@ -103,6 +103,10 @@ type Agent struct {
 	ID     string   `json:"id"`
 	Name   string   `json:"n"`
 	Role   string   `json:"role"`
+	// Product 区分两种东西：false = 平台员工（写代码、跑测试、画原型的执行者），
+	// true = 交付给客户的 Agent 产物（随单元走四阶段、有评测集、能打 tag）。
+	// 把两者混在一个花名册里，就会出现「给测试工程师配版本号」这种概念错误。
+	Product bool     `json:"product,omitempty"`
 	Spe    string   `json:"spe"`
 	Task   string   `json:"task"`
 	Ver    string   `json:"ver"`

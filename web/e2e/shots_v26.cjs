@@ -11,6 +11,14 @@ const OUT = process.argv[3] || '/tmp/i3-v26-shots';
   fs.mkdirSync(OUT, { recursive: true });
   const browser = await chromium.launch({ executablePath: CHROME });
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  // 明主题截图：白底更适合放进文档与文章。
+  await ctx.addInitScript(() => {
+    try {
+      localStorage.setItem('i3-theme', 'light');
+    } catch {
+      /* 忽略 */
+    }
+  });
   const page = await ctx.newPage();
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1800);

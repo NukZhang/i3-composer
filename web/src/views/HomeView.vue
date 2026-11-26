@@ -15,11 +15,13 @@ const list = computed(() => {
   if (t === 'review') return S.inbox.filter((x) => x.run === 'waiting');
   if (t === 'mine') return S.inbox.filter((x) => x.by === S.role);
   return S.inbox.filter(
-    (x) => x.owner === S.role && x.st !== 'done' && x.run !== 'waiting' && x.run !== 'published',
+    (x) => x.owner === S.role && x.st !== 'done' && !['waiting', 'verified', 'tagged', 'published'].includes(x.run),
   );
 });
 
-const busy = computed(() => S.agents.filter((a) => (a.st || []).includes('doing')));
+// 工作台只看平台员工：交付的 Agent 是产物，不在这里「在岗」。
+const workers = computed(() => S.agents.filter((a) => !a.product));
+const busy = computed(() => workers.value.filter((a) => (a.st || []).includes('doing')));
 const head = computed(() => (S.units.find((u) => u.id === S.pbcId) || {}).head || '—');
 const tags = computed(() => S.units.filter((u) => u.proj === S.projId).flatMap((u) => u.tags || []));
 
@@ -93,8 +95,8 @@ function unitName(id) {
     </div>
     <div class="card">
       <div class="ch">
-        <span v-html="icon('robot')" /><h3>数字员工</h3><span class="spacer" />
-        <span class="tag t-purple">在岗 {{ busy.length }} / {{ S.agents.length }}</span>
+        <span v-html="icon('robot')" /><h3>平台员工</h3><span class="spacer" />
+        <span class="tag t-purple">在岗 {{ busy.length }} / {{ workers.length }}</span>
       </div>
       <div class="small muted">在办：{{ busy.length ? busy.map((w) => w.n).join('、') : '暂无' }}</div>
       <div class="small muted" style="margin-top: 6px">X 是独立团队，不占真人角色；花名册与执行详情在「Agent 工厂」。</div>
