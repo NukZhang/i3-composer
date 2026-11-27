@@ -183,6 +183,11 @@ async function waitFor(fn, ms, step) {
   check('7 hybrid 被拒（一个单元只有一个 tag）', cuHy.code === 400 && /不再支持 hybrid/.test(cuHy.body.error), cuHy.body);
 
   await role('BA');
+  const at = await api(`/api/artifacts?pbc=${unitID}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifact: 'at', text: '- AT-01 构建质量。Given 当前提交完成构建，When 查看质量报告，Then 机器测试全部通过且构建含 SHA-256 摘要' }),
+  });
+  check('7 BA 保存人工验收标准', at.code === 201, at.body);
   const t = await api('/api/tasks?pbc=' + unitID, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -227,8 +232,22 @@ async function waitFor(fn, ms, step) {
   await page.waitForTimeout(600);
   await page.evaluate(() => { const s = Array.from(document.querySelectorAll('.sidebar .trow.sub2')).find((x) => x.textContent.trim().startsWith('验证')); if (s) s.click(); });
   await page.waitForTimeout(900);
+  await role('SA');
+  check('7 人工验收待判定时页面禁用打 tag', await page.getByRole('button', { name: '打 tag 固化交付物' }).isDisabled());
   await shot('打tag前');
 
+  const pending = await api(`/api/units/${unitID}/tag`, { method: 'POST' });
+  check('7 人工验收待判定时 SA 不能打 tag', pending.code === 400 && /还差 1 条/.test(pending.body.error), pending.body);
+  const st = (await api(`/api/state?pbc=${unitID}`)).body;
+  const head = st.commits[0];
+  const hasEvidence = st.checkCommit === head.no && st.test?.commit === head.no
+    && st.test.total > 0 && st.test.pass === st.test.total && /^sha256:[0-9a-f]{64}$/.test(head.digest);
+  await role('BA');
+  const verdict = hasEvidence && await api(`/api/checks/AT-01/decide?pbc=${unitID}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ st: 'pass', commit: head.no }),
+  });
+  check('7 BA 核实当前提交的测试与摘要并判定通过', verdict?.code === 201, verdict?.body);
   await role('SA');
   const tag = await api(`/api/units/${unitID}/tag`, { method: 'POST' });
   check('7 SA 打 tag 进池', tag.code === 201 && !!tag.body.tag, tag.body);
@@ -299,6 +318,8 @@ async function waitFor(fn, ms, step) {
   check('11 回放带出当时那组闸（四条，含「判不了」）',
     rp.code === 200 && (rp.body.gates || []).length === 4 && rp.body.gates.some((g) => g.unknown),
     rp.body && rp.body.gates);
+  check('11 回放保留打 tag 时通过的人工验收',
+    (rp.body.checks || []).some((c) => c.id === 'AT-01' && c.st === 'pass'), rp.body.checks);
   check('11 回放窗口右端是 tag.created 的 seq', rp.code === 200 && (rp.body.facts || []).some((f) => f.seq === rp.body.seq && f.type === 'tag.created'), rp.body && { seq: rp.body.seq });
   // 证据先于凭据落账：闸那条紧挨着 tag 那条。
   const tagFacts = (await api(`/api/facts?pbc=${unitID}`)).body.facts.map((f) => f.type);

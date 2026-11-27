@@ -174,6 +174,26 @@ const api = (page, path, opts) =>
   }), 15000, 800);
   check('2c 页面黄条列出 waived 的两项', !!waiveText && /范围边界/.test(waiveText) && /上下文齐备/.test(waiveText), waiveText && waiveText.slice(0, 120));
 
+  const bareVerified = await waitFor(async () => {
+    const { body } = await api(page, `/api/state?pbc=${unit}`);
+    return body.items[bareID]?.run === 'verified' ? body : null;
+  }, 90000, 1000);
+  check('2c 未保存人工 AT 的提交也能完成机器五步', !!bareVerified, bareVerified?.commits[0]?.no);
+  await page.click('.rolebtn:has-text("SA")');
+  await page.waitForTimeout(600);
+  const noChecks = await api(page, `/api/units/${unit}/tag`, { method: 'POST' });
+  check('2c 零条人工验收被打 tag 门禁拒绝',
+    !(bareVerified?.checks || []).length && noChecks.code === 400 && /没有对应的人工验收清单/.test(noChecks.body.error),
+    noChecks.body);
+
+  await page.click('.rolebtn:has-text("BA")');
+  await page.waitForTimeout(600);
+  const at = await api(page, `/api/artifacts?pbc=${unit}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifact: 'at', text: '- AT-01 构建质量。Given 当前提交完成构建，When 查看质量报告，Then 机器测试全部通过且构建含 SHA-256 摘要' }),
+  });
+  check('2c BA 保存人工验收标准', at.code === 201, at.body);
+
   // ---- 3. 切 DA 发起：真实 workflow 自动推进到「待打 tag」----
   await page.click('.rolebtn:has-text("DA")');
   await page.waitForTimeout(600);
@@ -208,6 +228,16 @@ const api = (page, path, opts) =>
   check('4 越权后账本状态没变（无 tag）', !afterDeny.tag && afterDeny.no === before.no, { before: before.tag, after: afterDeny.tag });
 
   // ---- 5. SA 打 tag → 进「发布编排」池 ----
+  await page.click('.rolebtn:has-text("BA")');
+  await page.waitForTimeout(600);
+  const st = (await api(page, `/api/state?pbc=${unit}`)).body;
+  const hasEvidence = st.checkCommit === before.no && st.test?.commit === before.no
+    && st.test.total > 0 && st.test.pass === st.test.total && /^sha256:[0-9a-f]{64}$/.test(before.digest);
+  const verdict = hasEvidence && await api(page, `/api/checks/AT-01/decide?pbc=${unit}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ st: 'pass', commit: before.no }),
+  });
+  check('5 BA 核实当前提交的测试与摘要并判定通过', verdict?.code === 201, verdict?.body);
   await page.click('.rolebtn:has-text("SA")');
   await page.waitForTimeout(600);
   const ok = await api(page, `/api/units/${unit}/tag`, { method: 'POST' });

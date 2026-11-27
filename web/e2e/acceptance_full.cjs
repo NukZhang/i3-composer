@@ -66,6 +66,12 @@ async function waitFor(fn, ms, step) {
 
   // ---- 3. 建任务 ----
   await setRole('BA');
+  const atText = '- AT-01 构建质量。Given 当前提交完成构建，When 查看质量报告，Then 机器测试全部通过且构建含 SHA-256 摘要';
+  const at = await api('/api/artifacts?pbc=' + unitID, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifact: 'at', text: atText }),
+  });
+  check('3 BA 保存人工验收标准', at.code === 201, at.body);
   const title = '端到端验收-' + Date.now();
   const task = await api('/api/tasks?pbc=' + unitID, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -102,9 +108,9 @@ async function waitFor(fn, ms, step) {
   const hasTest = Object.keys(files).indexOf('main_test.go') >= 0;
   check('6 代码制品带可编译的文件（go.mod / main.go / main_test.go）',
     hasGoMod && hasMain && hasTest, Object.keys(files));
-  const atVer = (vers.at || []).slice(-1)[0] || {};
-  check('6 AT 制品有验收标准正文', typeof atVer.md === 'string' && atVer.md.length > 50,
-    (atVer.md || '').slice(0, 60));
+  const head = st.body.commits[0];
+  const atVer = (vers.at || []).find((v) => v.v === head.tree.at);
+  check('6 当前提交的 AT 保留人工验收标准正文', atVer?.md === atText, atVer?.md);
 
   // ---- 7. 测试结论是真实跑出来的 ----
   const facts = await api('/api/items/' + itemID + '?pbc=' + unitID);
@@ -122,6 +128,15 @@ async function waitFor(fn, ms, step) {
   check('9 单元交付不部署（部署属于发布批次）', !deployFact, deployFact && deployFact.payload);
 
   // ---- 10. 打 tag → 批次发布 ----
+  await setRole('BA');
+  const test = st.body.test;
+  const hasEvidence = st.body.checkCommit === head.no && test?.commit === head.no
+    && test.total > 0 && test.pass === test.total && /^sha256:[0-9a-f]{64}$/.test(digest);
+  const verdict = hasEvidence && await api('/api/checks/AT-01/decide?pbc=' + unitID, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ st: 'pass', commit: head.no }),
+  });
+  check('10 BA 核实当前提交的测试与摘要并判定通过', verdict?.code === 201, verdict?.body);
   await setRole('SA');
   const tag = await api('/api/units/' + unitID + '/tag', { method: 'POST' });
   check('10 SA 打 tag 进池', tag.code === 201 && !!tag.body.tag, tag.body);
