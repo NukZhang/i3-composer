@@ -146,6 +146,11 @@ onUnmounted(() => closeStream && closeStream());
     <div class="avatar">{{ (S.roleName || 'BA').slice(0, 2) }}</div>
   </div>
 
+  <!-- 与账本失联（#55）：保留最后一次成功数据，黄条说明现状，自动重连成功后自己消失 -->
+  <div v-if="S.degraded" class="degraded" role="status">
+    <span class="dot" /> {{ S.degraded }}
+  </div>
+
   <div class="body">
     <SideBar />
     <main class="stage">

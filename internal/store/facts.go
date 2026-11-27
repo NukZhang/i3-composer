@@ -347,6 +347,10 @@ func (s *Store) findOp(ctx context.Context, pbc string, h head, opID string) (*F
 	return nil, nil
 }
 
+// StateStore 是账本所在的 Dapr 状态组件名。健康探测（#55）用它直接读一格，
+// 不经过账本逻辑——探测的是「sidecar 通不通」，不是「账本对不对」。
+func (s *Store) StateStore() string { return s.state }
+
 // Load 读出某个 PBC 的全部事实，按 seq 升序。遇哈希链断裂立即报错——
 // 宁可服务不可用，也不能把被篡改的日志当成真的。
 func (s *Store) Load(ctx context.Context, pbc string) ([]Fact, error) {

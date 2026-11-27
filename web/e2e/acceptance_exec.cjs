@@ -21,6 +21,20 @@ function check(name, ok, detail) {
   console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail === undefined ? '' : ' :: ' + JSON.stringify(detail)));
 }
 
+// healthPre 先问 /api/health：连不上、以及「BFF 在但账本失联」（503 + degraded=dapr，见 #55）
+// 都算前置不通，并且把 sidecar 的结论带出来——带着失联的账本跑整轮，每条 check 都会是假的。
+async function healthPre(BASE) {
+  let r;
+  try { r = await fetch(BASE + '/api/health'); } catch (e) { return { ok: false, reason: '连不上，先起服务再跑' }; }
+  let b = null;
+  try { b = await r.json(); } catch { /* 非 JSON */ }
+  const d = (b && b.dapr) || {};
+  if (!r.ok || (b && b.ok === false) || d.ok === false) {
+    return { ok: false, reason: 'BFF 在，但与账本失联（sidecar 连不上），先起 sidecar 再跑', code: r.status, dapr: d, health: b && { ok: b.ok } };
+  }
+  return { ok: true };
+}
+
 (async () => {
   const browser = await chromium.launch({ executablePath: CHROME });
   const ctx = await browser.newContext();
@@ -39,9 +53,9 @@ function check(name, ok, detail) {
 
   // 服务起没起先说清楚：连不上时 goto 会抛一句「navigating to …」，
   // 看不出是哪个接口、什么状态。前置不通就只报这一条，后面无从谈起（#56）。
-  const up = await fetch(BASE + '/api/health').then((r) => r.ok).catch(() => false);
-  if (!up) {
-    check('前置：BFF 可用（' + BASE + '）', false, { reason: '连不上，先起服务再跑' });
+  const up = await healthPre(BASE);
+  if (!up.ok) {
+    check('前置：BFF 可用（' + BASE + '）', false, up);
     await browser.close();
     console.log('SUMMARY 0/' + results.length + ' passed');
     process.exit(1);

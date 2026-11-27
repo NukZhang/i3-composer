@@ -20,6 +20,11 @@ import (
 // ErrConflict 表示状态写入的 etag 不匹配（并发写输家）。
 var ErrConflict = errors.New("dapr: state etag conflict")
 
+// ErrDown 表示重试之后仍然连不上 sidecar（#55）。
+// 它与「账本坏了」（哈希链断裂等）是两件事：前者等一会儿就好，后者等多久都好不了。
+// 调用方据此回 503 + retryable，而不是 500。
+var ErrDown = errors.New("dapr: sidecar 失联")
+
 // Unreachable 判断一次状态读写是不是「连不上 sidecar」。
 // 连接被拒、sidecar 在重启、3xx/5xx 都属于可重试；业务语义错误（409 等）不算。
 // 调用方据此决定等一下再试，而不是当成账本坏了。
@@ -56,7 +61,53 @@ func New(baseURL string) *Client {
 }
 
 // GetState 读一个键，返回原始 JSON 与 etag。键不存在时 etag 为空、raw 为 nil。
+//
+// 这是读路径唯一的出口：连不上 sidecar 时先重试（见 retryRead），
+// 重试完还不行就返回包着 ErrDown 的错误（#55）。
 func (c *Client) GetState(ctx context.Context, store, key string) (raw []byte, etag string, err error) {
+	err = c.retryRead(ctx, func() (e error) {
+		raw, etag, e = c.getStateOnce(ctx, store, key)
+		return e
+	})
+	return raw, etag, err
+}
+
+// retryRead 是读路径的重试：只对「连不上」重试，业务错误（404/409/哈希链）一次就回。
+//
+// 为什么不重试写：写已经有 CAS + 幂等键兜底，而且重试写会让「到底落了几次」
+// 变模糊；读不一样——读失败了页面就白屏，重试一次的代价远小于一次白屏。
+// 为什么是 3 次 × 100ms：sidecar 重启的窗口通常是几百毫秒到两秒，
+// 3 次能吃掉绝大多数瞬时抖动；真连不上时也不能让一个请求卡住几十秒。
+func (c *Client) retryRead(ctx context.Context, fn func() error) error {
+	const attempts = 3
+	var err error
+	for i := 1; i <= attempts; i++ {
+		err = fn()
+		if err == nil || !Unreachable(err) {
+			return err
+		}
+		if i == attempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			// 客户端已经走了：它不会再读这个响应，重试没有意义。
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("%w：%v", ErrDown, err)
+}
+
+// FailHint 把 sidecar 失联说成「等一会儿再试」，给人一句话而不是一串 url.Error。
+func FailHint(err error) string {
+	if errors.Is(err, ErrDown) {
+		return "与账本失联，正在重连（Dapr sidecar 连不上，已自动重试）"
+	}
+	return ""
+}
+
+func (c *Client) getStateOnce(ctx context.Context, store, key string) (raw []byte, etag string, err error) {
 	u := fmt.Sprintf("%s/v1.0/state/%s/%s", c.base, url.PathEscape(store), url.PathEscape(key))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -167,7 +218,15 @@ type AppConnection struct {
 
 // AppConnection 读 sidecar 的 app 连接配置。读不到（sidecar 没起、版本不认）时返回错误，
 // 调用方据此区分「没配」与「配错了」。
-func (c *Client) AppConnection(ctx context.Context) (AppConnection, error) {
+func (c *Client) AppConnection(ctx context.Context) (ac AppConnection, err error) {
+	err = c.retryRead(ctx, func() error {
+		ac, err = c.appConnectionOnce(ctx)
+		return err
+	})
+	return ac, err
+}
+
+func (c *Client) appConnectionOnce(ctx context.Context) (AppConnection, error) {
 	var zero AppConnection
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1.0/metadata", nil)
 	if err != nil {
@@ -276,7 +335,17 @@ func (st *WorkflowStatus) DaprStatus() string {
 }
 
 // GetWorkflow 查询实例状态。实例不存在返回 (nil, nil)。
-func (c *Client) GetWorkflow(ctx context.Context, component, instanceID string) (*WorkflowStatus, error) {
+//
+// 读路径同样带重试（#55）：对账时一次抖动不该被当成「实例不存在」。
+func (c *Client) GetWorkflow(ctx context.Context, component, instanceID string) (st *WorkflowStatus, err error) {
+	err = c.retryRead(ctx, func() error {
+		st, err = c.getWorkflowOnce(ctx, component, instanceID)
+		return err
+	})
+	return st, err
+}
+
+func (c *Client) getWorkflowOnce(ctx context.Context, component, instanceID string) (*WorkflowStatus, error) {
 	u := fmt.Sprintf("%s/v1.0/workflows/%s/%s", c.base, url.PathEscape(component), url.PathEscape(instanceID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

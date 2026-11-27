@@ -135,7 +135,11 @@ func run() error {
 	}()
 
 	// 启动自检放在种子与监听之前：名字没被认领时不写任何数据、也不对外服务（#60）。
-	if err := checkWiring(ctx, dc, probe, wfName); err != nil {
+	// SKIP_PROBE=1 只给「只想验证读路径/页面降级」的隔离实例用（#55 验收）：
+	// 它没有自己的 sidecar，探针必然失败。默认仍然要过这关——公共验收跑的是默认值。
+	if os.Getenv("SKIP_PROBE") == "1" {
+		slog.Warn("SKIP_PROBE=1：跳过启动自检（只用于隔离的只读验证，不要用在验收上）")
+	} else if err := checkWiring(ctx, dc, probe, wfName); err != nil {
 		return err
 	}
 

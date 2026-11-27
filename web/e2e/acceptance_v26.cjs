@@ -35,9 +35,12 @@ function check(name, ok, detail) {
   try {
   // 服务起没起先说清楚：连不上时 goto 会抛一句「navigating to …」，
   // 看不出是哪个接口、什么状态。前置不通就只报这一条，后面无从谈起（#56）。
-  const up = await fetch(BASE + '/api/health').then((r) => r.ok).catch(() => false);
+  // 与 #55 一致：BFF 在但账本失联（503 + degraded=dapr）也算前置不通——
+  // 带着失联的账本跑整轮，每条 check 都是假的。
+  const pre = await fetch(BASE + '/api/health').then(async (r) => ({ ok: r.ok, b: await r.json().catch(() => null) })).catch(() => ({ ok: false }));
+  const up = pre.ok && !(pre.b && pre.b.ok === false);
   if (!up) {
-    check('前置：BFF 可用（' + BASE + '）', false, { reason: '连不上，先起服务再跑' });
+    check('前置：BFF 可用（' + BASE + '）', false, pre.ok ? { reason: 'BFF 在，但与账本失联，先起 sidecar', dapr: pre.b && pre.b.dapr } : { reason: '连不上，先起服务再跑' });
     await browser.close();
     console.log('SUMMARY 0/' + results.length + ' passed');
     process.exit(1);

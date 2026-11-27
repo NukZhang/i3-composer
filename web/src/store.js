@@ -61,6 +61,9 @@ export const S = reactive({
   inbox: [],        // /api/inbox
 
   // 纯展示态（不进账本）
+  // degraded：与账本失联时的降级状态（#55）。非空时页面保留最后一次成功投影，
+  // 顶部挂黄条并自动重连——不能因为一次抖动就把账本"清空"成第二份真相（状态为空）。
+  degraded: '',
   toasts: [],
   runtime: [],      // 右栏运行时日志
   // 每次重拉投影自增：账本外的东西（如发布批次）没有状态可挂，
@@ -171,6 +174,19 @@ async function loadGlobal() {
 let inflight = null;
 let pending = false;
 let lastError = '';
+let retryTimer = null;
+
+// RETRY_MS 是失联后的自动重连间隔。sidecar 重启通常是秒级；
+// 2 秒一次既不会在它没起来时刷屏，也不会让人盯着旧数据干等。
+const RETRY_MS = 2000;
+
+function scheduleRetry() {
+  if (retryTimer) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    refresh();
+  }, RETRY_MS);
+}
 
 // refresh 是唯一的同步入口：所有写操作成功后都调它。
 export function refresh() {
@@ -191,9 +207,15 @@ export function refresh() {
       S.facts = S.pbcId ? (await api.facts(S.pbcId, 60)).facts || [] : [];
       S.tick++;
       lastError = '';
+      // 恢复正常的这一刻把黄条撤掉：降级状态只活在失联期间。
+      S.degraded = '';
     } catch (e) {
       // 拉不到就保留上一份投影；同一条错误只提示一次（SSE 断线时不会刷屏）。
-      if (e.message !== lastError) {
+      // 可重试的（sidecar 失联）挂黄条、自动重连，不弹错误——那不是用户做错了什么（#55）。
+      if (e.retryable) {
+        S.degraded = e.message;
+        scheduleRetry();
+      } else if (e.message !== lastError) {
         lastError = e.message;
         toast('拉取账本失败：' + e.message, 'err');
       }

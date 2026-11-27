@@ -7,9 +7,13 @@
 //   3. 错误只把后端原文抛出来，前端不发明措辞。
 
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, body) {
     super(message);
     this.status = status;
+    // retryable：服务端说「现在读不到账本，稍后再试」（503 + degraded=dapr，见 #55）。
+    // 界面据此保留上一份投影、挂黄条自动重连，而不是把页面清空。
+    this.retryable = !!(body && body.retryable);
+    this.degraded = (body && body.degraded) || '';
   }
 }
 
@@ -25,8 +29,15 @@ async function request(path, opts) {
       body = null; // 非 JSON：保留 null，错误信息退化成状态码
     }
   }
+  if (body && body.retryable) {
+    // 标准做法报 503；部分代理/网关会把 5xx 改写成 200 再透传 JSON。
+    // 判据以 body 为准：只要服务端说「可重试」，就按失联处理（#55）。
+    const e = new ApiError(body.error || '请求失败', 503, body);
+    e.httpStatus = r.status;
+    throw e;
+  }
   if (!r.ok) {
-    throw new ApiError((body && body.error) || '请求失败（HTTP ' + r.status + '）', r.status);
+    throw new ApiError((body && body.error) || '请求失败（HTTP ' + r.status + '）', r.status, body);
   }
   return body;
 }

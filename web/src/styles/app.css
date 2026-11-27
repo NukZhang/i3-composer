@@ -435,6 +435,10 @@ input:focus,textarea:focus{border-color:var(--accent)}
 textarea{resize:vertical;min-height:62px}
 .mfoot{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:7px;z-index:80;align-items:center}
+.degraded{display:flex;align-items:center;gap:8px;padding:6px 14px;font-size:12px;
+  background:var(--bg-warn-soft);color:var(--warn);border-bottom:1px solid var(--line-warn)}
+.degraded .dot{width:6px;height:6px;border-radius:50%;background:var(--warn);animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 .tst{background:var(--bg-el);border:1px solid var(--line-tst);border-radius:8px;padding:8px 14px;font-size:12.5px;color:var(--tx-2);box-shadow:0 10px 30px var(--shadow-2);animation:up .2s}
 .tst.ok{border-color:var(--line-ok);color:var(--ok-tx2)}
 .tst.warn{border-color:var(--line-warn);color:var(--warn-2)}

@@ -170,6 +170,20 @@ func (s *Server) wrap(h handler) http.HandlerFunc {
 		}
 		ctx := reqCtx{Role: role, PBC: pbc, ItemID: r.PathValue("id")}
 		if err := h(w, r, ctx); err != nil {
+			// sidecar 失联不是「服务写错了」，是「现在读不到账本」（#55）：
+			// 回 503 + retryable，客户端据此保留上一份投影、稍后自动重试，
+			// 而不是把 500 当成账本坏了把页面清空。
+			if errors.Is(err, dapr.ErrDown) {
+				slog.Warn("bff", "path", r.URL.Path, "degraded", "dapr", "err", err)
+				w.Header().Set("Retry-After", "2")
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+					"error":     dapr.FailHint(err),
+					"detail":    err.Error(),
+					"retryable": true,
+					"degraded":  "dapr",
+				})
+				return
+			}
 			code := http.StatusInternalServerError
 			if errors.Is(err, ErrForbidden) {
 				code = http.StatusForbidden
@@ -638,7 +652,38 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	if s.Pubsub != nil {
 		body["pubsub"] = s.Pubsub
 	}
+	// health 要真的读一次账本（#55）：以前它只回 ok:true，sidecar 挂了也说自己健康，
+	// 前置检查、编排入口、e2e 的「起没起」判断全被这一句骗过去。
+	d := s.checkDapr(r.Context())
+	body["dapr"] = d
+	if d["ok"] != true {
+		body["ok"] = false
+		writeJSON(w, http.StatusServiceUnavailable, body)
+		return
+	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+// checkDapr 探一次账本读：读 headKey 那一格就够（不拉整本账）。
+// 探不到时给出 retryable 与一句人话，好让前端挂黄条、e2e 中止而不是继续跑。
+func (s *Server) checkDapr(ctx context.Context) map[string]any {
+	out := map[string]any{"ok": true}
+	if s.Dapr == nil || s.Log == nil {
+		out["checked"] = false
+		out["detail"] = "未配置 Dapr 客户端或账本，跳过探测"
+		return out
+	}
+	out["checked"] = true
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	// 读一个一定存在的键：账本前缀本身不带 pbc 也会有一格 head；
+	// 不存在返回空也不报错——那说明 sidecar 是通的。
+	if _, _, err := s.Dapr.GetState(ctx, s.Log.StateStore(), "__health_probe__"); err != nil {
+		out["ok"] = false
+		out["retryable"] = true
+		out["detail"] = dapr.FailHint(err) + "：" + err.Error()
+	}
+	return out
 }
 
 // CheckPubsubWiring 对比 sidecar 的 app-port 与本进程端口。
