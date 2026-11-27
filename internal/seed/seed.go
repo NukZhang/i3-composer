@@ -748,6 +748,9 @@ func seedBaseline(ctx context.Context, log *store.Store, pbc, name string, spec 
 	}
 	// 基线 tag 按单元现场给：手段上必须和原型一致——
 	// 有的单元打过（dun v2.0.0），有的没打（fee / dunx），编排页才看得出「就绪 / 阻塞」。
+	// 基线 tag 只有 tag.created，没有 gate.evaluated：种子写于「打 tag 要留依据」
+	// 这条规矩之前。回放对这类基线如实说「当时没记录闸门」，不拿今天的账本
+	// 补一组 —— 老账本补不上当时的判定，这件事本身就该被看见。
 	if spec.tag != "" {
 		if _, err := log.AppendOp(ctx, pbc, "seed/"+pbc+"/baseline/tag", store.FactTagCreated, ActorSeed,
 			map[string]any{"tag": spec.tag, "commit": "1.0.1", "digest": digest}); err != nil {

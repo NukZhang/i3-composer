@@ -134,6 +134,32 @@ function toggleRow(i) {
                       <span class="small muted">judge {{ c.score.toFixed(2) }} · {{ c.ms }} · {{ c.tok }} token</span>
                     </div>
                     <div class="small" style="color: var(--tx-3); line-height: 1.75"><b style="color: var(--tx-6)">判官理由：</b>{{ c.why }}</div>
+                    <!-- 当轮装配：失败要能分清「没召回」还是「进了答歪」。
+                         取的是沉淀这条用例时那一轮的装配（c.assemblies），不是最新一轮。 -->
+                    <template v-if="(c.assemblies || []).length">
+                      <div class="small muted" style="margin: 8px 0 4px">当轮装配（这条用例当时读到的上下文）</div>
+                      <div v-for="(asm, k) in c.assemblies" :key="'a' + k" class="tree-box" style="margin: 0 0 6px">
+                        <div class="tree-line">
+                          <span class="k" style="width: 104px">{{ asm.node }} · {{ asm.loaded.length }} 篇</span>
+                          <span class="v">
+                            省略 {{ asm.omitted.count }} 篇
+                            <span v-if="asm.omitted.count" style="color: var(--warn)">（{{ asm.omitted.reason }}）</span>
+                            <span style="color: var(--tx-12)"> · 预算 {{ (asm.budget.used * 100).toFixed(1) }}%</span>
+                          </span>
+                        </div>
+                        <div v-for="(d, j) in asm.loaded" :key="'d' + j" class="tree-line">
+                          <span class="k" style="width: 104px" />
+                          <span class="v small">{{ d.lib }}/{{ d.doc }} <span style="color: var(--tx-12)">ver {{ d.ver || '未登记' }} · 命中 {{ d.score }}</span></span>
+                        </div>
+                        <div v-if="!asm.loaded.length" class="tree-line">
+                          <span class="k" style="width: 104px" />
+                          <span class="v small" style="color: var(--warn)">一篇都没载入（没召回）</span>
+                        </div>
+                      </div>
+                    </template>
+                    <div v-else class="small muted" style="margin: 8px 0 4px">
+                      当轮装配：这条用例没有记录装配（沉淀时还没有 context.assembled 事实，不补今天的装配冒充当时）
+                    </div>
                     <div class="small muted" style="margin: 8px 0 4px">这条的执行轨迹</div>
                     <div class="tree-box" style="margin: 0">
                       <div v-for="(t, j) in agent.trace" :key="j" class="tree-line">

@@ -78,6 +78,12 @@ type EvalCase struct {
 	Tok   string  `json:"tok"`
 	Score float64 `json:"score"`
 	OK    bool    `json:"ok"`
+	// Assemblies 是沉淀这条用例时那一轮的上下文装配结果。
+	//
+	// 评测说「这条失败」时，光有输入输出回答不了「是不是没召回」；
+	// 把当轮装配钉在用例上，点开失败详情就能看到这一轮到底载入了什么、
+	// 漏了多少——而不是去查最新一轮（那条常常已经不是失败的那次了）。
+	Assemblies []ContextAssembly `json:"assemblies,omitempty"`
 }
 
 // FailGroup 是失败聚类：同一原因归一组。
@@ -140,6 +146,21 @@ type Agent struct {
 	Published  bool   `json:"published"`
 	Rollout    int    `json:"rollout"`              // 10 / 50 / 100，0 表示未放量
 	RollbackTo string `json:"rollbackTo,omitempty"` // 最近一次回滚目标版本
+}
+
+// Allows 判定一个工具在不在白名单里。执行器用它拦越界调用。
+//
+// 白名单为空时一律不许：那不是「不限制」，是「没给权限」。
+func (a *Agent) Allows(tool string) bool {
+	if a == nil || tool == "" {
+		return false
+	}
+	for _, t := range a.Tools {
+		if t == tool {
+			return true
+		}
+	}
+	return false
 }
 
 // Rate 返回评测通过率；没有用例时返回 0。
@@ -225,10 +246,20 @@ func AgentGates(a *Agent) []Gate {
 	if !closed && detail == "方案 / 原型 / 构建 / 验证 / 发布 齐" {
 		detail = "定义链不完整"
 	}
+	// 「无越权」必须是算出来的，不能因为「名单非空」就说。编排里用了名单外的
+	// 工具，执行器照样会跑（它只认工具名）——这条闸以前只看了名单非空，
+	// 于是把「没核对」说成了「没问题」。
 	toolsOK := len(a.Tools) > 0
 	toolsDetail := fmt.Sprintf("%d 个，无越权", len(a.Tools))
+	// 白名单为空时下面必然没有越界项（一个都不允许），但那条红要单独说清楚：
+	// 「没给名单」和「给了名单但有越界」是两种毛病，修法不同。
 	if !toolsOK {
 		toolsDetail = "没有工具白名单"
+	} else if a.Flow != nil {
+		if outside := a.Flow.ToolsOutside(a.Tools); len(outside) > 0 {
+			toolsOK = false
+			toolsDetail = DescribeOutside(outside)
+		}
 	}
 	a.EnsureDigest()
 	digestOK := a.BuiltDigest != "" && a.BuiltDigest == a.Digest

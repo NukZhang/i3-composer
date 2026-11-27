@@ -15,6 +15,7 @@ import (
 
 	"github.com/zhangkun/i3-composer/internal/agentexec"
 	"github.com/zhangkun/i3-composer/internal/dapr"
+	"github.com/zhangkun/i3-composer/internal/domain"
 	"github.com/zhangkun/i3-composer/internal/pipeline"
 	"github.com/zhangkun/i3-composer/internal/store"
 	"github.com/zhangkun/i3-composer/internal/wf"
@@ -94,6 +95,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/tasks", s.wrap(s.createTask))
 	m.HandleFunc("GET /api/items/{id}", s.wrap(s.getItem))
 	m.HandleFunc("POST /api/items/{id}/run", s.wrap(s.runItem))
+	// 准入被拒后补输入：补的是验收口径 / 数据范围 / 责任人，发起时重判。
+	m.HandleFunc("POST /api/items/{id}/inputs", s.wrap(s.admitInputs))
 	m.HandleFunc("POST /api/items/{id}/answer", s.wrap(s.answer))
 	m.HandleFunc("POST /api/role", s.wrap(s.setRole))
 	m.HandleFunc("GET /api/timeline/stream", s.stream)
@@ -113,6 +116,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/workspaces/join", s.wrap(s.joinWorkspace))
 	// v3.2：单元把 tag 打进「发布编排」池；发布是项目级动作，批次只能整批回滚。
 	m.HandleFunc("POST /api/units/{id}/tag", s.wrap(s.tagUnit))
+	// 只读回放：按 tag.created 的时点重算当时的投影，回答「凭什么能发」。
+	m.HandleFunc("GET /api/units/{id}/replay", s.wrap(s.replay))
 	m.HandleFunc("GET /api/projects/{id}/orch", s.wrap(s.orch))
 	m.HandleFunc("POST /api/projects/{id}/orch/release", s.wrap(s.release))
 	m.HandleFunc("POST /api/projects/{id}/orch/rollback", s.wrap(s.rollback))
@@ -238,6 +243,8 @@ type Task struct {
 	Blocked   string       `json:"blocked,omitempty"`
 	BlockedBy string       `json:"blockedBy,omitempty"`
 	At        string       `json:"at,omitempty"`
+	// Admit 是入口准入的最近一次结论：页面据此挂 waiver 黄条或拒单三行。
+	Admit *store.AdmitInfo `json:"admit,omitempty"`
 }
 
 func toTask(it *store.Item) Task {
@@ -246,7 +253,7 @@ func toTask(it *store.Item) Task {
 		Parent: it.Parent,
 		PBC:    it.PBC, Type: it.Type, Mode: it.Mode, Env: it.Env, Run: it.Run, Step: it.Step,
 		Steps: it.Steps, Version: it.Version, Tag: it.Tag, URL: it.URL, By: it.By,
-		Blocked: it.Blocked, BlockedBy: it.BlockedBy, At: it.At,
+		Blocked: it.Blocked, BlockedBy: it.BlockedBy, At: it.At, Admit: it.Admit,
 	}
 }
 
@@ -334,10 +341,14 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		return err
 	}
 	var in struct {
-		Title string `json:"title"`
-		Type  string `json:"type"`
-		Env   string `json:"env"`
-		Mode  string `json:"mode"`
+		Title    string   `json:"title"`
+		Type     string   `json:"type"`
+		Env      string   `json:"env"`
+		Mode     string   `json:"mode"`
+		Accept   []string `json:"accept"`
+		Data     []string `json:"data"`
+		AcceptBy string   `json:"acceptBy"`
+		ComplyBy string   `json:"complyBy"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 		return fmt.Errorf("%w：%v", errBadRequest, err)
@@ -355,6 +366,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, c reqCtx) er
 	if in.Mode == "" {
 		in.Mode = "fast"
 	}
+	// 准入输入随建单一起落账。它们此时可以空——准入是「发起交付」那道门的事，
+	// 不是建单的门：需求池允许先记下一句要做什么，再回头补口径。
+	// 但写了就要看得见，所以原样进事实，不在这里悄悄丢掉。
 
 	// 编号在全项目范围内取：需求池是各单元工作项合起来看的，
 	// 各单元各自从 US-01 开始会出现两个 US-01，谁也说不清指哪一条。
@@ -364,7 +378,10 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, c reqCtx) er
 	}
 	it := store.Item{
 		ID: id, Title: in.Title, PT: 3, St: "todo", Owner: "—", Kind: "Story",
-		PBC: c.PBC, Type: in.Type, Mode: in.Mode, Env: in.Env, Run: "idea",
+		PBC:  c.PBC,
+		Type: in.Type, Mode: in.Mode, Env: in.Env, Run: "idea",
+		Accept: in.Accept, Data: in.Data,
+		AcceptBy: strings.TrimSpace(in.AcceptBy), ComplyBy: strings.TrimSpace(in.ComplyBy),
 		By: string(c.Role), At: time.Now().Format("01-02 15:04"),
 	}
 	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactItemCreated, string(c.Role), it); err != nil {
@@ -493,6 +510,29 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 		return fmt.Errorf("%w：%s 不是可执行的工作项", errBadRequest, c.ItemID)
 	}
 
+	// 入口准入：硬项不过就停在这里，不落 item.run.started、不调 sidecar。
+	// 与宪法 V「越权不留事实」同一条道理——被拒的发起不该留下半条链，
+	// 否则账本里会出现一条「跑过」却没有任何步骤的事实指向不存在的执行。
+	adm := domain.Admit(s.admitInput(v, it))
+	if !adm.Pass {
+		reasons := make([]string, 0, len(adm.Reasons))
+		for _, r := range adm.Reasons {
+			reasons = append(reasons, fmt.Sprintf("%s：%s；找 %s；%s", r.Label, r.Missing, r.Ask, r.Fix))
+		}
+		// 拒绝也要留痕：账本记「谁在什么时候被哪几项挡住」，页面才解释得清。
+		if _, err := s.Log.Append(r.Context(), c.PBC, store.FactItemAdmitRejected, c.Role.String(),
+			map[string]any{"id": it.ID, "reasons": reasons, "by": c.Role.String()}); err != nil {
+			return err
+		}
+		s.publish(c.PBC, "item.admit.rejected", map[string]any{"id": it.ID})
+		return fmt.Errorf("%w：%s 入口准入没过\n%s", errBadRequest, it.ID, strings.Join(reasons, "\n"))
+	}
+	// 软项不过放行，但把「哪项没补」落成事实，页面顶部挂黄条——
+	// 别把自己卡死，也别假装五项都判过了。
+	//
+	// 落账放在实例真的起来之后（见下）：409 锁冲突或 sidecar 启动失败时，
+	// 这次发起并没有发生，账本里就不该留一条「被准入放行」。
+
 	// Ledger 跟着工作项走：工作项落到哪个进程执行是 Dapr 决定的，
 	// 账本前缀必须由发起方带过去，不能由执行方自己猜。
 	in := wf.Input{ItemID: it.ID, PBC: it.PBC, Title: it.Title, Type: it.Type, Env: it.Env, Mode: it.Mode,
@@ -507,6 +547,11 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if err != nil {
 		return err
 	}
+	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactItemAdmitted, c.Role.String(),
+		map[string]any{"id": it.ID, "waivers": adm.Waivers, "by": c.Role.String()}); err != nil {
+		return err
+	}
+	s.publish(c.PBC, "item.admitted", map[string]any{"id": it.ID, "waivers": len(adm.Waivers)})
 	// 先记一条起始事实，让投影立刻显示 running，不必等 activity 回来。
 	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactItemRunStarted, c.Role.String(),
 		map[string]any{"id": it.ID}); err != nil {

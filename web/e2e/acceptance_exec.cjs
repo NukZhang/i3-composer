@@ -53,7 +53,12 @@ function check(name, ok, detail) {
   const title = '执行侧验收-' + Date.now();
   const task = await api('/api/tasks?pbc=' + unit, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, type: 'feature', env: 'test', mode: 'fast' }),
+    body: JSON.stringify({
+      title, type: 'feature', env: 'test', mode: 'fast',
+      // 入口准入要的硬输入：可断言的验收口径 / 数据范围 / 验收人 / 合规背责人。
+      accept: ['当提交执行侧单据，则应返回幂等键且重复提交不重复入账'],
+      data: ['exec.record.id'], acceptBy: 'BA 业务', complyBy: 'SA 系统',
+    }),
   });
   check('1 建工作项', task.code === 201, task.body);
   const id = task.body && task.body.id;

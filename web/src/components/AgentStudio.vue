@@ -12,7 +12,7 @@ import { computed, ref, watch } from 'vue';
 import { S, toast, refresh, pushRuntime } from '../store.js';
 import { api } from '../api.js';
 import { icon } from '../icons.js';
-import { agX, agY, nodeType, msText, tokText, toolWiring, flowStats, evCur, evBase, evRate } from '../derive.js';
+import { agX, agY, nodeType, msText, tokText, toolWiring, toolsOutside, flowStats, evCur, evBase, evRate } from '../derive.js';
 
 const props = defineProps({
   agent: { type: Object, default: null },
@@ -39,6 +39,8 @@ const edges = computed(() => (flow.value && flow.value.edges) || []);
 const cur = computed(() => nodes.value.find((n) => n.id === sel.value) || null);
 const stats = computed(() => flowStats(flow.value));
 const wiring = computed(() => toolWiring(props.agent));
+// 编排越界的工具在页面上也要点名：只在后端红一条闸，写 Agent 的人看不到是哪一步。
+const outside = computed(() => toolsOutside(props.agent));
 const kb = computed(() => (props.agent && props.agent.kb) || null);
 const built = computed(() => (props.agent && props.agent.builtDigest) || '');
 const dirtyBuild = computed(() => {
@@ -143,6 +145,8 @@ async function toCase() {
       in: t.in,
       out: t.raw || (t.out || []).join(' / '),
       exp: '（待标注期望）',
+      // 把当轮装配一起钉到用例上：以后这条失败了，点开还能看它当时读到了什么。
+      assemblies: t.assemblies || [],
     });
     pushRuntime('ACTOR', 'agent.case.added ' + props.agent.id);
     toast('已沉淀为评测用例 · 进验证阶段的评测集；评测集变了，digest 随之变化，要重新构建并重跑评测', 'ok');
@@ -189,6 +193,17 @@ const trialIn = computed(() => (trial.value && trial.value.in) || '');
 const trialRaw = computed(() => (trial.value && trial.value.raw) || '');
 const trialSource = computed(() => (trial.value && trial.value.source) || '');
 const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
+// 被拒的节点单独拣出来：只说「跑通」会让人以为工具真的调过了。
+const trialBlocked = computed(() =>
+  trialNodes.value.filter((n) => n.blocked && n.blocked.length),
+);
+// 当轮装配：试跑结果里 kb 节点带 assembly。按节点 id 找，选中哪个 kb 节点看哪个。
+const trialAssemblies = computed(() => (trial.value && trial.value.assemblies) || []);
+const curAssembly = computed(() => {
+  const n = cur.value;
+  if (!n) return null;
+  return trialAssemblies.value.find((a) => a.node === n.id) || null;
+});
 </script>
 
 <template>
@@ -325,6 +340,38 @@ const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
             </div>
             <div class="as-lb">输出变量</div>
             <div class="as-code">{{ (cur.cfg && cur.cfg.out) || '—' }}</div>
+            <!-- 当轮装配：这一轮这个 kb 节点到底载入了哪几篇、省了几篇、为什么。
+                 只显示「跑通」回答不了「是不是没召回」，所以载入清单要能就地展开。 -->
+            <template v-if="curAssembly">
+              <div class="as-lb" style="margin-top: 8px">
+                当轮装配
+                <span class="small muted" style="font-weight: 400">
+                  · 载入 {{ curAssembly.loaded.length }} 篇 · 省略 {{ curAssembly.omitted.count }} 篇
+                </span>
+              </div>
+              <div class="small" style="color: var(--tx-5); line-height: 1.7">
+                查询「{{ curAssembly.query || '（空）' }}」
+                <span v-if="curAssembly.omitted.count">
+                  ；省略原因：{{ curAssembly.omitted.reason }}
+                </span>
+                <span v-else>；没有省略（命中全部进了上下文）</span>
+              </div>
+              <div v-if="curAssembly.loaded.length" class="tree-box" style="margin-top: 6px">
+                <div v-for="(c, i) in curAssembly.loaded" :key="i" class="tree-line">
+                  <span class="k" style="width: 118px">{{ c.lib }}/{{ c.doc }}</span>
+                  <span class="v">
+                    <span class="tag t-gray" style="font-size: 8px">{{ c.class }}</span>
+                    <span style="color: var(--tx-10)"> ver {{ c.ver || '未登记' }} · 命中 {{ c.score }}</span>
+                  </span>
+                </div>
+              </div>
+              <div v-else class="small" style="color: var(--warn); margin-top: 4px">
+                这一轮一篇都没载入——该进的没进，属于「没召回」，不是「答歪」。
+              </div>
+              <div class="small muted" style="margin-top: 4px">
+                预算占用 {{ (curAssembly.budget.used * 100).toFixed(1) }}%（{{ Math.round(curAssembly.budget.used * 4000) }}/4000 字符）
+              </div>
+            </template>
             <div class="as-tip">库的版本写进 digest。换库不换版本，评测还停在旧库上，线上已经用新库回答。</div>
           </template>
 
@@ -403,7 +450,7 @@ const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
           <div class="as-dbg-h">
             <span v-html="icon('check', 11)" /> 输出
             <span class="spacer" style="flex: 1" />
-            <span class="tag" :class="S.agRan ? 't-ok' : 't-gray'" style="font-size: 9px">{{ S.agRan ? '跑通' : '未运行' }}</span>
+            <span class="tag" :class="!S.agRan ? 't-gray' : trialBlocked.length ? 't-err' : 't-ok'" style="font-size: 9px">{{ !S.agRan ? '未运行' : trialBlocked.length ? '跑完 · 被拒 ' + trialBlocked.length + ' 步' : '跑通' }}</span>
           </div>
           <div v-if="!S.agRan" class="as-empty">还没跑过。点「运行」，看这一条在流程里怎么走下去、每个节点花多久。</div>
           <template v-else>
@@ -412,7 +459,13 @@ const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
             </div>
             <div class="as-chain">
               <template v-for="(n, i) in trialNodes" :key="n.id">
-                <span>{{ n.n }} <b>{{ msText(n.ms) }}</b></span><i v-if="i < trialNodes.length - 1">→</i>
+                <span :class="{ 'is-blocked': n.blocked && n.blocked.length }">{{ n.n }} <b>{{ msText(n.ms) }}</b></span><i v-if="i < trialNodes.length - 1">→</i>
+              </template>
+            </div>
+            <div v-if="trialBlocked.length" class="small" style="margin-top: 6px; color: var(--err)">
+              工具白名单拒了 {{ trialBlocked.length }} 步（这些工具没有真的被调用，只是流程继续往下走了）：
+              <template v-for="(n, i) in trialBlocked" :key="'b' + n.id">
+                <span>{{ n.n }}：{{ (n.blocked || []).join('；') }}</span><i v-if="i < trialBlocked.length - 1"> · </i>
               </template>
             </div>
             <div v-if="trialSource" class="small muted" style="margin-top: 6px">
@@ -459,6 +512,10 @@ const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
     <div class="card">
       <div class="ch"><span v-html="icon('lock')" /><h3>工具权限</h3><span class="spacer" />
         <span class="small muted">白名单之外一律拒绝，不做「灵活处理」</span>
+      </div>
+      <div v-if="outside.length" class="small" style="margin: 0 0 8px; padding: 7px 9px; border-radius: 7px; background: var(--bg-err-soft3); border: 1px solid var(--line-err3); color: var(--err); line-height: 1.7">
+        编排用了名单外的工具：<template v-for="(o, i) in outside" :key="o.tool"><b>{{ o.tool }}</b> 在 {{ o.nodes.join(' / ') }}<i v-if="i < outside.length - 1">；</i></template>
+        ——试跑会拒这些节点，这条闸也红。
       </div>
       <table class="tb">
         <thead><tr><th style="width: 150px">工具</th><th style="width: 74px">类型</th><th style="width: 110px">审批</th><th>用在哪</th></tr></thead>

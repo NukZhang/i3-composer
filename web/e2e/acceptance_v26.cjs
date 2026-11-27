@@ -129,6 +129,38 @@ function check(name, ok, detail) {
     chain: document.querySelectorAll('.as-chain span').length,
   }));
   check('4 试跑有输出与逐节点耗时链', /risk/.test(ran.out) && ran.chain >= 4, { chain: ran.chain, out: ran.out.slice(0, 60) });
+
+  // ---- 4b. 当轮装配：kb 节点能展开「载入 N 篇 / 省略 M 篇（原因）」 ----
+  // 光看「跑通」回答不了「是不是没召回」，所以装配要落事实、也要看得见。
+  const trialAsm = await page.evaluate(async (base) => {
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
+    const t = a.trialRun || {};
+    return { assemblies: t.assemblies || [] };
+  }, BASE);
+  const asm0 = trialAsm.assemblies[0];
+  check('4b 试跑结果带当轮装配（载入清单 + 省略 + 预算）',
+    !!asm0 && Array.isArray(asm0.loaded) && asm0.loaded.length > 0
+      && asm0.omitted && typeof asm0.omitted.count === 'number' && asm0.budget && asm0.budget.total === 1,
+    asm0 && { node: asm0.node, loaded: asm0.loaded.length, omitted: asm0.omitted, budget: asm0.budget });
+  check('4b 载入项带 doc / ver / score 与四类边界',
+    !!asm0 && asm0.loaded.every((c) => c.doc && typeof c.score === 'number' && c.score > 0 && c.class),
+    asm0 && asm0.loaded.slice(0, 2));
+  // 页面：选中 kb 节点，就地展开载入清单与省略原因。
+  const kbAssembled = await page.evaluate(() => {
+    const row = Array.from(document.querySelectorAll('.as-li')).find((x) => /检索口径/.test(x.textContent));
+    if (row) row.click();
+    return !!row;
+  });
+  check('4b 编排里有 kb 节点可选', kbAssembled);
+  await page.waitForTimeout(500);
+  const kbPanel = await page.evaluate(() => {
+    const el = document.querySelector('.as-cfg');
+    return el ? el.textContent : '';
+  });
+  check('4b kb 节点展开显示载入篇数、省略数与原因',
+    /当轮装配/.test(kbPanel) && /载入 \d+ 篇/.test(kbPanel) && /省略 \d+ 篇/.test(kbPanel)
+      && /没有省略|省略原因/.test(kbPanel) && /预算占用/.test(kbPanel), kbPanel.slice(0, 200));
+
   await page.click('.as-dbg-r button:has-text("沉淀为评测用例")');
   await page.waitForTimeout(1200);
   const caseAfter = await page.evaluate(async (base) => {
@@ -137,6 +169,9 @@ function check(name, ok, detail) {
   }, BASE);
   check('4 沉淀的用例进评测集', caseAfter.n === caseBefore + 1 && caseAfter.last && caseAfter.last.v === '试跑沉淀',
     { before: caseBefore, after: caseAfter.n });
+  check('4b 沉淀的用例钉住当轮装配（失败详情才答得出「没召回还是答歪」）',
+    !!caseAfter.last && Array.isArray(caseAfter.last.assemblies) && caseAfter.last.assemblies.length > 0,
+    caseAfter.last && { n: caseAfter.last.assemblies && caseAfter.last.assemblies.length });
 
   // ---- 5. 质量报告 tab（机器自检） ----
   await page.click('.ptab:has-text("质量报告")');
@@ -269,18 +304,161 @@ function check(name, ok, detail) {
     /编排摘要/.test(agBuild.text) && /节点一览/.test(agBuild.text) && agBuild.chips.length === 7, agBuild.chips);
   check('9 有「去编排页」按钮', /去编排页/.test(agBuild.text), null);
 
-  // ---- 10. 验证页不再展示机器自检 ----
+  // ---- 10. 工具白名单：编排越界 → 闸红 / 试跑留痕 / 对话拒绝 ----
+  // 这条闸曾经只看「名单非空」就写「无越权」：四闸全绿也能真的读账单。
+  // 这一段不假设账本是干净的：先按同一条规则（只认 cfg.tool / cfg.tools）
+  // 自己算一遍越界项，再核对闸的说法和它一致；然后故意把编排弄脏跑一轮，
+  // 最后原样写回去，不给下一轮留一个越界的编排。
+  const outsideOf = (flow, tools) => {
+    const out = [];
+    for (const n of (flow && flow.nodes) || []) {
+      const c = n.cfg || {};
+      const names = [];
+      if (typeof c.tool === 'string' && c.tool) names.push(c.tool);
+      if (Array.isArray(c.tools)) c.tools.forEach((t) => typeof t === 'string' && t && names.push(t));
+      for (const t of names) if (tools.indexOf(t) < 0) out.push({ tool: t, node: n.id, n: n.n });
+    }
+    return out;
+  };
+  await page.click('.rolebtn:has-text("DA")');
+  await page.waitForTimeout(600);
+  await page.click('.sidebar .trow.sub:has-text("交付质检 Agent")');
+  await page.waitForTimeout(700);
+  await page.click('.trow.sub2:has-text("构建")');
+  await page.waitForTimeout(900);
+  const tgBase = await page.evaluate(async (base) => {
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
+    const g = (a.gates || []).find((x) => x.key === 'agent-tools') || {};
+    const st = await fetch(base + '/api/state?pbc=qa').then((r) => r.json());
+    return { flow: a.flow, tools: a.tools || [], gates: g, chats: (st.chats || []).length };
+  }, BASE);
+  const baseOutside = outsideOf(tgBase.flow, tgBase.tools);
+  check('10 工具闸的说法与编排一致（没有越界就不许红，有就越界点名）',
+    baseOutside.length === 0
+      ? tgBase.gates.ok === true && !/名单外/.test(tgBase.gates.detail || '')
+      : tgBase.gates.ok === false &&
+        baseOutside.every((o) => (tgBase.gates.detail || '').includes(o.tool)),
+    { outside: baseOutside, gate: tgBase.gates });
+
+  // 弄脏：把「读会话」换成名单里没有的工具。bill.read / shell.exec 执行器都认得，
+  // 这样被拦不是因为「这个工具不存在」，而是因为「白名单里没有它」。
+  const dirty = JSON.parse(JSON.stringify(tgBase.flow));
+  const dirtyNode = dirty.nodes.find((n) => n.id === 'n2');
+  const foreign = tgBase.tools.indexOf('bill.read') < 0 ? 'bill.read' : 'shell.exec';
+  dirtyNode.cfg.tool = foreign;
+  const putDirty = await page.evaluate(async ([base, flow]) => {
+    const r = await fetch(base + '/api/agents/qa-agent/flow', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow }),
+    });
+    return { code: r.status, body: await r.json().catch(() => null) };
+  }, [BASE, dirty]);
+  check('10 越界编排可以保存（越界不是保存错误，是闸的事）', putDirty.code === 200, putDirty.body);
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1500);
+  // 刷新之后侧栏回到初始状态：必须重新选中「交付质检 Agent」这一行，
+  // 否则点到的是别的单元的「构建」页（PBC 单元没有编排工作台）。
+  await page.click('.sidebar .trow.sub:has-text("交付质检 Agent")');
+  await page.waitForTimeout(700);
+  await page.click('.trow.sub2:has-text("构建")');
+  await page.waitForTimeout(900);
+  const dirtyView = await page.evaluate(async (base) => {
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
+    const g = (a.gates || []).find((x) => x.key === 'agent-tools') || {};
+    return { gate: g, text: (document.querySelector('.stage') || {}).textContent || '' };
+  }, BASE);
+  check('10 名单外的工具让 agent-tools 闸变红（不是「判不了」），并点名工具与节点',
+    dirtyView.gate.ok === false && dirtyView.gate.unknown !== true &&
+    (dirtyView.gate.detail || '').includes(foreign) && (dirtyView.gate.detail || '').includes('n2'),
+    dirtyView.gate);
+  check('10 越界时 Detail 不再写「无越权」', !/无越权/.test(dirtyView.gate.detail || ''), dirtyView.gate.detail);
+  check('10 编排页工具权限卡点名越界（写 Agent 的人看得见是哪一步）',
+    /编排用了名单外的工具/.test(dirtyView.text) && dirtyView.text.includes(foreign), null);
+
+  // 试跑：照样跑完，但被拒的节点要留痕，不能只显示「跑通」。
+  await page.click('.as-top button:has-text("试跑这一条")');
+  await page.waitForTimeout(1500);
+  const tgRun = await page.evaluate(async (base) => {
+    const pills = Array.from(document.querySelectorAll('.as-dbg-r .tag')).map((x) => x.textContent.trim());
+    const stuck = Array.from(document.querySelectorAll('.as-chain span.is-blocked')).map((x) => x.textContent.trim());
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
+    const nodes = ((a.trialRun || {}).nodes || []).map((n) => ({ n: n.n, blocked: (n.blocked || []).join(' ') }));
+    return { pills, stuck, nodes };
+  }, BASE);
+  check('10 试跑状态是「跑完 · 被拒 N 步」，不再只写「跑通」',
+    tgRun.pills.some((p) => /跑完 · 被拒 \d+ 步/.test(p)), tgRun.pills);
+  check('10 被拒的节点在链上单独标出（读会话）',
+    tgRun.stuck.length >= 1 && /读会话/.test(tgRun.stuck.join('')), tgRun.stuck);
+  check('10 试跑结果进账本：tool.blocked 可从 /api/agents/{id} 查回',
+    tgRun.nodes.some((n) => n.n === '读会话' && n.blocked.includes(foreign)), tgRun.nodes);
+
+  // 对话验收不能拿一轮被拦下的执行拼回复：拒绝，且一条对话事实都不落。
+  // 对话是 BA 的活（验收台），DA 点这个口子会被 403 拦住——先切回 BA。
+  await page.click('.rolebtn:has-text("BA")');
+  await page.waitForTimeout(600);
+  const chat = await page.evaluate(async (base) => {
+    const r = await fetch(base + '/api/units/qa/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: '你们这个热玛吉能维持多久' }),
+    });
+    const body = await r.json().catch(() => null);
+    const st = await fetch(base + '/api/state?pbc=qa').then((x) => x.json());
+    return { code: r.status, body, chats: (st.chats || []).length };
+  }, BASE);
+  check('10 被拒的一轮不出客户回复（400 且说明是白名单拦的）',
+    chat.code === 400 && /工具白名单/.test(JSON.stringify(chat.body)), chat.body);
+  const expectedChat400 = chat.code === 400;
+  check('10 被拒不落对话事实（账本上没有「客户问过、AI 答过」）',
+    chat.chats === tgBase.chats, { before: tgBase.chats, after: chat.chats });
+
+  // 复原：把编排写回原样，闸回到原来的说法，红条消失。写编排又是 DA 的活。
+  await page.click('.rolebtn:has-text("DA")');
+  await page.waitForTimeout(600);
+  const putBack = await page.evaluate(async ([base, flow]) => {
+    const r = await fetch(base + '/api/agents/qa-agent/flow', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow }),
+    });
+    return r.status;
+  }, [BASE, tgBase.flow]);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1500);
+  await page.click('.rolebtn:has-text("DA")');
+  await page.waitForTimeout(600);
+  await page.click('.sidebar .trow.sub:has-text("交付质检 Agent")');
+  await page.waitForTimeout(700);
+  await page.click('.trow.sub2:has-text("构建")');
+  await page.waitForTimeout(900);
+  const back = await page.evaluate(async (base) => {
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
+    const g = (a.gates || []).find((x) => x.key === 'agent-tools') || {};
+    return { gate: g, text: (document.querySelector('.stage') || {}).textContent || '' };
+  }, BASE);
+  check('10 编排写回原样后闸回到原状态（这一段不留脏数据）',
+    putBack === 200 && back.gate.ok === tgBase.gates.ok &&
+    back.gate.detail === tgBase.gates.detail &&
+    /编排用了名单外的工具/.test(back.text) === (baseOutside.length > 0),
+    { put: putBack, gate: back.gate, was: tgBase.gates });
+
+  // ---- 11. 验证页不再展示机器自检 ----
   await page.click('.trow.sub2:has-text("验证")');
   await page.waitForTimeout(800);
   const verifyPage = await page.evaluate(() => ({
     text: (document.querySelector('.stage') || {}).textContent || '',
   }));
-  check('10 验证页是验收台（不再堆机器自检）',
+  check('11 验证页是验收台（不再堆机器自检）',
     /已验/.test(verifyPage.text) && !/合并门禁/.test(verifyPage.text), verifyPage.text.slice(0, 60));
 
-  check('页面无 JS 异常', pageErrors.length === 0, pageErrors.slice(0, 3));
-  const unexpected = httpErrors.filter((e) => !e.endsWith('/favicon.ico'));
-  check('无 HTTP 错误', unexpected.length === 0, unexpected.slice(0, 5));
+  // 第 10 段故意打了一条会被白名单拒掉的对话：那一条 400 是脚本自造的，
+  // 浏览器会同时记一条 console 错误。除此之外不该有任何异常。
+  const ownErrors = (e) => /status of 400/.test(e) && expectedChat400;
+  const unexpected = httpErrors.filter(
+    (e) => !e.endsWith('/favicon.ico') && !(expectedChat400 && e === '400 ' + BASE + '/api/units/qa/chat'),
+  );
+  const unexpectedPageErrors = pageErrors.filter((e) => !ownErrors(e));
+  check('页面无 JS 异常（除脚本自造的对话 400 外）', unexpectedPageErrors.length === 0, unexpectedPageErrors.slice(0, 3));
+  check('无 HTTP 错误（除脚本自造的对话 400 外）', unexpected.length === 0, unexpected.slice(0, 5));
 
   await browser.close();
   const failed = results.filter((r) => !r.ok);

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -263,6 +264,97 @@ func TestAgentGatesRejectIncompleteDefinition(t *testing.T) {
 	}
 	if AgentGates(nil)[0].OK {
 		t.Fatal("没有 Agent 定义时四闸必须全红")
+	}
+}
+
+// 工具白名单闸：编排用了名单外的工具，闸必须红并点名；Detail 不能再写「无越权」。
+//
+// 这条曾经是「名单非空就绿」，执行器又只认工具名——四闸全绿也能真的读账单。
+func TestAgentToolsGateFlagsOutOfListTools(t *testing.T) {
+	mk := func(tools []string) *Agent {
+		a := &Agent{ID: "x", Ver: "1.0.0", Prompt: "p", Model: "m",
+			Stages: []string{"done", "done", "done", "done", "done"},
+			Tools:  tools, Eval: [2]int{10, 10},
+			Flow: &Flow{
+				Nodes: []FlowNode{
+					{ID: "n1", N: "开始", T: NodeStart},
+					{ID: "n2", N: "读账单", T: NodeTool, Cfg: map[string]any{"tool": "bill.read"}},
+					{ID: "n3", N: "结束", T: NodeEnd},
+				},
+				Edges: [][3]string{{"n1", "n2", ""}, {"n2", "n3", ""}},
+			}}
+		a.Digest = AgentDigest(*a)
+		a.BuiltDigest = a.Digest
+		return a
+	}
+
+	// 名单里没有 bill.read，但 n2 在用：不越界是不可能的。
+	a := mk([]string{"session.read"})
+	gs := AgentGates(a)
+	tools := gs[1]
+	if tools.Key != "agent-tools" {
+		t.Fatalf("闸的顺序变了：%+v", gs)
+	}
+	if tools.OK || tools.Unknown {
+		t.Fatalf("名单外的工具必须判红（而不是「判不了」）：%+v", tools)
+	}
+	if !strings.Contains(tools.Detail, "bill.read") || !strings.Contains(tools.Detail, "n2") {
+		t.Fatalf("Detail 要点名工具与节点：%s", tools.Detail)
+	}
+	if strings.Contains(tools.Detail, "无越权") {
+		t.Fatalf("越界时不许出现「无越权」：%s", tools.Detail)
+	}
+	if GatesPass(gs) {
+		t.Fatal("有越界工具时四闸不许全绿")
+	}
+
+	// 名单为空是另一种毛病，Detail 要分开写。
+	empty := AgentGates(mk(nil))[1]
+	if empty.OK || empty.Detail != "没有工具白名单" {
+		t.Fatalf("空名单要说「没有工具白名单」：%+v", empty)
+	}
+
+	// 名单对得上：照常绿。
+	ok := AgentGates(mk([]string{"session.read", "bill.read"}))[1]
+	if !ok.OK {
+		t.Fatalf("名单对得上时应为绿：%+v", ok)
+	}
+}
+
+// ToolsOutside 是闸与执行器共用的判据：只认结构化字段，不猜 `pre` 里的文字。
+func TestToolsOutside(t *testing.T) {
+	f := &Flow{Nodes: []FlowNode{
+		{ID: "n1", N: "开始", T: NodeStart},
+		{ID: "n2", N: "读账单", T: NodeTool, Cfg: map[string]any{"tool": "bill.read"}},
+		{ID: "n3", N: "候选", T: NodeTool, Cfg: map[string]any{"tools": []any{"shell.exec", "bill.read"}}},
+		{ID: "n4", N: "分支", T: NodeBranch, Cfg: map[string]any{
+			"pre": "不要调用 shell.exec，也不要用 k8s.apply", "conds": []any{[]any{"else", "走"}}}},
+		{ID: "n5", N: "结束", T: NodeEnd},
+	}}
+	got := f.ToolsOutside([]string{"bill.read"})
+	byTool := map[string][]string{}
+	for _, o := range got {
+		for _, n := range o.Nodes {
+			byTool[o.Tool] = append(byTool[o.Tool], n.ID)
+		}
+	}
+	if len(byTool["shell.exec"]) != 1 || byTool["shell.exec"][0] != "n3" {
+		t.Fatalf("cfg.tools 里的越界工具要算：%v", byTool)
+	}
+	if _, ok := byTool["bill.read"]; ok {
+		t.Fatalf("名单内的工具不该出现：%v", byTool)
+	}
+	if _, ok := byTool["k8s.apply"]; ok {
+		t.Fatalf("不许从 pre 的一句话里猜工具名：%v", byTool)
+	}
+	if extra := f.ToolsOutside([]string{"bill.read", "shell.exec"}); len(extra) != 0 {
+		t.Fatalf("都给了名单就应当没有越界：%+v", extra)
+	}
+	if got := (&Flow{}).ToolsOutside([]string{"a"}); len(got) != 0 {
+		t.Fatalf("空编排不该有越界项：%+v", got)
+	}
+	if got := (*Flow)(nil).ToolsOutside([]string{"a"}); got != nil {
+		t.Fatalf("nil 编排要安全返回：%+v", got)
 	}
 }
 

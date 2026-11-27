@@ -60,6 +60,12 @@ export const api = {
   setRole: (role) => request('/api/role', { method: 'POST', body: JSON.stringify({ role }) }),
   createTask: (pbc, body) => request('/api/tasks' + q(pbc), { method: 'POST', body: JSON.stringify(body) }),
   runItem: (id, pbc) => request('/api/items/' + encodeURIComponent(id) + '/run' + q(pbc), { method: 'POST' }),
+  // 准入被拒后补输入：验收口径 / 数据范围 / 责任人。发起时重判。
+  admitInputs: (id, body, pbc) =>
+    request('/api/items/' + encodeURIComponent(id) + '/inputs' + q(pbc), {
+      method: 'POST',
+      body: JSON.stringify(body || {}),
+    }),
   answer: (id, pbc, approve, note) =>
     request('/api/items/' + encodeURIComponent(id) + '/answer' + q(pbc), {
       method: 'POST',
@@ -73,6 +79,9 @@ export const api = {
     }),
   // v3.2：单元打 tag 进「发布编排」池；发布会是项目级批次
   tagUnit: (id) => request('/api/units/' + encodeURIComponent(id) + '/tag', { method: 'POST' }),
+  // 只读回放：按 tag 打下去的那一刻重算投影，回答「凭什么能发」。
+  replay: (id, tag) =>
+    request('/api/units/' + encodeURIComponent(id) + '/replay' + (tag ? '?tag=' + encodeURIComponent(tag) : '')),
   orch: (proj) => request('/api/projects/' + encodeURIComponent(proj) + '/orch'),
   release: (proj, body) =>
     request('/api/projects/' + encodeURIComponent(proj) + '/orch/release', {

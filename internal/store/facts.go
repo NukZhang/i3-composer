@@ -72,8 +72,14 @@ const (
 	FactAgentBuilt     = "agent.built"
 	FactAgentTrial     = "agent.trial.run"
 	FactAgentCase      = "agent.case.added"
-	FactAgentRetired   = "agent.retired"
-	FactKBIssue        = "kb.issue.dispatched"
+	// context.assembled 是「这一轮载入了什么」的独立事实：哪个节点、查了什么、
+	// 进了哪几篇（带库版本与命中分）、省了几篇（为什么）、预算用了多少。
+	//
+	// 为什么不只塞进 agent.trial.run 里：评测失败要能归因到「没召回」还是「答歪」，
+	// 归因要能按节点、按文档去查，而不是把整轮 trial 解析一遍再看嵌套字段。
+	FactContextAssembled = "context.assembled"
+	FactAgentRetired     = "agent.retired"
+	FactKBIssue          = "kb.issue.dispatched"
 
 	// v2.5/v2.6：真人验收台。清单、判定、bug 与验收对话全部进账本，
 	// 因为「验过了」本身就是一条事实，不能只活在前端内存里。
@@ -102,6 +108,29 @@ const (
 	// 批次是发布的单位：一个批次锁多个 tag 与 digest，只能整批回滚。
 	FactReleaseBatch    = "release.batch.created"
 	FactReleaseRollback = "release.batch.rolledback"
+
+	// v3.3：入口准入。工作项进流水线之前，先判五件事（三项硬、两项软）。
+	//
+	// 为什么是两条事实而不是一条：准入的结论只有放行和拒绝两种，
+	// 而「放行但没判」必须留下痕迹（软项不过 / 判不了）。合成一条带 pass 字段
+	// 的事实，读的时候还得先看字段再分支，而且拒绝的那些「缺什么 / 找谁 / 补哪」
+	// 会被写成放行事实里的一个数组——两种语义挤在一起，迟早被谁读错。
+	FactItemAdmitted      = "item.admitted"
+	FactItemAdmitRejected = "item.admit.rejected"
+
+	// 准入输入可以补：验收口径、数据范围、责任人随后补上，同样进账本。
+	//
+	// 没有这条，准入就是个死胡同：被拒的提示说「补哪」，而账本里没有地方可补，
+	// 工作项从此再也发起不了。补的是输入，不是结论——准入每次发起都重判。
+	FactItemInputs = "item.admit.inputs"
+
+	// 打 tag 的那一刻闸门算出了什么，落一条事实。
+	//
+	// 宪法 I：状态只能由事实重放得出。三个月后有人问「1.0.4 凭什么能发」，
+	// 光有 tag.created 只能回答「打了 tag」，回答不了「当时四闸、验收、测试分别是什么」。
+	// 这条事实把那组判定定格在打 tag 的 seq 上，回放才不用「按今天的账本重算一遍」
+	// ——那种重算给的从来不是「当时」，而是「现在」。
+	FactGateEvaluated = "gate.evaluated"
 )
 
 // Fact 是一条不可变事实。

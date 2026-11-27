@@ -2,6 +2,7 @@ package bff
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -16,6 +17,8 @@ func TestTrialExecutesFlowInsteadOfReplayingSample(t *testing.T) {
 	a := goodAgent()
 	a.ID = "x-qc"
 	a.Flow = qcFlow()
+	// 执行器按白名单拦：编排要用 session.read，名单里就得有它。
+	a.Tools = []string{"session.read"}
 	seedAgent(t, h.st, a, 48, 50)
 
 	// 一条含红线的会话。
@@ -54,6 +57,35 @@ func TestTrialExecutesFlowInsteadOfReplayingSample(t *testing.T) {
 	}
 }
 
+// 对话验收遇到越界工具：不许拿半轮结果拼回复，也不许把「问过」落成事实。
+func TestVerifyChatRefusesWhenToolBlocked(t *testing.T) {
+	h := newHarness(t)
+	ctx := t.Context()
+	a := goodAgent()
+	a.ID = "x-qc"
+	a.Flow = qcFlow()
+	a.Tools = []string{"report.write"} // session.read 被拒
+	seedAgent(t, h.st, a, 48, 50)
+	if err := h.st.Ensure(ctx, unitsLog); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.st.Append(ctx, unitsLog, store.FactUnitCreated, "PA", map[string]any{
+		"id": "qa", "name": "质检", "kind": "agent", "agentId": "x-qc",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, out := h.do(t, http.MethodPost, "/api/units/qa/chat",
+		map[string]any{"text": "你们这个热玛吉能维持多久"}, RoleBA)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("被拒的一轮不能出客户回复，应 400，实际 %d %v", resp.StatusCode, out)
+	}
+	// 被拒不落事实：否则账本上会留下一条「客户问过、AI 答过」的记录。
+	_, st := h.do(t, http.MethodGet, "/api/state?pbc=qa", nil, RoleBA)
+	if chats, _ := st["chats"].([]any); len(chats) != 0 {
+		t.Fatalf("拒绝时不该落对话事实，实际 %d 条", len(chats))
+	}
+}
+
 // 对话验收：回复来自这一轮执行，不是评测用例里的样例。
 func TestVerifyChatRunsFlow(t *testing.T) {
 	h := newHarness(t)
@@ -61,6 +93,8 @@ func TestVerifyChatRunsFlow(t *testing.T) {
 	a := goodAgent()
 	a.ID = "x-qc"
 	a.Flow = qcFlow()
+	// 执行器按白名单拦：编排要用 session.read，名单里就得有它。
+	a.Tools = []string{"session.read"}
 	seedAgent(t, h.st, a, 48, 50)
 	if err := h.st.Ensure(ctx, unitsLog); err != nil {
 		t.Fatal(err)
@@ -142,6 +176,64 @@ func TestEventSubscriptionAndReceive(t *testing.T) {
 	_, ev2 := h.do(t, http.MethodGet, "/api/events", nil, RoleBA)
 	if l, _ := ev2["events"].([]any); len(l) != 1 {
 		t.Fatalf("未订阅的主题不该落事实，事件数应仍为 1，实际 %d", len(l))
+	}
+}
+
+// 越界工具：试跑照样跑完，但被拒的那一步要留下 tool.blocked，并且
+// 事后能从 /api/agents/{id} 查到——「跑了」和「调了」是两件事。
+func TestTrialRecordsBlockedTool(t *testing.T) {
+	h := newHarness(t)
+	a := goodAgent()
+	a.ID = "x-qc"
+	a.Flow = qcFlow()
+	a.Tools = []string{"report.write"} // session.read 不在名单里
+	seedAgent(t, h.st, a, 48, 50)
+
+	resp, out := h.do(t, http.MethodPost, "/api/agents/x-qc/trial",
+		map[string]any{"vars": map[string]any{"sessionId": "S-20261124-0912"}}, RoleDA)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("越界不该让试跑整体失败（否则看不到被拒次数），实际 %d %v", resp.StatusCode, out)
+	}
+	trial := out["trial"].(map[string]any)
+	nodes, _ := trial["nodes"].([]any)
+	if len(nodes) == 0 {
+		t.Fatal("应记录逐节点执行结果")
+	}
+	blocked := 0
+	for _, raw := range nodes {
+		n := raw.(map[string]any)
+		notes, _ := n["blocked"].([]any)
+		if len(notes) == 0 {
+			continue
+		}
+		blocked++
+		joined := ""
+		for _, x := range notes {
+			joined += fmt.Sprint(x) + " "
+		}
+		if !strings.Contains(joined, "session.read") {
+			t.Fatalf("被拒记录要点名工具：%v", notes)
+		}
+	}
+	if blocked == 0 {
+		t.Fatalf("名单外的 session.read 必须被拒：%+v", nodes)
+	}
+
+	// 落账之后还能查回来：试跑事实里有，不是只在响应里。
+	_, st := h.do(t, http.MethodGet, "/api/agents/x-qc", nil, RoleBA)
+	tr, _ := st["trialRun"].(map[string]any)
+	if tr == nil {
+		t.Fatal("试跑结果应作为事实进 Agent 视图")
+	}
+	got, _ := tr["nodes"].([]any)
+	after := 0
+	for _, raw := range got {
+		if notes, _ := raw.(map[string]any)["blocked"].([]any); len(notes) > 0 {
+			after++
+		}
+	}
+	if after != blocked {
+		t.Fatalf("/api/agents/{id} 查到的被拒节点数应一致：事实里 %d 条，响应里 %d 条", after, blocked)
 	}
 }
 

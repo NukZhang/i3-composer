@@ -71,7 +71,12 @@ const api = (page, path, opts) =>
     // 需求池的输入框在当前单元页；直接调接口更稳，UI 文本另外断言。
     return fetch('/api/tasks?pbc=' + u, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: t, type: 'new', env: 'test', mode: 'fast' }),
+      body: JSON.stringify({
+        title: t, type: 'new', env: 'test', mode: 'fast',
+        // 入口准入要的硬输入：可断言的验收口径 / 数据范围 / 验收人 / 合规背责人。
+        accept: ['当业主提交缴费单，则应生成幂等键且重复提交不重复入账'],
+        data: ['fee.bill.amount'], acceptBy: 'BA 业务', complyBy: 'SA 系统',
+      }),
     }).then((r) => r.status);
   }, [unit, title]);
   const created = (await api(page, '/api/inbox')).body.items.find((x) => x.t === title);
@@ -89,6 +94,85 @@ const api = (page, path, opts) =>
   // ---- 2. BA 发起被 403（build 是 DA 的权限）----
   const denied = await api(page, `/api/items/${id}/run?pbc=${unit}`, { method: 'POST' });
   check('2 BA 发起交付被 403 拒绝', denied.code === 403 && /权限不足/.test(denied.body.error), denied);
+
+  // ---- 2b. 入口准入：只写标题的项，DA 发起被 400 挡在门口，且账本不留 run.started ----
+  const bare = await api(page, `/api/tasks?pbc=${unit}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: '只写了标题-' + Date.now(), type: 'feature', env: 'test', mode: 'fast' }),
+  });
+  const bareID = bare.body && bare.body.id;
+  check('2b 建一条只有标题的工作项', bare.code === 201 && !!bareID, bareID);
+  await page.click('.rolebtn:has-text("DA")');
+  await page.waitForTimeout(400);
+  const bareRun = await api(page, `/api/items/${bareID}/run?pbc=${unit}`, { method: 'POST' });
+  check('2b 准入不过的发起被 400 拒绝，并点名缺什么、找谁',
+    bareRun.code === 400 && /目标可断言/.test(bareRun.body.error) && /数据与权限/.test(bareRun.body.error) && /责任人/.test(bareRun.body.error), bareRun.body && bareRun.body.error);
+  const bareFacts = (await api(page, `/api/facts?pbc=${unit}`)).body.facts.map((f) => f.type);
+  check('2b 被拒的发起不落 item.run.started，只留 item.admit.rejected',
+    !bareFacts.includes('item.run.started') && bareFacts.includes('item.admit.rejected'), bareFacts.filter((t) => /admit|run.started/.test(t)));
+
+  // ---- 2c. 页面上把「缺什么 / 找谁 / 补哪」摊开，并就地补输入 ----
+  // 被拒不是一个 toast 就完事：从下面几条理由里能直接读出要补什么、找谁要。
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(1200);
+  await page.click('.rolebtn:has-text("BA")');
+  await page.waitForTimeout(500);
+  // 项目页的需求池列的是本项目所有单元的工作项，点项目行就够了。
+  await page.click('.sidebar .trow.sub:has-text("收费与工单数字化")');
+  await page.waitForTimeout(900);
+  const rowHit = await page.evaluate((i) => {
+    const row = Array.from(document.querySelectorAll('tbody tr')).find((x) => x.textContent.includes(i));
+    if (row) row.click();
+    return !!row;
+  }, bareID);
+  check('2c 被拒的工作项仍在需求池里（说明进过账本）', rowHit, bareID);
+  await page.waitForTimeout(900);
+  const gateText = await page.evaluate(() => {
+    const g = document.querySelector('.gate');
+    return g ? g.textContent : '';
+  });
+  check('2c 被拒的工作项页面点名缺什么、找谁、补哪',
+    /目标可断言/.test(gateText) && /找 BA 业务/.test(gateText) && /补一句验收口径/.test(gateText)
+      && /数据与权限/.test(gateText) && /责任人/.test(gateText), gateText.slice(0, 160));
+
+  await page.click('.rolebtn:has-text("BA")');
+  await page.waitForTimeout(500);
+  const fixBtn = await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.gate button')).find((x) => x.textContent.includes('补输入'));
+    if (b) b.click();
+    return !!b;
+  });
+  check('2c BA 有「补输入」入口（DA 只读，按钮不给）', fixBtn);
+  await page.waitForTimeout(300);
+  await page.fill('.gate .admit-fix textarea', '当业主提交缴费单，则应生成幂等键且重复提交不重复入账');
+  const fixInputs = await page.$$('.gate .admit-fix input');
+  await fixInputs[0].fill('fee.bill.amount');
+  await fixInputs[1].fill('BA 业务');
+  await fixInputs[2].fill('SA 系统');
+  await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.admit-fix button')).find((x) => x.textContent.includes('补进账本'));
+    if (b) b.click();
+  });
+  const fixed = await waitFor(async () => {
+    const f = (await api(page, `/api/facts?pbc=${unit}`)).body.facts.map((x) => x.type);
+    return f.includes('item.admit.inputs') ? f : null;
+  }, 8000, 500);
+  check('2c 补的四项落成事实 item.admit.inputs', !!fixed, fixed && fixed.filter((t) => t === 'item.admit.inputs'));
+
+  // 硬项补齐后发起：放行，但两个软项没补 → 账本记 waiver，页面挂黄条
+  await page.click('.rolebtn:has-text("DA")');
+  await page.waitForTimeout(500);
+  const nowRun = await api(page, `/api/items/${bareID}/run?pbc=${unit}`, { method: 'POST' });
+  check('2c 硬项补齐后 DA 发起 202（不再被准入挡）', nowRun.code === 202, nowRun);
+  const admitted = await api(page, `/api/items/${bareID}?pbc=${unit}`);
+  const admit = admitted.body.item && admitted.body.item.admit;
+  check('2c 放行带两条 waiver（软项没补，但不挡发起）',
+    !!admit && admit.st === 'admitted' && (admit.waivers || []).length === 2, admit);
+  const waiveText = await waitFor(() => page.evaluate(() => {
+    const w = document.querySelector('.ws.warn');
+    return w ? w.textContent : null;
+  }), 15000, 800);
+  check('2c 页面黄条列出 waived 的两项', !!waiveText && /范围边界/.test(waiveText) && /上下文齐备/.test(waiveText), waiveText && waiveText.slice(0, 120));
 
   // ---- 3. 切 DA 发起：真实 workflow 自动推进到「待打 tag」----
   await page.click('.rolebtn:has-text("DA")');

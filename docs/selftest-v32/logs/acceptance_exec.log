@@ -1,26 +1,26 @@
-PASS 0 建执行侧验收单元 :: {"id":"execfin","kind":"pbc","proj":"p1"}
+PASS 0 建执行侧验收单元 :: {"id":"exec610113","kind":"pbc","proj":"p1"}
 PASS 1 建工作项 :: {"id":"US-05"}
-PASS 1 发起交付（真实 Dapr workflow） :: {"id":"US-05","instance":"v32i_execfin_US-05"}
+PASS 1 发起交付（真实 Dapr workflow） :: {"id":"US-05","instance":"v39_exec610113_US-05"}
 PASS 1 workflow 五步跑完，停在「打 tag」 :: {"run":"verified","step":5}
 PASS 2 代码制品带可编译的文件 :: ["go.mod","main.go","main_test.go"]
-PASS 2 文档制品带 markdown 正文 :: "# 执行侧验收单元 · 执行侧验收-1795612474918\n\n> 执行侧验收"
-PASS 3 账本里有 test.run 事实 :: {"commit":"1.0.1","pass":5,"total":5,"at":"2026-11-25T13:14:36Z","by":"x-qa"}
-PASS 3 测试条数是真跑出来的（总数 = 用例数） :: {"commit":"1.0.1","pass":5,"total":5,"at":"2026-11-25T13:14:36Z","by":"x-qa"}
+PASS 2 文档制品带 markdown 正文 :: "# 执行侧验收单元 · 执行侧验收-1795713612057\n\n> 执行侧验收"
+PASS 3 账本里有 test.run 事实 :: {"commit":"1.0.1","pass":5,"total":5,"at":"2026-11-26T17:20:13Z","by":"x-qa"}
+PASS 3 测试条数是真跑出来的（总数 = 用例数） :: {"commit":"1.0.1","pass":5,"total":5,"at":"2026-11-26T17:20:13Z","by":"x-qa"}
 PASS 3 测试没有失败项
-PASS 4 构建产物 digest 是 sha256 内容摘要 :: "sha256:7b3bb66a308ecdd30fe4c86aae864eff399b86357d3cb99fa3b66a775ee30392"
+PASS 4 构建产物 digest 是 sha256 内容摘要 :: "sha256:1c083ed9eb61c24712ff5d8930deededd0034c0e0331f3c11552942b0482a41c"
 PASS 5 单元交付不部署：账本里没有 deploy.succeeded :: 0
-PASS 5 质量报告里看得到真证据（测试条数 / digest） :: {"digest":"sha256:7b3bb66a308e","hasPass":true}
+PASS 5 质量报告里看得到真证据（测试条数 / digest） :: {"digest":"sha256:1c083ed9eb61","hasPass":true}
 PASS 6 种子事实 actor 是 seed（演示数据可识别） :: 19
 PASS 6 真跑出来的事实 actor 不是 seed :: ["i3-pipeline","i3-pipeline","x-ops","i3-pipeline"]
 PASS 7 pubsub 投递地址与本实例端口一致 :: {"checked":true,"detail":"sidecar 的 app-port=8080，与本实例一致","localPort":8080,"ok":true,"sidecarAddress":"host.docker.internal","sidecarAppPort":8080}
 PASS 7 pubsub 收到的事件落了 event.received 事实 :: ["item.changed","item.changed"]
 PASS 7 workflow 每一步都经总线发过事件（不是装饰品） :: {"收到":8,"其中步骤":6}
-PASS 8 SA 打 tag 进池 :: {"commit":"1.0.1","digest":"sha256:7b3bb66a308ecdd30fe4c86aae864eff399b86357d3cb99fa3b66a775ee30392","pooled":true,"tag":"v1.0.0","unit":"execfin"}
-PASS 8 批次发布返回 201 :: "REL-20261125-02"
-PASS 8 批次锁住该单元的 tag 与 digest :: {"tag":"v1.0.0","digest":"sha256:7b3bb66a308ecdd30fe4c86aae864eff399b86357d3cb99fa3b66a775ee30392"}
-PASS 8 部署事实落在单元账本（deploy.succeeded 带批次号） :: "http://127.0.0.1:53300"
-PASS 8 部署地址能访问且 /healthz 返回 200 :: {"code":200,"body":"{\"name\":\"执行侧验收单元\",\"ok\":true,\"unit\":\"execfin\"}\n"}
-PASS 9 整批回滚返回 200 :: {"id":"REL-20261125-02","status":"rolledback"}
+PASS 8 SA 打 tag 进池 :: {"commit":"1.0.1","digest":"sha256:1c083ed9eb61c24712ff5d8930deededd0034c0e0331f3c11552942b0482a41c","pooled":true,"tag":"v1.0.0","unit":"exec610113"}
+PASS 8 批次发布返回 201 :: "REL-20261126-02"
+PASS 8 批次锁住该单元的 tag 与 digest :: {"tag":"v1.0.0","digest":"sha256:1c083ed9eb61c24712ff5d8930deededd0034c0e0331f3c11552942b0482a41c"}
+PASS 8 部署事实落在单元账本（deploy.succeeded 带批次号） :: "http://127.0.0.1:62010"
+PASS 8 部署地址能访问且 /healthz 返回 200 :: {"code":200,"body":"{\"name\":\"执行侧验收单元\",\"ok\":true,\"unit\":\"exec610113\"}\n"}
+PASS 9 整批回滚返回 200 :: {"id":"REL-20261126-02","status":"rolledback"}
 PASS 9 回滚后部署进程真的停了 :: 0
 PASS 页面无 JS 异常 :: []
 SUMMARY 25/25 passed

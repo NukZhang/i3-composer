@@ -60,6 +60,23 @@ func (s *Server) unitGates(ctx context.Context, v *store.View, u store.Unit) []d
 	}
 }
 
+// checkSummary 统计验收清单在打 tag 那一刻的分布。
+// 只存计数不存全文：清单本身在 check.defined / check.decided 里，不重复记。
+func checkSummary(cs []domain.Check) store.CheckSummary {
+	s := store.CheckSummary{Total: len(cs)}
+	for _, c := range cs {
+		switch c.ST {
+		case domain.CheckPass:
+			s.Pass++
+		case domain.CheckFail:
+			s.Fail++
+		default:
+			s.Todo++
+		}
+	}
+	return s
+}
+
 // ---------- 打 tag ----------
 
 // tagUnit 是人在验证页按下的「打 tag 固化交付物」。
@@ -135,6 +152,20 @@ func (s *Server) tagUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error
 		return fmt.Errorf("%w：闸门未过：%s", errBadRequest, bad)
 	}
 	tag := domain.NextTag(v.Tags)
+	// 先把「凭什么能打这个 tag」定格成事实，再落 tag 本身。
+	//
+	// 顺序有讲究：gate.evaluated 的 seq 恰好紧挨着 tag.created。
+	// 回放时以 tag.created 的 seq 为界，切出来的窗口里必然含这组闸；
+	// 反过来先落 tag 再补证据，中间崩一次就会出现「有 tag、没依据」的账。
+	ev := store.GateEvaluation{Tag: tag, Commit: head.No, Gates: gates,
+		Checks: checkSummary(v.Checks), By: string(c.Role)}
+	if v.Test != nil {
+		t := *v.Test
+		ev.Test = &t
+	}
+	if _, err := s.Log.Append(r.Context(), id, store.FactGateEvaluated, string(c.Role), ev); err != nil {
+		return err
+	}
 	p := map[string]any{
 		"tag": tag, "commit": head.No, "treeSha": head.TreeSHA, "digest": head.Digest, "by": string(c.Role),
 	}

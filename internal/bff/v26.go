@@ -161,10 +161,11 @@ func (s *Server) agentTrial(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		trial.Branch = run.Branch
 		trial.Escalated = run.Escalated
 		trial.Source = "executor"
+		trial.Assemblies = run.Assemblies
 		for _, n := range run.Nodes {
 			trial.Nodes = append(trial.Nodes, domain.TrialNode{
 				ID: n.ID, Name: n.Name, Type: n.Type, Ms: n.Ms,
-				Out: oneLine(n.Out), Wait: n.Wait,
+				Out: oneLine(n.Out), Wait: n.Wait, Blocked: n.Notes,
 			})
 		}
 	} else {
@@ -190,6 +191,15 @@ func (s *Server) agentTrial(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		trial.Source = source
 	}
 	at := time.Now().Format("01-02 15:04")
+	// 装配事实先于试跑结论落账：先记「这一轮看到了什么」，再记「这一轮得出了什么」。
+	// 反过来的话，中途崩了就会出现「有结论、不知道它读的是哪一版库」——
+	// 这正是评测失败没法归因到「没召回」的原因。
+	for _, asm := range trial.Assemblies {
+		if _, err := s.Log.Append(r.Context(), agentsLog, store.FactContextAssembled, c.Role.String(),
+			map[string]any{"agentId": a.ID, "assembly": asm, "at": at}); err != nil {
+			return err
+		}
+	}
 	if _, err := s.Log.Append(r.Context(), agentsLog, store.FactAgentTrial, c.Role.String(), map[string]any{
 		"agentId": a.ID, "trial": trial, "at": at, "by": c.Role.String(), "source": trial.Source,
 	}); err != nil {
@@ -287,15 +297,16 @@ func (s *Server) agentCase(w http.ResponseWriter, r *http.Request, c reqCtx) err
 		return fmt.Errorf("%w：Agent %s", errNotFound, c.ItemID)
 	}
 	var in struct {
-		V     string  `json:"v"`
-		In    string  `json:"in"`
-		Out   string  `json:"out"`
-		Exp   string  `json:"exp"`
-		Why   string  `json:"why"`
-		Ms    string  `json:"ms"`
-		Tok   string  `json:"tok"`
-		Score float64 `json:"score"`
-		OK    *bool   `json:"ok"`
+		V          string                   `json:"v"`
+		In         string                   `json:"in"`
+		Out        string                   `json:"out"`
+		Exp        string                   `json:"exp"`
+		Why        string                   `json:"why"`
+		Ms         string                   `json:"ms"`
+		Tok        string                   `json:"tok"`
+		Score      float64                  `json:"score"`
+		OK         *bool                    `json:"ok"`
+		Assemblies []domain.ContextAssembly `json:"assemblies"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10)).Decode(&in); err != nil {
 		return fmt.Errorf("%w：%v", errBadRequest, err)
@@ -307,6 +318,7 @@ func (s *Server) agentCase(w http.ResponseWriter, r *http.Request, c reqCtx) err
 	cse := domain.EvalCase{
 		V: v, In: in.In, Out: in.Out, Exp: in.Exp, Why: in.Why,
 		Ms: in.Ms, Tok: in.Tok, Score: in.Score, OK: true,
+		Assemblies: in.Assemblies,
 	}
 	if in.OK != nil {
 		cse.OK = *in.OK
@@ -513,12 +525,6 @@ func (s *Server) verifyChat(w http.ResponseWriter, r *http.Request, c reqCtx) er
 	if a == nil {
 		return fmt.Errorf("%w：Agent %s", errNotFound, agentID)
 	}
-	now := time.Now().Format("01-02 15:04")
-	if _, err := s.Log.Append(r.Context(), c.ItemID, store.FactVerifyChat, c.Role.String(), map[string]any{
-		"who": "me", "t": in.Text, "at": now, "by": c.Role.String(), "from": "customer",
-	}); err != nil {
-		return err
-	}
 	reply := "（按当前 AT 处理）已收到，正在核对。"
 	source := "sample"
 	if s.Exec != nil && a.Flow != nil {
@@ -530,6 +536,15 @@ func (s *Server) verifyChat(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		if err != nil {
 			return fmt.Errorf("%w：对话验收失败：%v", errBadRequest, err)
 		}
+		// 试跑页可以「跑完但某几步被拒」，对话不行：客户拿到的那句话必须真的
+		// 走过工具。拿一轮被拦下的执行拼回复，等于把「没读过会话」说成「读过了」。
+		if blocked := run.Blocked(); len(blocked) > 0 {
+			names := make([]string, 0, len(blocked))
+			for _, n := range blocked {
+				names = append(names, n.Name)
+			}
+			return fmt.Errorf("%w：编排有节点被工具白名单拒绝（%s），这一轮不能出回复", errBadRequest, strings.Join(names, "、"))
+		}
 		reply = replyFromRun(run)
 		source = "executor"
 	} else if len(a.Cases) > 0 {
@@ -538,6 +553,14 @@ func (s *Server) verifyChat(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		if cse.Why != "" {
 			reply += " 回执：" + cse.Why
 		}
+	}
+	// 问与答一起落账：这一轮没跑通就一条都不落，账本上不会留下
+	// 「客户问过、AI 答过」的假记录（拒绝时事实是零）。
+	now := time.Now().Format("01-02 15:04")
+	if _, err := s.Log.Append(r.Context(), c.ItemID, store.FactVerifyChat, c.Role.String(), map[string]any{
+		"who": "me", "t": in.Text, "at": now, "by": c.Role.String(), "from": "customer",
+	}); err != nil {
+		return err
 	}
 	if _, err := s.Log.Append(r.Context(), c.ItemID, store.FactVerifyChat, "x-"+agentID, map[string]any{
 		"who": "ai", "t": reply, "at": now, "from": agentID, "source": source,
