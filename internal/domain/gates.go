@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Gate 是交付四闸之一。原型 L952-957 的 checkCommit 是它的前端版本，
@@ -81,7 +82,7 @@ func CheckCommit(c Commit, versions map[Artifact][]Version, unhandled *int) []Ga
 		}
 	}
 
-	// 闸二：树里所有版本都必须是 accepted。草稿不许进交付。
+	// 交付还需要工作区收敛。HEAD 的证据无法覆盖仍在树外的活动草稿。
 	allAccepted := true
 	for _, t := range Order {
 		ver, found := Find(versions, t, c.Tree[t])
@@ -96,6 +97,19 @@ func CheckCommit(c Commit, versions map[Artifact][]Version, unhandled *int) []Ga
 			return good
 		}
 		return bad
+	}
+	acceptedDetail := detail(allAccepted, "无草稿", "存在未接受版本")
+	digestOK := c.Digest != ""
+	digestDetail := detail(digestOK, c.Digest, "未构建，无 digest")
+	var pending []string
+	for _, draft := range Drafts(versions) {
+		pending = append(pending, fmt.Sprintf("%s %s", draft.T, draft.V))
+	}
+	if len(pending) > 0 {
+		allAccepted = false
+		acceptedDetail = "待提交草稿：" + strings.Join(pending, "、")
+		digestOK = false
+		digestDetail = fmt.Sprintf("草稿待提交并重新测试、构建。已有证据对应提交 %s", c.No)
 	}
 
 	var firstMiss string
@@ -118,9 +132,8 @@ func CheckCommit(c Commit, versions map[Artifact][]Version, unhandled *int) []Ga
 		{Key: "closure", Label: "引用闭合", OK: closed,
 			Detail: detail(closed, "无悬空引用", firstMiss)},
 		{Key: "accepted", Label: "制品全部 accepted", OK: allAccepted,
-			Detail: detail(allAccepted, "无草稿", "存在未接受版本")},
-		{Key: "digest", Label: "镜像与树一致", OK: c.Digest != "",
-			Detail: detail(c.Digest != "", c.Digest, "未构建，无 digest")},
+			Detail: acceptedDetail},
+		{Key: "digest", Label: "镜像与树一致", OK: digestOK, Detail: digestDetail},
 		visual,
 	}
 }

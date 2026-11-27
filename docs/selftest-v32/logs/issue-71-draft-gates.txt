@@ -1,0 +1,19 @@
+RUN_TAG=issue71verified
+PASS 7 保存代码草稿后门禁点名版本，旧测试和摘要仍归属原提交 :: {"commit":"1.0.1","draft":"1.0.7","acceptedGate":{"key":"accepted","label":"制品全部 accepted","ok":false,"detail":"待提交草稿：code 1.0.7"},"digestGate":{"key":"digest","label":"镜像与树一致","ok":false,"detail":"草稿待提交并重新测试、构建。已有证据对应提交 1.0.1"}}
+PASS 7 质量报告展示草稿门禁和原提交的测试依据
+PASS 7 SA 验证页禁用草稿状态下的打 tag
+PASS 7 SA 打 tag 被草稿门禁拒绝，未生成门禁或 tag 事实 :: {"savedFact":{"actor":"DA","at":"2026-11-27T14:18:13Z","seq":38,"type":"artifact.drafted"},"code":400,"error":"请求不合法：闸门未过：制品全部 accepted：待提交草稿：code 1.0.7"}
+PASS 7 重新交付使用人工代码，机器测试与构建证据归属新提交 :: {"rebuildID":"US-06","commit":"1.0.2","code":"1.0.11","test":{"by":"x-qa","commit":"1.0.2","failures":null,"id":"US-06","pass":6,"total":6},"build":{"binary":true,"commit":"1.0.2","digest":"sha256:fdea98ed34108699117b0db774db33e20a58432ad6abfd269221420778a004dc","id":"US-06","treeSha":"sha256:bdcd57cd7aff"}}
+PASS 7 新提交还要重新完成人工验收 :: {"error":"请求不合法：还差 1 条验收未通过（0/1），不能打 tag"}
+PASS 7 SA 打 tag 进池 :: {"commit":"1.0.2","digest":"sha256:fdea98ed34108699117b0db774db33e20a58432ad6abfd269221420778a004dc","pooled":true,"tag":"v1.0.0","unit":"v32xissue71verified"}
+PASS 11 二次保存草稿后，当前闸阻断且原 tag 仍保留当时证据 :: {"current":{"key":"accepted","label":"制品全部 accepted","ok":false,"detail":"待提交草稿：code 1.0.12"},"historic":{"key":"accepted","label":"制品全部 accepted","ok":true,"detail":"无草稿"},"commit":"1.0.2","tag":"v1.0.0"}
+PASS 11 回放窗口右端是 tag.created 的 seq :: {"seq":69}
+PASS 11 账本里 gate.evaluated 紧挨着 tag.created :: ["artifact.drafted","tag.created","gate.evaluated","check.decided"]
+PASS 11 老基线回放 200 且如实说明「当时没记录闸门」 :: {"gates":null,"note":"这个 tag 打的时候没有记录闸门（gate.evaluated 从本轮起才落账）；要看今天的闸请读 /api/state，那算的是现在，不是当时"}
+{"unit":"v32xissue71verified","draftVersion":"1.0.12","head":"1.0.2","tag":"v1.0.0","commitDigest":"sha256:fdea98ed34108699117b0db774db33e20a58432ad6abfd269221420778a004dc","test":{"commit":"1.0.2","pass":6,"total":6,"at":"2026-11-27T14:18:16Z","by":"x-qa"},"gates":[{"key":"accepted","label":"制品全部 accepted","ok":false,"detail":"待提交草稿：code 1.0.12"},{"key":"digest","label":"镜像与树一致","ok":false,"detail":"草稿待提交并重新测试、构建。已有证据对应提交 1.0.2"}]}
+acceptance_v32 SUMMARY 70/70 passed
+acceptance_exec SUMMARY 31/31 passed
+acceptance_flow SUMMARY 33/33 passed
+acceptance_full SUMMARY 20/20 passed
+acceptance_v26 SUMMARY 75/75 passed
+acceptance_material37 SUMMARY 5/5 业务验收通过

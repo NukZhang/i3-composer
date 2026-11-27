@@ -222,22 +222,52 @@ func (s *Store) Ensure(ctx context.Context, pbc string) error {
 	return err
 }
 
-// Append 追加一条事实并返回它。失败自动重试（etag 冲突说明有并发写入者，
-// 重新读 head 再算哈希即可，无需上锁）。
-//
-// opID 非空时做幂等去重：Dapr activity 是「至少一次」语义，同一个 OpID 被重放
-// 不会产生第二条事实。去重靠扫日志，调用方通常已经读过日志，成本可忽略。
-func (s *Store) Append(ctx context.Context, pbc, typ, actor string, payload any) (Fact, error) {
-	return s.AppendOp(ctx, pbc, "", typ, actor, payload)
+// AppendCondition 将本次写入绑定到用于判断的账本序号。
+// 如果还需写一条判定证据，Before 与最终事实共用一次 head CAS。
+type AppendCondition struct {
+	AfterSeq int
+	Before   *PendingFact
 }
 
-func (s *Store) AppendOp(ctx context.Context, pbc, opID, typ, actor string, payload any) (Fact, error) {
+type PendingFact struct {
+	Type    string
+	Payload any
+}
+
+var ErrSnapshotChanged = errors.New("store: 账本自读入后已更新")
+
+// Append 追加一条事实并返回它。普通写入遇到 etag 冲突时重新读 head；
+// 带条件的写入遇到新事实时拒绝使用旧判断。
+func (s *Store) Append(ctx context.Context, pbc, typ, actor string, payload any, condition ...AppendCondition) (Fact, error) {
+	return s.AppendOp(ctx, pbc, "", typ, actor, payload, condition...)
+}
+
+// AppendOp 对非空 opID 去重，以便 Dapr 重放 activity 时复用已经落链的事实。
+func (s *Store) AppendOp(ctx context.Context, pbc, opID, typ, actor string, payload any, condition ...AppendCondition) (Fact, error) {
+	switch len(condition) {
+	case 0:
+		return s.append(ctx, pbc, opID, typ, actor, payload, nil)
+	case 1:
+		return s.append(ctx, pbc, opID, typ, actor, payload, &condition[0])
+	default:
+		return Fact{}, fmt.Errorf("append 只接受一个账本条件")
+	}
+}
+
+func (s *Store) append(ctx context.Context, pbc, opID, typ, actor string, payload any, condition *AppendCondition) (Fact, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return Fact{}, err
 	}
+	var before json.RawMessage
+	if condition != nil && condition.Before != nil {
+		before, err = json.Marshal(condition.Before.Payload)
+		if err != nil {
+			return Fact{}, err
+		}
+	}
 	for attempt := 0; attempt < s.maxRetry; attempt++ {
-		f, err := s.appendOnce(ctx, pbc, opID, typ, actor, raw)
+		f, err := s.appendOnce(ctx, pbc, opID, typ, actor, raw, condition, before)
 		if err == nil {
 			return f, nil
 		}
@@ -273,7 +303,7 @@ func (s *Store) AppendOp(ctx context.Context, pbc, opID, typ, actor string, payl
 // first-write-wins 无法串行化并发写，所以不能直接写。
 var errNoLog = errors.New("store: 日志未建立")
 
-func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, payload json.RawMessage) (Fact, error) {
+func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, payload json.RawMessage, condition *AppendCondition, before json.RawMessage) (Fact, error) {
 	rawHead, etag, err := s.c.GetState(ctx, s.state, s.headKey(pbc))
 	if err != nil {
 		return Fact{}, err
@@ -287,7 +317,6 @@ func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, pa
 			return Fact{}, fmt.Errorf("head 损坏 %s: %w", pbc, err)
 		}
 	}
-
 	// 幂等：同一 OpID 已经落过，直接返回那条事实。
 	if opID != "" && h.Seq > 0 {
 		done, err := s.findOp(ctx, pbc, h, opID)
@@ -298,7 +327,33 @@ func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, pa
 			return *done, nil
 		}
 	}
+	if condition != nil && h.Seq != condition.AfterSeq {
+		return Fact{}, ErrSnapshotChanged
+	}
 
+	if before != nil {
+		f, err := s.writeFact(ctx, pbc, "", condition.Before.Type, actor, before, h)
+		if err != nil {
+			return Fact{}, err
+		}
+		h = head{Seq: f.Seq, Hash: f.Hash}
+	}
+	f, err := s.writeFact(ctx, pbc, opID, typ, actor, payload, h)
+	if err != nil {
+		return Fact{}, err
+	}
+	// 只推进一次 head，两条证据同时对读者可见。
+	if _, err := s.c.SetState(ctx, s.state, s.headKey(pbc),
+		head{Seq: f.Seq, Hash: f.Hash}, etag); err != nil {
+		return Fact{}, err
+	}
+	if s.Notify != nil {
+		s.Notify(pbc)
+	}
+	return f, nil
+}
+
+func (s *Store) writeFact(ctx context.Context, pbc, opID, typ, actor string, payload json.RawMessage, h head) (Fact, error) {
 	f := Fact{
 		Seq:     h.Seq + 1,
 		At:      nowRFC3339(),
@@ -315,14 +370,6 @@ func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, pa
 	// 并发输家写的事实落在另一个哈希键上，同样不会被 head 引用。
 	if _, err := s.c.SetState(ctx, s.state, s.factKey(pbc, f.Seq, f.Hash), f, ""); err != nil {
 		return Fact{}, err
-	}
-	if _, err := s.c.SetState(ctx, s.state, s.headKey(pbc),
-		head{Seq: f.Seq, Hash: f.Hash}, etag); err != nil {
-		return Fact{}, err
-	}
-	// 只在 head 推进成功后通知：没落链的事实不算「有变化」。
-	if s.Notify != nil {
-		s.Notify(pbc)
 	}
 	return f, nil
 }

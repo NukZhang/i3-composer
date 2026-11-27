@@ -3,6 +3,7 @@ package bff
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -155,24 +156,24 @@ func (s *Server) tagUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error
 		return fmt.Errorf("%w：闸门未过：%s", errBadRequest, bad)
 	}
 	tag := domain.NextTag(v.Tags)
-	// 先把「凭什么能打这个 tag」定格成事实，再落 tag 本身。
-	//
-	// 顺序有讲究：gate.evaluated 的 seq 恰好紧挨着 tag.created。
-	// 回放时以 tag.created 的 seq 为界，切出来的窗口里必然含这组闸；
-	// 反过来先落 tag 再补证据，中间崩一次就会出现「有 tag、没依据」的账。
+	// 证据和 tag 绑定同一次账本 CAS，避免检查过后又写入草稿或新判定。
 	ev := store.GateEvaluation{Tag: tag, Commit: head.No, Gates: gates,
 		Checks: checkSummary(v.Checks), By: string(c.Role)}
 	if v.Test != nil {
 		t := *v.Test
 		ev.Test = &t
 	}
-	if _, err := s.Log.Append(r.Context(), id, store.FactGateEvaluated, string(c.Role), ev); err != nil {
-		return err
-	}
 	p := map[string]any{
 		"tag": tag, "commit": head.No, "treeSha": head.TreeSHA, "digest": head.Digest, "by": string(c.Role),
 	}
-	if _, err := s.Log.Append(r.Context(), id, store.FactTagCreated, string(c.Role), p); err != nil {
+	if _, err := s.Log.Append(r.Context(), id, store.FactTagCreated, string(c.Role), p, store.AppendCondition{
+		AfterSeq: v.Seq,
+		Before:   &store.PendingFact{Type: store.FactGateEvaluated, Payload: ev},
+	}); err != nil {
+		if errors.Is(err, store.ErrSnapshotChanged) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "单元账本已更新，请刷新后重新确认打 tag"})
+			return nil
+		}
 		return err
 	}
 	s.publish(id, "tag.created", map[string]any{"pbc": id, "tag": tag, "commit": head.No})

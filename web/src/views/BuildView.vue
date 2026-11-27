@@ -21,10 +21,7 @@ const gates = computed(() => (S.state && S.state.gates) || { all: [] });
 const svc = computed(() => (S.state && S.state.svcVerify) || { pass: 0, total: 0, fails: [] });
 const test = computed(() => (S.state && S.state.test) || null);
 const builds = computed(() => (S.state && S.state.builds) || {});
-const head = computed(() => {
-  const cs = (S.state && S.state.commits) || [];
-  return cs.length ? cs[0].no : '';
-});
+const head = computed(() => S.state?.commits?.[0] || null);
 
 // 标签页按构成给：纯 PBC 有源码与预览，Agent 有编排，组合两者都有，
 // 质量报告对三种都有（机器自检统一收拢在这里）。
@@ -122,7 +119,7 @@ async function saveCode() {
   try {
     const j = await api.saveDraft(S.pbcId, { artifact: 'code', files: files.value, note: '人工修改：' + path.value });
     pushRuntime('STATE', 'artifact.drafted code ' + j.version);
-    toast('代码已变更 → ' + j.version + '，此前自测/镜像/部署作废', 'ok');
+    toast('已保存代码草稿 ' + j.version + '。打 tag 前需重新提交、测试和构建。', 'ok');
   } catch (e) {
     toast(e.message, 'err');
   }
@@ -250,9 +247,9 @@ function ownerText(o) {
   <!-- 质量报告（机器自检） -->
   <template v-else-if="tab === 'quality'">
     <div class="small muted" style="margin-bottom: 8px">
-      机器自检 · {{ kind === 'pbc' ? (material ? '材料入库业务测试 · 代码 ' : '通用示例测试 · 代码 ') + (code.v || '—') : kind === 'hybrid' ? '服务 ' + svc.pass + '/' + svc.total + ' · Agent ' + (agent ? agent.eval[0] : 0) + '/' + (agent ? agent.eval[1] : 0) : (agent ? agent.eval[0] : 0) + '/' + (agent ? agent.eval[1] : 0) }} · 判定归验证阶段的人
+      机器自检 · {{ kind === 'pbc' ? (material ? '材料入库业务测试 · 提交中的代码 ' : '通用示例测试 · 提交中的代码 ') + (head?.tree?.code || '—') : kind === 'hybrid' ? '服务 ' + svc.pass + '/' + svc.total + ' · Agent ' + (agent ? agent.eval[0] : 0) + '/' + (agent ? agent.eval[1] : 0) : (agent ? agent.eval[0] : 0) + '/' + (agent ? agent.eval[1] : 0) }} · 判定归验证阶段的人
     </div>
-    <QualityReport :kind="kind" :gates="gates" :agent="agent" :head="head" :svc="svc" :test="test" :builds="builds" />
+    <QualityReport :kind="kind" :gates="gates" :agent="agent" :head="head?.no" :svc="svc" :test="test" :builds="builds" />
   </template>
 
   <!-- 启动预览 -->

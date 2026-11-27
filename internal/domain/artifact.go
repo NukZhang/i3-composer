@@ -6,7 +6,10 @@
 //   - 投影可重建        → 所有判断都基于 (版本线, 提交线)，两者都能从日志重放
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // Artifact 是制品类型。顺序即依赖顺序，不能在别处另行定义一份。
 type Artifact string
@@ -76,21 +79,34 @@ type Tree map[Artifact]string
 
 // Latest 从版本线里取最新版本号；没有则返回空串。
 func Latest(versions map[Artifact][]Version, t Artifact) string {
-	vs := versions[t]
-	if len(vs) == 0 {
-		return ""
-	}
-	return vs[len(vs)-1].V
+	ver, _ := LatestVersion(versions, t)
+	return ver.V
 }
 
-// Find 在版本线里按版本号查找。
+// LatestVersion 按落账顺序取最新条目。旧账本可能已有并发产生的同号版本。
+func LatestVersion(versions map[Artifact][]Version, t Artifact) (Version, bool) {
+	vs := versions[t]
+	if len(vs) == 0 {
+		return Version{}, false
+	}
+	return vs[len(vs)-1], true
+}
+
+// Find 按版本号查找。历史同号条目中优先取未被取代的记录，
+// 已接受的早期记录仍可作为旧提交的引用。
 func Find(versions map[Artifact][]Version, t Artifact, v string) (Version, bool) {
+	var superseded Version
+	found := false
 	for _, x := range versions[t] {
-		if x.V == v {
+		if x.V != v {
+			continue
+		}
+		if x.St != StSuperseded {
 			return x, true
 		}
+		superseded, found = x, true
 	}
-	return Version{}, false
+	return superseded, found
 }
 
 // DeriveRefs 是原型 dfRule 的纯函数版本，也是「引用闭合」闸的判定依据。
@@ -114,22 +130,18 @@ func DeriveRefs(t Artifact, latest func(Artifact) string) []Ref {
 	}
 }
 
-// StaleItem 表示某制品的最新版本引用了非最新的上游。
+// StaleItem 表示最新版本需要重接引用或重编草稿版本号。
 type StaleItem struct {
 	T  Artifact `json:"t"`
 	V  string   `json:"v"`
 	On []Ref    `json:"on"`
 }
 
-// Stale 列出所有过期制品。按 Order 顺序返回，调用方可直接依次重算。
+// Stale 按 Order 返回待收敛制品。旧账本中的同号草稿需要晋版后再入树。
 func Stale(versions map[Artifact][]Version) []StaleItem {
 	out := make([]StaleItem, 0, len(Order))
 	for _, t := range Order {
-		v := Latest(versions, t)
-		if v == "" {
-			continue
-		}
-		cur, ok := Find(versions, t, v)
+		cur, ok := LatestVersion(versions, t)
 		if !ok {
 			continue
 		}
@@ -139,8 +151,12 @@ func Stale(versions map[Artifact][]Version) []StaleItem {
 				bad = append(bad, d)
 			}
 		}
-		if len(bad) > 0 {
-			out = append(out, StaleItem{T: t, V: v, On: bad})
+		line := versions[t]
+		duplicate := cur.St == StDraft && slices.ContainsFunc(line[:len(line)-1], func(v Version) bool {
+			return v.V == cur.V
+		})
+		if len(bad) > 0 || duplicate {
+			out = append(out, StaleItem{T: t, V: cur.V, On: bad})
 		}
 	}
 	return out
@@ -150,11 +166,7 @@ func Stale(versions map[Artifact][]Version) []StaleItem {
 func Drafts(versions map[Artifact][]Version) []Version {
 	out := make([]Version, 0, len(Order))
 	for _, t := range Order {
-		v := Latest(versions, t)
-		if v == "" {
-			continue
-		}
-		cur, ok := Find(versions, t, v)
+		cur, ok := LatestVersion(versions, t)
 		if ok && cur.St == StDraft {
 			out = append(out, cur)
 		}

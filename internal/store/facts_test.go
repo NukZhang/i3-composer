@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -101,6 +102,49 @@ func TestAppendChainsHashes(t *testing.T) {
 	}
 	if len(fs) != 2 || fs[0].Seq != 1 || fs[1].Seq != 2 {
 		t.Fatalf("加载应按 seq 升序返回 2 条，实际 %+v", fs)
+	}
+}
+
+func TestAppendConditionRequiresCurrentSnapshot(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	snapshot, err := s.Append(ctx, "fee", FactPBCCreated, "PA", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := s.Append(ctx, "fee", FactArtifactDrafted, "DA", map[string]string{"v": "1.0.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notified := 0
+	s.Notify = func(string) { notified++ }
+	pair := AppendCondition{
+		AfterSeq: snapshot.Seq,
+		Before:   &PendingFact{Type: FactGateEvaluated, Payload: GateEvaluation{Tag: "v1.0.0"}},
+	}
+	if _, err := s.Append(ctx, "fee", FactTagCreated, "SA", map[string]string{"tag": "v1.0.0"}, pair); !errors.Is(err, ErrSnapshotChanged) {
+		t.Fatalf("草稿先落链时，应拒绝基于旧快照的打 tag：%v", err)
+	}
+	facts, err := s.Load(ctx, "fee")
+	if err != nil || len(facts) != draft.Seq || notified != 0 {
+		t.Fatalf("被拒的条件写入不能留下事实或通知：facts=%v notify=%d err=%v", facts, notified, err)
+	}
+	pair.AfterSeq = draft.Seq
+	tag, err := s.AppendOp(ctx, "fee", "delivery/tag", FactTagCreated, "SA", map[string]string{"tag": "v1.0.0"}, pair)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err = s.Load(ctx, "fee")
+	if err != nil || len(facts) != tag.Seq || tag.Seq != draft.Seq+2 || notified != 1 {
+		t.Fatalf("成功时应同时落入两条连续事实，并且只通知一次：facts=%v notify=%d err=%v", facts, notified, err)
+	}
+	ev := facts[len(facts)-2]
+	if ev.Type != FactGateEvaluated || ev.Prev != draft.Hash || tag.Prev != ev.Hash {
+		t.Fatalf("判定和 tag 必须相邻且保持哈希链：ev=%+v tag=%+v", ev, tag)
+	}
+	retry, err := s.AppendOp(ctx, "fee", "delivery/tag", FactTagCreated, "SA", nil, pair)
+	if err != nil || retry.Hash != tag.Hash || notified != 1 {
+		t.Fatalf("重放应复用已写入的 tag 和证据：retry=%+v notify=%d err=%v", retry, notified, err)
 	}
 }
 

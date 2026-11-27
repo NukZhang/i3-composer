@@ -27,8 +27,8 @@ const passAll = computed(() => all.value.filter((g) => g.ok && !g.unknown).lengt
 const unknownCount = computed(() => all.value.filter((g) => g.unknown).length);
 const canRelease = computed(() => all.value.length > 0 && all.value.every((g) => g.ok));
 
-// 这次提交构建出来的产物摘要。
-const digest = computed(() => (props.head && props.builds[props.head]) || '');
+// 测试与产物放在一起时必须来自同一次提交。
+const digest = computed(() => props.builds[props.test?.commit] || '');
 </script>
 
 <template>
@@ -36,7 +36,7 @@ const digest = computed(() => (props.head && props.builds[props.head]) || '');
     <!-- 真跑测试与构建产物的结论 -->
     <div v-if="test" class="card">
       <div class="ch">
-        <span v-html="icon('check')" /><h3>测试与构建</h3><span class="spacer" />
+        <span v-html="icon('check')" /><h3>测试与构建 · 提交 {{ test.commit || '—' }}</h3><span class="spacer" />
         <span class="small muted">{{ test.by || 'x-qa' }} · {{ test.at || '' }}</span>
       </div>
       <div class="row wrap" style="gap: 6px">

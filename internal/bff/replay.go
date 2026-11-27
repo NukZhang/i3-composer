@@ -130,9 +130,10 @@ func (s *Server) replay(w http.ResponseWriter, r *http.Request, c reqCtx) error 
 	for _, f := range store.UpTo(facts, taggedAt) {
 		out.Facts = append(out.Facts, replayFact{Seq: f.Seq, At: f.At, Type: f.Type, Actor: f.Actor})
 	}
-	// 闸优先用当时落账的那组；没有就如实说没有，绝不拿今天的账本重算当当时。
-	for _, e := range v.GateEvals {
-		if e.Tag == out.Tag {
+	// 旧账本可能留有打 tag 失败时的判定，优先读最接近该 tag 的一组。
+	for i := len(v.GateEvals) - 1; i >= 0; i-- {
+		e := v.GateEvals[i]
+		if e.Tag == out.Tag && (out.Commit == "" || e.Commit == "" || e.Commit == out.Commit) {
 			out.Gates = e.Gates
 			break
 		}
