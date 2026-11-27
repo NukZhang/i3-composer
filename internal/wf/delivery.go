@@ -25,7 +25,20 @@ func Delivery(ctx *workflow.WorkflowContext) (any, error) {
 	}
 
 	// 每一步的幂等键 = instanceID/step。Dapr 重放同一 activity 时 OpID 不变。
-	op := func(step int) string { return fmt.Sprintf("%s/%d", ctx.ID(), step) }
+	opBase := ctx.ID()
+	if in.RepairStart != nil {
+		opBase = in.RepairStart.OpID
+	}
+	op := func(step int) string { return fmt.Sprintf("%s/%d", opBase, step) }
+	recordBlocked := func(step int, reason string) error {
+		b := BlockInput{StepInput: StepInput{Input: in, Step: step, OpID: op(step) + "/blocked"},
+			Reason: reason, By: "i3-pipeline"}
+		if in.RepairStart != nil {
+			return ctx.CallActivity(ActBlocked, workflow.WithActivityInput(b), workflow.WithActivityRetryPolicy(retry)).Await(nil)
+		}
+		// 普通交付沿用历史调度；早期启动的实例没有修复凭据。
+		return ctx.CallActivity(ActBlocked, workflow.WithActivityInput(b)).Await(nil)
+	}
 
 	steps := []string{ActGenArtifacts, ActConverge, ActCommit, ActTest, ActBuild}
 
@@ -34,14 +47,19 @@ func Delivery(ctx *workflow.WorkflowContext) (any, error) {
 		var res StepResult
 		t := ctx.CallActivity(name, workflow.WithActivityInput(in2), workflow.WithActivityRetryPolicy(retry))
 		if err := t.Await(&res); err != nil {
+			if in.RepairStart != nil {
+				if recordErr := recordBlocked(i, fmt.Sprintf("修复步骤 %d 执行失败，可重新发起", i+1)); recordErr != nil {
+					return nil, fmt.Errorf("步骤 %d（%s）失败，且未能记录受阻：%v：%w", i+1, name, recordErr, err)
+				}
+			}
 			return nil, fmt.Errorf("步骤 %d（%s）执行失败：%w", i+1, name, err)
 		}
 		if !res.OK {
 			// 业务拒绝：不是异常，是流程受阻。落一条 blocked 事实，然后正常结束——
 			// 人修好后重新发起一个新的实例，而不是让旧实例无限重试。
-			b := BlockInput{StepInput: StepInput{Input: in, Step: i, OpID: op(i) + "/blocked"},
-				Reason: res.Detail, By: "i3-pipeline"}
-			_ = ctx.CallActivity(ActBlocked, workflow.WithActivityInput(b)).Await(nil)
+			if err := recordBlocked(i, res.Detail); err != nil && in.RepairStart != nil {
+				return nil, fmt.Errorf("步骤 %d 受阻，记录账本失败：%w", i+1, err)
+			}
 			return map[string]any{"ok": false, "step": i, "reason": res.Detail}, nil
 		}
 	}
@@ -51,12 +69,17 @@ func Delivery(ctx *workflow.WorkflowContext) (any, error) {
 	v := StepInput{Input: in, Step: stepVerify, OpID: op(stepVerify)}
 	var vr StepResult
 	if err := ctx.CallActivity(ActVerified, workflow.WithActivityInput(v)).Await(&vr); err != nil {
+		if in.RepairStart != nil {
+			if recordErr := recordBlocked(stepVerify, "修复交付未完成，可重新发起"); recordErr != nil {
+				return nil, fmt.Errorf("交付失败，且未能记录受阻：%v：%w", recordErr, err)
+			}
+		}
 		return nil, fmt.Errorf("记录交付完成失败：%w", err)
 	}
 	if !vr.OK {
-		b := BlockInput{StepInput: StepInput{Input: in, Step: stepVerify, OpID: op(stepVerify) + "/blocked"},
-			Reason: vr.Detail, By: "i3-pipeline"}
-		_ = ctx.CallActivity(ActBlocked, workflow.WithActivityInput(b)).Await(nil)
+		if err := recordBlocked(stepVerify, vr.Detail); err != nil && in.RepairStart != nil {
+			return nil, fmt.Errorf("交付受阻，记录账本失败：%w", err)
+		}
 		return map[string]any{"ok": false, "step": stepVerify, "reason": vr.Detail}, nil
 	}
 	return map[string]any{"ok": true, "verified": true, "commit": vr.CommitNo}, nil

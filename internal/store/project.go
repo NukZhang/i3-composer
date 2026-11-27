@@ -31,11 +31,12 @@ type View struct {
 	Events []EventRecord `json:"events,omitempty"`
 
 	// v2.5/v2.6：真人验收台的清单、判定、bug 与对话。
-	Checks       []domain.Check `json:"checks,omitempty"`
-	CheckCommit  string         `json:"checkCommit,omitempty"`
-	commitChecks []domain.Check
-	Defects      []domain.Defect `json:"defects,omitempty"`
-	Chats        []VerifyChat    `json:"chats,omitempty"`
+	Checks         []domain.Check `json:"checks,omitempty"`
+	CheckCommit    string         `json:"checkCommit,omitempty"`
+	commitChecks   []domain.Check
+	checkDecisions map[string]checkDecision
+	Defects        []domain.Defect `json:"defects,omitempty"`
+	Chats          []VerifyChat    `json:"chats,omitempty"`
 
 	// GateEvals 是历次打 tag 时算出的那组闸。它是「当时」的证据，
 	// 不是按今天的账本重算的结果——重算给的永远是现在。
@@ -80,6 +81,7 @@ type VerifyChat struct {
 
 // TestResult 是一次真跑测试的结果。
 type TestResult struct {
+	ItemID   string   `json:"id,omitempty"`
 	Commit   string   `json:"commit"`
 	Pass     int      `json:"pass"`
 	Total    int      `json:"total"`
@@ -133,27 +135,28 @@ type Step struct {
 // Parent 指向它挂在哪条 Story 下：task 自身没有 pbc 字段的语义负担，
 // 归属由 parent 决定（v3.2 的 story / task 分层渲染就靠它）。
 type Item struct {
-	ID        string `json:"id"`
-	Title     string `json:"t"`
-	PT        int    `json:"pt"`
-	St        string `json:"st"` // todo | doing | done
-	Owner     string `json:"owner"`
-	Kind      string `json:"kind"` // Story | Task
-	PBC       string `json:"pbc"`
-	Parent    string `json:"parent,omitempty"`
-	Type      string `json:"type"` // new | feature | defect | backlog | doc
-	Mode      string `json:"mode"` // fast | guided
-	Env       string `json:"env"`
-	Run       string `json:"run"` // idea | running | waiting | paused | blocked | published
-	Step      int    `json:"step"`
-	Steps     []Step `json:"steps,omitempty"`
-	Version   string `json:"version,omitempty"`
-	Tag       string `json:"tag,omitempty"`
-	URL       string `json:"url,omitempty"`
-	By        string `json:"by,omitempty"`
-	Blocked   string `json:"blocked,omitempty"`
-	BlockedBy string `json:"blockedBy,omitempty"`
-	At        string `json:"at,omitempty"`
+	ID        string     `json:"id"`
+	Title     string     `json:"t"`
+	PT        int        `json:"pt"`
+	St        string     `json:"st"` // todo | doing | done
+	Owner     string     `json:"owner"`
+	Kind      string     `json:"kind"` // Story | Task
+	PBC       string     `json:"pbc"`
+	Parent    string     `json:"parent,omitempty"`
+	Type      string     `json:"type"` // new | feature | defect | backlog | doc
+	Mode      string     `json:"mode"` // fast | guided
+	Env       string     `json:"env"`
+	Run       string     `json:"run"` // idea | running | waiting | paused | blocked | published
+	Step      int        `json:"step"`
+	Steps     []Step     `json:"steps,omitempty"`
+	Version   string     `json:"version,omitempty"`
+	Tag       string     `json:"tag,omitempty"`
+	URL       string     `json:"url,omitempty"`
+	By        string     `json:"by,omitempty"`
+	Blocked   string     `json:"blocked,omitempty"`
+	BlockedBy string     `json:"blockedBy,omitempty"`
+	At        string     `json:"at,omitempty"`
+	Repair    *RepairRef `json:"repair,omitempty"`
 
 	// 准入输入：建单时由人写下的目标断言、数据范围与责任人。
 	//
@@ -168,6 +171,40 @@ type Item struct {
 	// Admit 是最近一次入口准入的结论。它不参与 run 状态机——
 	// 那是 workflow 的事；这里只回答「进流水线之前判过什么」。
 	Admit *AdmitInfo `json:"admit,omitempty"`
+}
+
+// RepairRef 固定这条修复项来自哪次验收失败。重验只处理仍有效的那次失败。
+type RepairRef struct {
+	Defect      string `json:"defect"`
+	Check       string `json:"check"`
+	Commit      string `json:"commit,omitempty"`
+	DecisionSeq int    `json:"decisionSeq"`
+	SourceItem  string `json:"sourceItem,omitempty"`
+}
+
+type checkDecision struct {
+	seq, lastFailure int
+}
+
+func (v *View) HasRunningRepair(check string) bool {
+	for _, item := range v.Items {
+		if item.Repair != nil && item.Repair.Check == check && item.Run == "running" {
+			return true
+		}
+	}
+	return false
+}
+
+func (v *View) RepairCheckPassed(item *Item) bool {
+	if item.Repair == nil {
+		return false
+	}
+	for _, check := range v.Checks {
+		if check.ID == item.Repair.Check {
+			return check.ST == domain.CheckPass
+		}
+	}
+	return false
 }
 
 // AdmitInfo 是入口准入的落账结论。
@@ -202,13 +239,14 @@ func StepPlan(env string) []Step {
 // 不读时钟、不读环境、不访问网络。
 func Project(pbc string, facts []Fact) (*View, error) {
 	v := &View{
-		PBC:      pbc,
-		Kind:     string(domain.KindPBC),
-		Seq:      len(facts),
-		Versions: map[domain.Artifact][]domain.Version{},
-		Builds:   map[string]string{},
-		Binaries: map[string]bool{},
-		Items:    map[string]*Item{},
+		PBC:            pbc,
+		Kind:           string(domain.KindPBC),
+		Seq:            len(facts),
+		Versions:       map[domain.Artifact][]domain.Version{},
+		Builds:         map[string]string{},
+		Binaries:       map[string]bool{},
+		Items:          map[string]*Item{},
+		checkDecisions: map[string]checkDecision{},
 	}
 	for _, f := range facts {
 		if err := apply(v, f); err != nil {
@@ -527,6 +565,7 @@ func apply(v *View, f Fact) error {
 			return err
 		}
 		if it := v.Items[p.ID]; it != nil {
+			v.requestRepairRetest(it, p.Version)
 			it.Run = "verified"
 			it.St = "done"
 			if p.Version != "" {
@@ -608,6 +647,7 @@ func apply(v *View, f Fact) error {
 
 	case FactTestRun:
 		var p struct {
+			ID       string   `json:"id"`
 			Commit   string   `json:"commit"`
 			Pass     int      `json:"pass"`
 			Total    int      `json:"total"`
@@ -618,7 +658,7 @@ func apply(v *View, f Fact) error {
 			return err
 		}
 		v.Test = &TestResult{
-			Commit: p.Commit, Pass: p.Pass, Total: p.Total,
+			ItemID: p.ID, Commit: p.Commit, Pass: p.Pass, Total: p.Total,
 			Failures: p.Failures, At: f.At, By: p.By,
 		}
 
@@ -638,6 +678,7 @@ func apply(v *View, f Fact) error {
 			v.CheckCommit = v.Commits[0].No
 		}
 		for _, c := range p.Items {
+			delete(v.checkDecisions, c.ID)
 			if c.ST == "" {
 				c.ST = domain.CheckTodo
 			}
@@ -676,6 +717,12 @@ func apply(v *View, f Fact) error {
 			return err
 		}
 		*checks = out
+		decision := v.checkDecisions[p.ID]
+		decision.seq = f.Seq
+		if p.ST == domain.CheckFail {
+			decision.lastFailure = f.Seq
+		}
+		v.checkDecisions[p.ID] = decision
 
 	case FactDefect:
 		var d domain.Defect
@@ -695,4 +742,30 @@ func apply(v *View, f Fact) error {
 		v.Chats = append(v.Chats, p)
 	}
 	return nil
+}
+
+// 当关联修复完成时重验最新失败。修复完成前的提前判定不能代替重验。
+func (v *View) requestRepairRetest(item *Item, version string) {
+	r := item.Repair
+	if r == nil || r.DecisionSeq == 0 || len(v.Commits) == 0 || version != v.Commits[0].No || v.Test == nil ||
+		v.Test.ItemID != item.ID || v.Test.Commit != version || v.Test.Pass != v.Test.Total {
+		return
+	}
+	decision := v.checkDecisions[r.Check]
+	if decision.lastFailure != r.DecisionSeq || (decision.seq != r.DecisionSeq && item.Run != "running") {
+		return
+	}
+	checks := v.Checks
+	if len(v.commitChecks) > 0 {
+		checks = v.commitChecks
+	} else if r.Commit != "" && v.CheckCommit != version {
+		return // PBC 的历史清单须先绑定当前提交。
+	}
+	for i := range checks {
+		if checks[i].ID == r.Check {
+			checks[i].ST = domain.CheckTodo
+			checks[i].RetestItem = item.ID
+			return
+		}
+	}
 }

@@ -266,7 +266,8 @@ type Task struct {
 	BlockedBy string       `json:"blockedBy,omitempty"`
 	At        string       `json:"at,omitempty"`
 	// Admit 是入口准入的最近一次结论：页面据此挂 waiver 黄条或拒单三行。
-	Admit *store.AdmitInfo `json:"admit,omitempty"`
+	Admit  *store.AdmitInfo `json:"admit,omitempty"`
+	Repair *store.RepairRef `json:"repair,omitempty"`
 }
 
 func toTask(it *store.Item) Task {
@@ -275,7 +276,7 @@ func toTask(it *store.Item) Task {
 		Parent: it.Parent,
 		PBC:    it.PBC, Type: it.Type, Mode: it.Mode, Env: it.Env, Run: it.Run, Step: it.Step,
 		Steps: it.Steps, Version: it.Version, Tag: it.Tag, URL: it.URL, By: it.By,
-		Blocked: it.Blocked, BlockedBy: it.BlockedBy, At: it.At, Admit: it.Admit,
+		Blocked: it.Blocked, BlockedBy: it.BlockedBy, At: it.At, Admit: it.Admit, Repair: it.Repair,
 	}
 }
 
@@ -455,7 +456,14 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 			})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"item": toTask(it), "facts": facts})
+	out := map[string]any{"item": toTask(it), "facts": facts}
+	if it.Repair != nil {
+		out["repairInputs"] = map[string]any{
+			"accept": it.Accept, "data": it.Data, "acceptBy": it.AcceptBy, "complyBy": it.ComplyBy,
+			"reasons": domain.Admit(s.admitInput(v, it)).Reasons,
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }
 
@@ -539,6 +547,9 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if it.Kind != "Story" || len(it.Steps) == 0 {
 		return fmt.Errorf("%w：%s 不是可执行的工作项", errBadRequest, c.ItemID)
 	}
+	if v.RepairCheckPassed(it) {
+		return fmt.Errorf("%w：验收项 %s 已通过，如需继续修复请重新登记失败", errBadRequest, it.Repair.Check)
+	}
 
 	// 入口准入：硬项不过就停在这里，不落 item.run.started、不调 sidecar。
 	// 与宪法 V「越权不留事实」同一条道理——被拒的发起不该留下半条链，
@@ -576,12 +587,30 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	// 实例号 = 账本前缀 + 单元 + 工作项。单元必须进来：不同单元下
 	// 各有一份 US-01 是常态，只带工作项号会让两份工作项抢同一个实例。
 	inst := s.instanceID(c.PBC + "_" + it.ID)
+	if it.Repair != nil {
+		in.RepairStart = &wf.RepairStart{
+			OpID: fmt.Sprintf("%s/repair/%d", inst, v.Seq+1),
+			By:   c.Role.String(), Waivers: adm.Waivers,
+		}
+	}
 	err = s.Dapr.StartWorkflow(r.Context(), s.Comp, s.wfName(), inst, in)
 	if errors.Is(err, dapr.ErrConflict) {
 		return fmt.Errorf("%w：%s 已有一个未结束的实例", errBadRequest, c.ItemID)
 	}
 	if err != nil {
 		return err
+	}
+	if in.RepairStart != nil {
+		started, recordErr := wf.RecordRepairStart(r.Context(), s.Log, v, in)
+		if recordErr != nil && !errors.Is(recordErr, store.ErrSnapshotChanged) {
+			slog.Warn("修复启动记录交由工作流补记", "item", it.ID, "err", recordErr)
+		}
+		if started {
+			s.publish(c.PBC, "item.admitted", map[string]any{"id": it.ID, "waivers": len(adm.Waivers)})
+			s.publish(c.PBC, "item.run.started", map[string]any{"id": it.ID})
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"id": it.ID, "instance": inst})
+		return nil
 	}
 	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactItemAdmitted, c.Role.String(),
 		map[string]any{"id": it.ID, "waivers": adm.Waivers, "by": c.Role.String()}); err != nil {

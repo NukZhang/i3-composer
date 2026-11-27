@@ -120,7 +120,7 @@ func TestAppendConditionRequiresCurrentSnapshot(t *testing.T) {
 	s.Notify = func(string) { notified++ }
 	pair := AppendCondition{
 		AfterSeq: snapshot.Seq,
-		Before:   &PendingFact{Type: FactGateEvaluated, Payload: GateEvaluation{Tag: "v1.0.0"}},
+		Before:   []PendingFact{{Type: FactGateEvaluated, Payload: GateEvaluation{Tag: "v1.0.0"}}},
 	}
 	if _, err := s.Append(ctx, "fee", FactTagCreated, "SA", map[string]string{"tag": "v1.0.0"}, pair); !errors.Is(err, ErrSnapshotChanged) {
 		t.Fatalf("草稿先落链时，应拒绝基于旧快照的打 tag：%v", err)
@@ -343,5 +343,32 @@ func TestRunStartedResetsPreviousRound(t *testing.T) {
 		if st.St != "todo" || st.At != "" {
 			t.Fatalf("第 %d 步应为 todo 且无时间，实际 %s/%q", i, st.St, st.At)
 		}
+	}
+}
+
+func TestRepairRetestUsesLatestLinkedDecision(t *testing.T) {
+	const check = "AR-1"
+	const item = "US-01"
+	facts := []Fact{
+		factOf(t, 1, FactCommitCreated, CommitCreated{Commit: domain.Commit{No: "1.0.1"}}),
+		factOf(t, 2, FactCheckDefined, map[string]any{"items": []domain.Check{{ID: check, ST: domain.CheckTodo}}}),
+		factOf(t, 3, FactCheckDecided, map[string]string{"id": check, "st": domain.CheckFail}),
+		factOf(t, 4, FactItemCreated, Item{
+			ID: item, Kind: "Story", Type: "defect",
+			Repair: &RepairRef{Defect: "BUG-118", Check: check, DecisionSeq: 3},
+		}),
+		factOf(t, 5, FactTestRun, TestResult{ItemID: item, Commit: "1.0.1", Pass: 5, Total: 5}),
+	}
+	verified := func(seq int) Fact {
+		return factOf(t, seq, FactItemVerified, map[string]string{"id": item, "version": "1.0.1"})
+	}
+	first, err := Project("qa", append(facts, verified(6)))
+	if err != nil || len(first.Checks) != 1 || first.Checks[0].ST != domain.CheckTodo || first.Checks[0].RetestItem != item {
+		t.Fatalf("修复交付后应标记同一条验收待重验：%+v，%v", first, err)
+	}
+	newDecision := factOf(t, 6, FactCheckDecided, map[string]string{"id": check, "st": domain.CheckPass})
+	current, err := Project("qa", append(facts, newDecision, verified(7)))
+	if err != nil || len(current.Checks) != 1 || current.Checks[0].ST != domain.CheckPass || current.Checks[0].RetestItem != "" {
+		t.Fatalf("修复交付不能覆盖更新的人工判定：%+v，%v", current, err)
 	}
 }

@@ -103,6 +103,16 @@ func (a *Activities) done(ctx context.Context, in StepInput, res StepResult) (St
 //
 // 打 tag 不在这里：那是人在验证页按下的动作，BFF 会重新校验闸门后落账。
 func (a *Activities) Verified(ctx context.Context, in StepInput) (StepResult, error) {
+	for range 4 {
+		res, err := a.verifySnapshot(ctx, in)
+		if !errors.Is(err, store.ErrSnapshotChanged) {
+			return res, err
+		}
+	}
+	return StepResult{OK: false, Step: in.Step, Detail: "账本持续更新，无法核对当前交付"}, nil
+}
+
+func (a *Activities) verifySnapshot(ctx context.Context, in StepInput) (StepResult, error) {
 	facts, err := a.logOf(in.Input).Load(ctx, in.PBC)
 	if err != nil {
 		return StepResult{}, err
@@ -110,6 +120,9 @@ func (a *Activities) Verified(ctx context.Context, in StepInput) (StepResult, er
 	v, err := store.Project(in.PBC, facts)
 	if err != nil {
 		return StepResult{}, err
+	}
+	if item := v.Items[in.ItemID]; item != nil && store.HasOp(facts, in.OpID+"/verified") {
+		return StepResult{OK: true, Step: in.Step, CommitNo: item.Version, Detail: "已可交付 · " + item.Version}, nil
 	}
 	if len(v.Commits) == 0 {
 		return StepResult{OK: false, Step: in.Step, Detail: "没有提交，无法交付"}, nil
@@ -124,9 +137,12 @@ func (a *Activities) Verified(ctx context.Context, in StepInput) (StepResult, er
 	if v.Test.Pass != v.Test.Total {
 		return StepResult{OK: false, Step: in.Step, Detail: fmt.Sprintf("测试未全过（%d/%d）", v.Test.Pass, v.Test.Total)}, nil
 	}
+	if item := v.Items[in.ItemID]; item != nil && item.Repair != nil && v.Test.ItemID != item.ID {
+		return StepResult{OK: false, Step: in.Step, Detail: "当前提交缺少本修复项的测试结果"}, nil
+	}
 	p := map[string]any{"id": in.ItemID, "version": head.No}
 	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/verified",
-		store.FactItemVerified, "i3-pipeline", p); err != nil {
+		store.FactItemVerified, "i3-pipeline", p, store.AppendCondition{AfterSeq: v.Seq}); err != nil {
 		return StepResult{}, err
 	}
 	a.publish(ctx, TopicItemChanged, map[string]any{
@@ -176,6 +192,24 @@ type BlockInput struct {
 	By     string `json:"by"`
 }
 
+// RecordRepairStart 共用幂等键：HTTP 请求失联时，第一个 activity 接着登记。
+func RecordRepairStart(ctx context.Context, log *store.Store, v *store.View, in Input) (bool, error) {
+	start := in.RepairStart
+	item := v.Items[in.ItemID]
+	if item == nil || v.RepairCheckPassed(item) {
+		return false, nil
+	}
+	_, err := log.AppendOp(ctx, in.PBC, start.OpID, store.FactItemRunStarted, start.By,
+		map[string]string{"id": in.ItemID}, store.AppendCondition{
+			AfterSeq: v.Seq,
+			Before: []store.PendingFact{{
+				Type:    store.FactItemAdmitted,
+				Payload: map[string]any{"id": in.ItemID, "waivers": start.Waivers, "by": start.By},
+			}},
+		})
+	return err == nil, err
+}
+
 // GenArtifacts 生成影响到的制品草稿：每个制品追加一条 artifact.drafted 事实。
 // 注意它不「返回状态」给 workflow 当账本，只是写事实。
 //
@@ -191,6 +225,24 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 	v, err := store.Project(pbc, facts)
 	if err != nil {
 		return StepResult{}, err
+	}
+	if start := in.RepairStart; start != nil && !store.HasOp(facts, start.OpID) {
+		ok, err := RecordRepairStart(ctx, log, v, in.Input)
+		if err != nil {
+			return StepResult{}, err
+		}
+		if !ok {
+			return StepResult{OK: false, Step: in.Step, Detail: "关联验收已通过或修复项已不可用"}, nil
+		}
+		// 追加后重读，后续制品仍得基于实际落账游标生成。
+		facts, err = log.Load(ctx, pbc)
+		if err != nil {
+			return StepResult{}, err
+		}
+		v, err = store.Project(pbc, facts)
+		if err != nil {
+			return StepResult{}, err
+		}
 	}
 	latest := func(t domain.Artifact) string { return domain.Latest(v.Versions, t) }
 	have := map[domain.Artifact]bool{}
@@ -416,15 +468,41 @@ func (a *Activities) Commit(ctx context.Context, in StepInput) (StepResult, erro
 		TreeSHA: domain.TreeSHA(tree),
 	}
 	payload := store.CommitCreated{Commit: c}
-	if at, ok := domain.Find(v.Versions, domain.AT, tree[domain.AT]); ok && manualPlan(at) &&
-		domain.ParseKind(a.unitOf(ctx, in.Input).Kind) != domain.KindAgent {
-		payload.Checks = domain.ChecksFromAT(at.MD)
+	if domain.ParseKind(a.unitOf(ctx, in.Input).Kind) != domain.KindAgent {
+		at, _ := domain.Find(v.Versions, domain.AT, tree[domain.AT])
+		if manualPlan(at) {
+			payload.Checks = domain.ChecksFromAT(at.MD)
+		} else if item := v.Items[in.ItemID]; item != nil {
+			payload.Checks = legacyRepairChecks(v, item.Repair)
+		}
 	}
 	if _, err := a.logOf(in.Input).AppendOp(ctx, pbc, in.OpID+"/commit",
 		store.FactCommitCreated, "i3-pipeline", payload, store.AppendCondition{AfterSeq: v.Seq}); err != nil {
 		return StepResult{}, err
 	}
 	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, CommitNo: no, Detail: "已提交 " + no})
+}
+
+// 历史清单已由事实定义。后续修复只沿用当前提交的同一份清单，
+// 每次生成新提交时都要重新判定。
+func legacyRepairChecks(v *store.View, repair *store.RepairRef) []domain.Check {
+	if repair == nil || repair.Commit == "" || len(v.Commits) == 0 || v.Commits[0].No != v.CheckCommit {
+		return nil
+	}
+	oldAT, _ := domain.Find(v.Versions, domain.AT, v.Commits[0].Tree[domain.AT])
+	if manualPlan(oldAT) {
+		return nil // 人工 AT 应由当前版本提供清单。
+	}
+	for _, check := range v.Checks {
+		if check.ID == repair.Check {
+			checks := append([]domain.Check(nil), v.Checks...)
+			for i := range checks {
+				checks[i].ST, checks[i].RetestItem = domain.CheckTodo, ""
+			}
+			return checks
+		}
+	}
+	return nil
 }
 
 // Test 跑测试。
@@ -681,7 +759,7 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 	p := map[string]any{"tag": tag, "commit": head.No, "treeSha": head.TreeSHA, "digest": head.Digest}
 	saved, err := log.AppendOp(ctx, in.PBC, in.OpID+"/tag", store.FactTagCreated, "SA", p, store.AppendCondition{
 		AfterSeq: v.Seq,
-		Before:   &store.PendingFact{Type: store.FactGateEvaluated, Payload: ev},
+		Before:   []store.PendingFact{{Type: store.FactGateEvaluated, Payload: ev}},
 	})
 	if err != nil {
 		return StepResult{}, err

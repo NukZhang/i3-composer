@@ -29,8 +29,17 @@ const checks = computed(() => {
   return state.value?.checks || [];
 });
 
-const idx = computed(() => Math.min(S.vIdx || 0, Math.max(0, checks.value.length - 1)));
+const idx = computed(() => {
+  if (S.retestCheck?.pbc === S.pbcId) {
+    const requested = checks.value.findIndex((c) => c.id === S.retestCheck.id);
+    if (requested >= 0) return requested;
+  }
+  return Math.min(S.vIdx || 0, Math.max(0, checks.value.length - 1));
+});
 const cur = computed(() => checks.value[idx.value] || null);
+const repairing = computed(() => Object.values(state.value?.items || {}).some(
+  (item) => item.run === 'running' && cur.value && item.repair?.check === cur.value.id,
+));
 const done = computed(() => checks.value.filter((c) => c.st !== 'todo').length);
 const passN = computed(() => checks.value.filter((c) => c.st === 'pass').length);
 
@@ -106,8 +115,13 @@ function gateText(g) {
 }
 
 function sel(i) {
+  S.retestCheck = null;
   S.vIdx = i;
   bugOpen.value = false;
+}
+function openRepair(id) {
+  S.itemId = id;
+  S.view = 'item';
 }
 function markCls(st) {
   return st === 'pass' ? 'pass' : st === 'fail' ? 'fail' : 'todo';
@@ -213,6 +227,7 @@ function pushDefect(d) {
           @click="sel(i)"
         >
           <span class="m">{{ markText(c.st) }}</span>{{ c.id }} {{ c.n }}
+          <span v-if="c.retestItem" class="tag t-warn">待重验</span>
         </button>
       </div>
     </div>
@@ -224,17 +239,19 @@ function pushDefect(d) {
         <div class="ch" style="padding: 8px 10px">
           <h3 style="font-size: 12px">{{ cur.id }}</h3>
           <span class="spacer" />
-          <span class="tag" :class="cur.st === 'pass' ? 't-ok' : cur.st === 'fail' ? 't-err' : 't-gray'" style="font-size: 9px">{{ stText(cur.st) }}</span>
+          <span class="tag" :class="cur.retestItem ? 't-warn' : cur.st === 'pass' ? 't-ok' : cur.st === 'fail' ? 't-err' : 't-gray'" style="font-size: 9px">{{ cur.retestItem ? '待重验' : stText(cur.st) }}</span>
         </div>
         <div style="padding: 0 10px 10px">
           <div style="font-size: 11.5px; font-weight: 600; color: var(--tx-2); margin-bottom: 7px">{{ cur.n }}</div>
+          <p v-if="cur.retestItem" class="small">修复项 {{ cur.retestItem }} 已完成机器交付。请按本条验收口径重新判定。</p>
+          <p v-if="repairing" class="small muted">修复正在执行，机器交付完成后即可重验。</p>
           <div class="tree-box" style="margin: 0; font-size: 10.5px">
             <div class="tree-line"><span class="k" style="width: 34px">Given</span><span class="v">{{ cur.g }}</span></div>
             <div class="tree-line"><span class="k" style="width: 34px">When</span><span class="v">{{ cur.w }}</span></div>
             <div class="tree-line"><span class="k" style="width: 34px">Then</span><span class="v">{{ cur.t }}</span></div>
           </div>
           <div class="row" style="gap: 5px; margin-top: 9px">
-            <button class="btn small primary" style="flex: 1" :disabled="!can('acceptAT')" @click="pass">
+            <button class="btn small primary" style="flex: 1" :disabled="!can('acceptAT') || repairing" @click="pass">
               <span v-html="icon('check', 11)" /> 通过
             </button>
             <button class="btn small" style="flex: 1; color: var(--err)" :disabled="!can('acceptAT')" @click="openBug">
@@ -278,6 +295,7 @@ function pushDefect(d) {
         <span class="small" style="flex: 1">{{ d.t }}</span>
         <span class="small muted mono">{{ d.ac }}</span>
         <span class="tag" :class="d.sev === '阻塞' ? 't-err' : d.sev === '严重' ? 't-warn' : 't-gray'" style="font-size: 9px">{{ d.sev }}</span>
+        <button v-if="d.repairItem" class="btn small" @click="openRepair(d.repairItem)">修复项 {{ d.repairItem }}</button>
       </div>
       <div class="small muted" style="margin-top: 8px">
         {{ kind === 'agent' ? '缺陷进入 backlog。修复后可以重新判定这条验收。' : '缺陷进入 backlog。修复并创建新提交后，BA 按新提交的清单重新验收。' }}

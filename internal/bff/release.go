@@ -133,6 +133,9 @@ func (s *Server) tagUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if len(v.Checks) > 0 {
 		left, pass := 0, 0
 		for _, c := range v.Checks {
+			if v.HasRunningRepair(c.ID) {
+				return fmt.Errorf("%w：验收项 %s 的修复正在执行，完成后再重验和打 tag", errBadRequest, c.ID)
+			}
 			switch c.ST {
 			case domain.CheckPass:
 				pass++
@@ -168,7 +171,7 @@ func (s *Server) tagUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	}
 	if _, err := s.Log.Append(r.Context(), id, store.FactTagCreated, string(c.Role), p, store.AppendCondition{
 		AfterSeq: v.Seq,
-		Before:   &store.PendingFact{Type: store.FactGateEvaluated, Payload: ev},
+		Before:   []store.PendingFact{{Type: store.FactGateEvaluated, Payload: ev}},
 	}); err != nil {
 		if errors.Is(err, store.ErrSnapshotChanged) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "单元账本已更新，请刷新后重新确认打 tag"})

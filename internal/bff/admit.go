@@ -40,10 +40,12 @@ func (s *Server) admitInput(v *store.View, it *store.Item) domain.AdmitInput {
 	in.HasBacklog = domain.Latest(v.Versions, domain.Backlog) != ""
 
 	// 人写下的验收口径：AT 优先，其次 PRD；只认 source=手动编辑 的最新一版。
-	if md, ok := manualText(v.Versions, domain.AT); ok {
-		in.HumanAcceptText, in.HumanAcceptFrom = md, "AT"
-	} else if md, ok := manualText(v.Versions, domain.PRD); ok {
-		in.HumanAcceptText, in.HumanAcceptFrom = md, "PRD"
+	if it.Repair == nil {
+		if md, ok := manualText(v.Versions, domain.AT); ok {
+			in.HumanAcceptText, in.HumanAcceptFrom = md, "AT"
+		} else if md, ok := manualText(v.Versions, domain.PRD); ok {
+			in.HumanAcceptText, in.HumanAcceptFrom = md, "PRD"
+		}
 	}
 
 	// AD 只用来核「声明的表与设计对不对得上」；哪一版都行，最新的最接近现状。
