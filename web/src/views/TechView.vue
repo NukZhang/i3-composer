@@ -4,8 +4,8 @@ import { S } from '../store.js';
 import { icon } from '../icons.js';
 
 const rows = [
-  ['Workflow', 'L3', 'Agent 生命周期五阶段一条 workflow。确认门可能等三天，进程可以死；回答来了用 external event 唤醒', 'Dapr durabletask（已接）'],
-  ['Actors', 'L3 / L2', '一个 Agent 一个 actor（同时只跑一轮）；一个 PBC 一个 actor（不许并发提交）', '实例 ID = 工作项 ID'],
+  ['Workflow', 'L3', '交付工作项执行生成、收敛、提交、测试、构建五步', 'Dapr durabletask（已接）'],
+  ['Actors', 'L3 / L2', '同一工作项只能运行一个交付实例', '实例 ID 包含账本前缀、单元和工作项'],
   ['Service Invocation', 'L3 ↔ PBC', 'PBC 微服务之间、BFF 与 Agent 之间互调，带 mTLS、重试、超时', 'HTTP 直连（未接）'],
   ['State', 'L3', '事实日志 append-only，投影随时可从日志重建', 'Dapr state.redis + etag CAS'],
   ['Pub / Sub', 'L3 → L4', 'commit / tag / build / deploy 事件分发给通知、看板、审计', '内部调用 + /api/timeline/stream'],
@@ -13,15 +13,15 @@ const rows = [
   ['Bindings 出', 'L4 / L1', '发卡片到聊天工具；出站调模型 API', '未接'],
   ['Configuration', 'L1 / L4', '模型路由、降级开关、渠道开关，改配置不发版', 'env + components/*.yaml'],
   ['Secrets', 'L1 / L2', '各家 API key、Git 凭据，只给需要的进程', 'Dapr secret store（未接）'],
-  ['Jobs', 'L3', '超时扫描、due 提醒、每日早报', 'workflow 定时器（发布闸 30 天超时）'],
+  ['Jobs', 'L3', '超时扫描、待办提醒、每日早报', '未接'],
   ['Distributed lock', 'L3', '同一 (pbc, commit) 只允许一个 tag 落库', 'etag CAS / 实例 ID 锁'],
 ];
 const mp = [
-  ['工作台：我的待办 / 待评审', '/api/overview /api/tasks /api/timeline/stream', '复用', 't-ok'],
+  ['工作台：我的待办 / 我发起的', '/api/inbox + /api/timeline/stream', '已实现', 't-ok'],
   ['项目 · BRD 版本线', '/api/brd', '已实现', 't-ok'],
   ['方案：PRD / AD / AT 编辑', 'POST /api/artifacts + 版本线 + stale', '已实现', 't-ok'],
-  ['提交 / tag / 四闸', 'domain.CheckCommit + workflow', '已实现', 't-ok'],
-  ['构建链路：代码→自测→镜像→部署', 'wf.Delivery + mockBuilder', '接真 CI 是唯一的大块', 't-err'],
+  ['提交 / tag / 四闸', 'domain.CheckCommit + POST /api/units/{id}/tag', '已实现', 't-ok'],
+  ['构建与项目发布', 'wf.Delivery + POST /api/projects/{id}/orch/release', '已实现', 't-ok'],
   ['原型预览 / 还原度对比', 'annotation.added + 原型页', '部分（还原对比未接）', 't-warn'],
   ['测试报告', 'workflow 的 test 步骤', '直接复用', 't-ok'],
   ['通知 / 卡片', '/api/notifications（事实派生）', '已实现', 't-ok'],
@@ -74,8 +74,8 @@ const mp = [
   <div class="card">
     <div class="ch"><span v-html="icon('check')" /><h3>为什么是 Dapr：三条硬需求正好对上</h3></div>
     <div class="why3">
-      <div class="w"><div class="q">需求一 · 等人等三天</div><div class="a">确认门可能等到下周。Workflow 把进度落在 history 里，进程随时能死，<b>回答到了用 external event 唤醒</b>，接着原位置往下跑。</div></div>
-      <div class="w"><div class="q">需求二 · 不能并发改</div><div class="a">两个人同时打 tag，必须有一个失败。Actor 按 key 串行，<b>(pbc, commit) 只有一个能被处理</b>，不用自己写锁和幂等。</div></div>
+      <div class="w"><div class="q">需求一 · 交付可恢复</div><div class="a">Workflow 记录 activity 的执行历史，支持进程重启后的恢复与重试。用户在验证页对构建完成的提交验收。</div></div>
+      <div class="w"><div class="q">需求二 · 并发写入有保护</div><div class="a">工作流实例 ID 防止同一工作项重复发起。打 tag 的门禁证据和 tag 通过账本 CAS 一起写入。</div></div>
       <div class="w"><div class="q">需求三 · 换平台不改内核</div><div class="a">今天飞书、明天企微、后天内部 IM。Binding 与 Pub/Sub 换插件，<b>内核代码一行不动</b>。</div></div>
     </div>
     <div class="arch-note" style="margin-top: 9px">
@@ -89,14 +89,13 @@ const mp = [
     <div class="tree-box">
       <div class="tree-line"><span class="k">L4</span><span class="v">POST /api/tasks {title:"管家批量生成缴费单", pbc:"fee"}　← 人或飞书卡片都能提</span></div>
       <div class="tree-line"><span class="k">L3</span><span class="v">fact #1201 item.created → 投影更新（State 只追加）</span></div>
-      <div class="tree-line"><span class="k">L3</span><span class="v">POST /api/items/US-02/run → StartWorkflow i3-delivery，实例 ID = US-02</span></div>
-      <div class="tree-line"><span class="k">L2</span><span class="v">activity 生成制品 → 收敛 → 原子提交 → 测试 → 构建 → 部署 test</span></div>
-      <div class="tree-line"><span class="k">L3</span><span class="v">item.waiting 落账 + workflow 挂起，进程释放</span></div>
-      <div class="tree-line"><span class="k">L4</span><span class="v">SSE 通知「有变化了」→ 页面重拉 /api/state，待办出现在「待我确认」</span></div>
-      <div class="tree-line"><span class="k">L4</span><span class="v">人回答「发布」→ POST /api/items/US-02/answer → 落 publish.decided 事实</span></div>
-      <div class="tree-line"><span class="k">L3</span><span class="v">唤醒 → 四闸复核 → 打 tag v1.0.0 → item.published</span></div>
+      <div class="tree-line"><span class="k">L3</span><span class="v">POST /api/items/US-02/run → StartWorkflow i3-delivery</span></div>
+      <div class="tree-line"><span class="k">L2</span><span class="v">activity 生成制品 → 收敛 → 原子提交 → 测试 → 构建</span></div>
+      <div class="tree-line"><span class="k">L3</span><span class="v">item.verified 落账，workflow 完成</span></div>
+      <div class="tree-line"><span class="k">L4</span><span class="v">SSE 通知刷新投影，工作项可前往验证页</span></div>
+      <div class="tree-line"><span class="k">L3</span><span class="v">BA 验收后，SA 调用 POST /api/units/{id}/tag，写入 gate.evaluated 与 tag.created</span></div>
+      <div class="tree-line"><span class="k">L3</span><span class="v">SA 调用 POST /api/projects/{id}/orch/release，发起锁定 tag 与 digest 的发布批次</span></div>
     </div>
-    <div class="arch-note">关键：<b>第 5 到 7 步之间可以隔三天</b>。这三天的等待不占进程、不烧 token，这是自研状态机最容易写错的地方。</div>
   </div>
 
   <div class="card">
@@ -112,18 +111,13 @@ const mp = [
         </tr>
       </tbody>
     </table>
-    <div class="arch-note">
-      UI 换数据源、不动布局；后端补三样（stale、树 hash、四闸），其余复用。
-      <b>唯一的大块是构建链路</b>——那要接真 CI，不是改页面能解决的。
-    </div>
   </div>
 
   <div class="card">
     <div class="ch"><span v-html="icon('alert')" /><h3>当前状态：目标形态 ≠ 已完成</h3></div>
     <div class="honest">
-      <b>已接 Dapr。</b>事实日志在 Dapr state store（Redis，etag CAS 串行），workflow 走 durabletask 真实编排，
-      确认门用 external event 唤醒。未接的部分：真 CI（构建是确定性 mock）、真模型调用（评测结果由外部执行器提交）、
-      飞书 / 企微卡片（通知只到站内）、Agent 灰度分流。
+      <b>已接 Dapr。</b>事实写入 Redis，交付五步由 durabletask 编排。构建使用本机 Go 工具链，部署由项目发布批次执行。
+      交付构建的外部 CI、模型调用、飞书和企微卡片、Agent 灰度分流仍待接入。
     </div>
     <div class="row" style="margin-top: 11px; gap: 10px; align-items: flex-start">
       <div style="flex: 1; font-size: 11px; color: var(--tx-8b); line-height: 1.7">

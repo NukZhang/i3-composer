@@ -103,20 +103,11 @@ const (
 	ActVerified = "i3-mark-verified"
 )
 
-// 事件名。
-const (
-	EventPublish = "publish"
-)
-
 // Pub/Sub 主题。主题名是 BFF 与订阅方之间的契约，集中定义。
 const (
 	TopicTagCreated  = "tag.created"
 	TopicItemChanged = "item.changed"
 )
-
-// 发布闸的等待上限。原型说「等人等三天」，这里给 30 天：
-// 超时不是失败，而是把决定权交回给人（记为 blocked，可重启新实例）。
-const publishWait = 30 * 24 * time.Hour
 
 // 每个 activity 的重试：网络抖动重来一次，业务拒绝不重试
 // （业务拒绝走 StepResult.OK=false，不是 error）。

@@ -205,48 +205,26 @@ func TestRoleCannotCreateTaskWithoutBacklogAct(t *testing.T) {
 	}
 }
 
-func TestAnswerRequiresTagActAndCorrectGate(t *testing.T) {
+func TestRetiredItemAnswerHasNoSideEffects(t *testing.T) {
 	h := newHarness(t)
-	seedItem(t, h.st, store.Item{ID: "US-01", Title: "t", Kind: "Story", PBC: "fee",
+	seedItem(t, h.st, store.Item{ID: "US-01", Title: "历史发布工作项", Kind: "Story", PBC: "fee",
 		Type: "feature", Env: "test", Mode: "fast", Run: "waiting", Step: 6, By: "PA"})
-
-	// DA 无 tag 权限 → 403，且绝不能把事件发给 sidecar。
-	resp, _ := h.do(t, http.MethodPost, "/api/items/US-01/answer?pbc=fee",
-		map[string]any{"approve": true}, RoleDA)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("DA 拍板应 403，实际 %d", resp.StatusCode)
+	seedItem(t, h.st, store.Item{ID: "US-02", Title: "当前交付工作项", Kind: "Story", PBC: "fee",
+		Type: "feature", Env: "test", Mode: "fast", Run: "verified", Step: 5, By: "BA"})
+	before, err := h.st.Load(t.Context(), "fee")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if h.fake.tookCall("raiseEvent") {
-		t.Fatal("权限拒绝时不应向 sidecar 发 raiseEvent")
+	for _, id := range []string{"US-01", "US-02"} {
+		resp, out := h.do(t, http.MethodPost, "/api/items/"+id+"/answer?pbc=fee",
+			map[string]bool{"approve": true}, RoleSA)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("已停用的路由应返回 404，工作项 %s 实际 %d %v", id, resp.StatusCode, out)
+		}
 	}
-	if h.fake.tookCall("/start") {
-		t.Fatal("权限拒绝时不应向 sidecar 发 start")
-	}
-
-	// 请求体里伪造 role/canApprove 不得生效。
-	resp, _ = h.do(t, http.MethodPost, "/api/items/US-01/answer?pbc=fee",
-		map[string]any{"approve": true, "role": "SA", "canApprove": true}, RoleDA)
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("伪造角色也不该放行，实际 %d", resp.StatusCode)
-	}
-
-	// SA 有 tag 权限 → 接受。
-	resp, out := h.do(t, http.MethodPost, "/api/items/US-01/answer?pbc=fee",
-		map[string]any{"approve": true}, RoleSA)
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("SA 拍板应 202，实际 %d %v", resp.StatusCode, out)
-	}
-	if !h.fake.tookCall("raiseEvent") {
-		t.Fatal("应当向 sidecar 发 raiseEvent")
-	}
-
-	// 不在发布闸的项不能拍板。
-	seedItem(t, h.st, store.Item{ID: "US-02", Title: "t2", Kind: "Story", PBC: "fee",
-		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
-	resp, _ = h.do(t, http.MethodPost, "/api/items/US-02/answer?pbc=fee",
-		map[string]any{"approve": true}, RoleSA)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("未到发布闸时拍板应 400，实际 %d", resp.StatusCode)
+	after, err := h.st.Load(t.Context(), "fee")
+	if err != nil || len(after) != len(before) || h.fake.tookCall("raiseEvent") {
+		t.Fatalf("旧入口不应写账本或发事件：before=%d after=%d err=%v", len(before), len(after), err)
 	}
 }
 

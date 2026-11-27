@@ -1,22 +1,17 @@
 <script setup>
 import { computed } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
-import { S, unitById, projectTitle } from '../store.js';
+import { S, myTodo, unitById, projectTitle } from '../store.js';
 import { icon } from '../icons.js';
 
 const tabs = [
   ['todo', '我的待办'],
-  ['review', '待我确认'],
   ['mine', '我发起的'],
 ];
 
 const list = computed(() => {
-  const t = S.homeTab;
-  if (t === 'review') return S.inbox.filter((x) => x.run === 'waiting');
-  if (t === 'mine') return S.inbox.filter((x) => x.by === S.role);
-  return S.inbox.filter(
-    (x) => x.owner === S.role && x.st !== 'done' && !['waiting', 'verified', 'tagged', 'published'].includes(x.run),
-  );
+  if (S.homeTab === 'mine') return S.inbox.filter((x) => x.by === S.role);
+  return myTodo.value;
 });
 
 // 工作台只看平台员工：交付的 Agent 是产物，不在这里「在岗」。
@@ -25,8 +20,11 @@ const busy = computed(() => workers.value.filter((a) => (a.st || []).includes('d
 const head = computed(() => (S.units.find((u) => u.id === S.pbcId) || {}).head || '—');
 const tags = computed(() => S.units.filter((u) => u.proj === S.projId).flatMap((u) => u.tags || []));
 
-function openItem(id) {
-  S.itemId = id;
+function openItem(item) {
+  const unit = unitById(item.pbc);
+  if (unit) S.projId = unit.proj;
+  S.pbcId = item.pbc;
+  S.itemId = item.id;
   S.view = 'item';
 }
 function unitName(id) {
@@ -38,7 +36,7 @@ function unitName(id) {
 <template>
   <PageHeader
     :title="'工作台 · ' + (S.roleName || S.role)"
-    :sub="'同一套界面，按角色看不同的活　·　我的待办 ' + S.inbox.filter((x) => x.owner === S.role && x.st !== 'done' && x.run !== 'waiting' && x.run !== 'published').length + ' · 待我确认 ' + S.inbox.filter((x) => x.run === 'waiting').length"
+    :sub="'我的待办 ' + myTodo.length + ' 条'"
   />
 
   <div class="perm-note">
@@ -67,17 +65,16 @@ function unitName(id) {
   </div>
 
   <div v-if="!list.length" class="card">
-    <div class="empty">这里暂时没有任务——{{ S.homeTab === 'review' ? '别人还没提交给你确认' : '活都干完了' }}</div>
+    <div class="empty">这里暂时没有任务。</div>
   </div>
   <div v-else class="card">
-    <div v-for="x in list" :key="x.pbc + '/' + x.id" class="task" @click="openItem(x.id)">
-      <div class="ti" :style="x.run === 'waiting' ? 'background:var(--bg-warn-soft);color:var(--warn)' : ''" v-html="icon(x.run === 'waiting' ? 'check' : 'box', 12)" />
+    <div v-for="x in list" :key="x.pbc + '/' + x.id" class="task" @click="openItem(x)">
+      <div class="ti" v-html="icon('box', 12)" />
       <div class="tt">
         <b>{{ x.t }}</b>
-        <span>{{ x.id }} · {{ unitName(x.pbc) }} · {{ x.kind }}{{ x.by ? ' · 由 ' + x.by + ' 提' : '' }}{{ x.run === 'waiting' ? ' · 全链已跑通，待你拍板' : '' }}</span>
+        <span>{{ x.id }} · {{ unitName(x.pbc) }} · {{ x.kind }}{{ x.by ? ' · 由 ' + x.by + ' 提' : '' }}</span>
       </div>
       <span class="due">{{ x.at || '—' }}</span>
-      <span class="tag" :class="x.run === 'waiting' ? 't-warn' : 't-gray'">{{ x.run === 'waiting' ? '待发布' : '待处理' }}</span>
     </div>
   </div>
 

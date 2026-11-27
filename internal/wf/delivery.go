@@ -62,13 +62,6 @@ func Delivery(ctx *workflow.WorkflowContext) (any, error) {
 	return map[string]any{"ok": true, "verified": true, "commit": vr.CommitNo}, nil
 }
 
-// Answer 是人通过卡片 / 工作台给出的发布决定。
-type Answer struct {
-	Approve bool   `json:"approve"`
-	By      string `json:"by"`
-	Note    string `json:"note,omitempty"`
-}
-
 // Register 把 workflow 与 activity 注册到 Dapr。
 //
 // 注册名与 CallActivity / StartWorkflow 用的字符串必须一致：
@@ -109,6 +102,7 @@ func RegisterAs(r *workflow.Registry, a *Activities, name string) error {
 		{ActCommit, activity(a.Commit)},
 		{ActTest, activity(a.Test)},
 		{ActBuild, activity(a.Build)},
+		// 保留旧实例历史里的 activity 名称。当前 Delivery 只执行五步并记录 verified。
 		{ActDeploy, activity(a.Deploy)},
 		{ActPublish, activity(a.Publish)},
 		{ActVerified, activity(a.Verified)},

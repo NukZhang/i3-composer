@@ -12,6 +12,8 @@
 // 用法：BASE=http://127.0.0.1:8080 node acceptance_exec.cjs
 const { chromium } = require('playwright');
 const { requirePubsub } = require('./require_pubsub.cjs');
+const { mkdirSync } = require('node:fs');
+const { join } = require('node:path');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const BASE = process.env.BASE || 'http://127.0.0.1:8080';
 const RUN = process.env.RUN_TAG || String(Date.now()).slice(-6);
@@ -26,6 +28,7 @@ function check(name, ok, detail) {
   await requirePubsub(BASE);
   const browser = await chromium.launch({ executablePath: CHROME });
   const ctx = await browser.newContext();
+  await ctx.addInitScript(() => localStorage.setItem('i3-theme', 'light'));
   const page = await ctx.newPage();
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e)));
@@ -193,6 +196,34 @@ function check(name, ok, detail) {
   check('5 执行链路标题按账本步骤计数，打 tag 是人工闸（#74）',
     rendered === item.steps.length && rendered === 6 && label === `${rendered} 步` &&
     human.length === 1 && human[0].includes('打 tag'), { label, rendered, human });
+  const stage = page.locator('.stage');
+  const verify = stage.getByRole('button', { name: '前往验证', exact: true });
+  const workItemResults = stage.locator('.card').filter({ has: page.getByRole('heading', { name: '这一轮真跑出来的结论' }) });
+  await workItemResults.waitFor();
+  check('5 已构建工作项引导到验证，工作项结果未显示部署地址',
+    await verify.isVisible() && await workItemResults.getByText('部署地址', { exact: true }).count() === 0
+      && await stage.getByRole('button', { name: /退回修改|发布生产/ }).count() === 0,
+    { unit, item: id, run: item.run, step: item.step });
+  if (process.env.SHOTS) {
+    mkdirSync(process.env.SHOTS, { recursive: true });
+    await page.screenshot({ path: join(process.env.SHOTS, 'issue75-work-item.png') });
+  }
+  if (await verify.isVisible()) await verify.click();
+  check('5 前往验证打开当前单元的验收清单和交付物',
+    await stage.locator('.ac-chip').filter({ hasText: 'AT-01' }).isVisible()
+      && await stage.getByRole('heading', { name: '交付物', exact: true }).isVisible()
+      && await page.locator('.sidebar .trow.on[data-unit]').getAttribute('data-unit') === unit);
+  await page.locator('.sidebar .trow.sub2').filter({ hasText: '方案' }).click();
+  await stage.locator('.ptab').filter({ hasText: '提交历史' }).click();
+  check('5 方案页的当前提交指向验证页打 tag',
+    await stage.getByText('验收通过后，SA 在验证页打 tag。', { exact: true }).isVisible());
+  const homeRow = page.locator('.sidebar .trow').filter({ hasText: '工作台' }).first();
+  await homeRow.click();
+  const tabs = await stage.locator('.home-tab').allTextContents();
+  const badgeText = await homeRow.locator('.badge').allTextContents();
+  check('5 工作台与侧栏使用同一待办计数',
+    tabs.map((tab) => tab.trim()).join(' / ') === '我的待办 / 我发起的'
+      && Number(badgeText[0] || '0') === await stage.locator('.task').count(), { tabs, badge: badgeText[0] || '0' });
 
   // ---- 6. 种子写的历史与真跑的事实分得开 ----
   // 种子事实查种子单元（fee）；真跑的事实查这次新建的单元。

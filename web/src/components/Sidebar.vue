@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue';
-import { S, unitKind, toast, unitsOfProject, refresh } from '../store.js';
+import { S, myTodo, unitKind, toast, unitsOfProject, refresh } from '../store.js';
 import { icon } from '../icons.js';
 
 // 单元 badge：pbc 显示 HEAD；agent 显示「产物」——它是交付出去的东西，
@@ -15,9 +15,6 @@ function badgeColor(k) {
   return k === 'agent' ? 'var(--purple)' : k === 'hybrid' ? 'var(--accent)' : 'var(--tx-9)';
 }
 
-const todoCount = computed(
-  () => S.inbox.filter((x) => x.run === 'waiting' || (x.owner === S.role && x.st !== 'done' && x.run !== 'waiting' && x.run !== 'tagged')).length,
-);
 const unread = computed(() => S.notifications.length);
 // v3.2：单元只剩四个阶段。发布被提到项目级——「发布编排」不是第五个阶段，
 // 它是对整批单元做的动作，入口挂在项目行上。
@@ -107,7 +104,7 @@ function grayModule(name) {
     <div class="sb-group">我的工作</div>
     <div class="trow" :class="{ on: S.view === 'home' }" @click="go('home')">
       <span v-html="icon('box')" /> 工作台
-      <span v-if="todoCount" class="badge">{{ todoCount }}</span>
+      <span v-if="myTodo.length" class="badge">{{ myTodo.length }}</span>
     </div>
 
     <div class="sb-group">
