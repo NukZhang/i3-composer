@@ -4,7 +4,7 @@
 
 一份 BRD → 拆成若干交付单元（PBC / Agent）→ 每个单元走完「方案 · 原型 · 构建 · 验证」并打 tag → 项目级发布编排按批次上环境、按批次回滚。整个过程写在一条只追加、可回放的事实账本里。
 
-`Go` · `Dapr` · `Redis` · `Vue 3.5` · `Vite 6` · 五套自动化验收 **133/133** · [MIT](./LICENSE)
+`Go` · `Dapr` · `Redis` · `Vue 3.5` · `Vite 6` · [五套自动化验收](docs/selftest-v32/自测报告.md#可复核的基线复跑) · [MIT](./LICENSE)
 
 ---
 
@@ -164,20 +164,10 @@ cd web && npm install && npm run dev   # 默认代理到 8080
 
 ## 验收与截图
 
-```bash
-go vet ./... && go test ./...
-cd web && npm run build
+按[执行说明](docs/EXECUTION.md#三怎么自己验一遍)从干净工作树构建，再用新的演示账本依次运行五套验收。
+各套结果、被测提交和工作树状态见[自测报告](docs/selftest-v32/自测报告.md#可复核的基线复跑)，不代表后续提交的通过率。
 
-# 行为验收（先用干净账本；v32 必须第一棒）
-cd web/e2e
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs    # 37 项
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs   # 25 项
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs   # 19 项
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs   # 18 项
-BASE=http://127.0.0.1:8080 node acceptance_v26.cjs                # 34 项
-```
-
-合计 **133/133**。断言查的是账本事实，不是页面文案。
+以下截图是历史界面示例，不是基线复跑的截图。
 
 ### 发布编排：就绪 / 阻塞一眼可见
 
@@ -243,7 +233,7 @@ docs/                     白皮书、执行说明、前端接线、自测报告
 | [白皮书](docs/whitepaper.md) | 为什么做、怎么建模、架构、边界与路线图 |
 | [执行链说明](docs/EXECUTION.md) | 哪些是真的、哪些没接、怎么核对 |
 | [前端接线](docs/SPEC-frontend-wiring.md) / [FRONTEND](docs/FRONTEND.md) | 前后端契约与排障 |
-| [v3.2 自测报告](docs/selftest-v32/自测报告.md) | 133/133、截图、问题清单 |
+| [v3.2 自测报告](docs/selftest-v32/自测报告.md) | 按提交记录的验收结果、历史截图、问题清单 |
 | [规格](specs/001-v32-core-chain/spec.md) | v3.2 的需求、方案与任务 |
 
 ---

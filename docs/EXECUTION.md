@@ -126,20 +126,48 @@ sha256sum .i3-artifacts/blobs/sha256/<hex>   # 与事实里的 digest 一致
 
 ## 三、怎么自己验一遍
 
+复测前在构建应用、编译前端和运行脚本的同一工作树执行：
+
 ```bash
-# 1. 起环境
-docker compose up -d
-(cd web && npm ci && npm run build)
-
-# 2. 起服务（从其他目录启动时，通过 WEB_DIR 指定前端产物的绝对路径）
-go build -o /tmp/i3-composer-bin ./cmd/i3-composer
-WEB_DIR="$PWD/web/dist" REQUIRE_PUBSUB=1 /tmp/i3-composer-bin
-
-# 3. 五套验收（每轮使用新的干净演示账本，按顺序各跑一次）
 (
   set -e
+  git rev-parse HEAD
+  worktree_status=$(git status --porcelain --untracked-files=all)
+  if [ -n "$worktree_status" ]; then
+    printf '%s\n' '工作树含未提交改动，结果不代表任何提交。' "$worktree_status" >&2
+    exit 1
+  fi
+  printf '%s\n' 'git status --porcelain --untracked-files=all: 空'
+)
+```
+
+检查通过再构建与运行。归档时保留完整 SHA、工作树状态、账本和运行日志。若特意在开发工作树试验，也必须记录改动并标注结果不代表任何提交。
+
+按仓库约定新建独立 Compose 项目，使用新 Redis 与制品卷，确认 sidecar、应用端口和 `BASE` 都属于本轮环境；不要让验收脚本写入现有开发或生产账本。
+有工作区 `../docker-local/compose.yml` 时沿用它和当前启用的附加配置，用唯一的 `docker compose -p` 项目名及空闲宿主机端口隔离。换 `RUN_TAG` 不会清空账本。
+[隔离容器复跑命令](selftest-v32/隔离容器复跑.md)给出实际使用的 Compose 覆盖和 Chromium 准备步骤。它从同一个归档构建应用并运行脚本，不使用工作区 Compose 默认指向的主 checkout。
+
+```bash
+# 1. 构建前端（容器方式可在构建镜像时完成）
+(cd web && npm ci && npm run build)
+
+# 2. 若从宿主机运行应用，先导出本轮设置，再启动
+: "${ADDR:?请设置本轮应用的监听地址}"
+: "${DAPR_HTTP_ENDPOINT:?请设置本轮 sidecar 的 HTTP 地址}"
+: "${DAPR_GRPC_ENDPOINT:?请设置本轮 sidecar 的 gRPC 地址}"
+: "${LEDGER_PREFIX:?请设置本轮账本前缀}"
+: "${ARTIFACT_DIR:?请设置本轮独立制品目录}"
+go build -o /tmp/i3-composer-bin ./cmd/i3-composer
+WEB_DIR="$PWD/web/dist" REQUIRE_PUBSUB=1 SEED_DEMO=1 /tmp/i3-composer-bin
+
+# 3. 新终端：显式导出本轮 BASE 后，按顺序各跑一次
+(
+  set -e
+  : "${BASE:?请先设置本轮独立验收实例的 BASE}"
+  SHOTS=$(mktemp -d "${TMPDIR:-/tmp}/i3-acceptance.XXXXXX")
+  printf '本轮截图与汇总目录：%s\n' "$SHOTS"
   cd web/e2e
-  export BASE=http://127.0.0.1:8080 RUN_TAG=fin
+  export BASE RUN_TAG="${RUN_TAG:-$(date +%s)}" SHOTS
   node acceptance_v32.cjs   # v3.2：四阶段 / 打 tag / 批次发布 / 整批回滚
   node acceptance_exec.cjs  # 执行侧：真测试 / 真构建 / 批次部署 / 真收发
   node acceptance_flow.cjs  # 写路径：建单元 → 发起 → 越权 → 打 tag

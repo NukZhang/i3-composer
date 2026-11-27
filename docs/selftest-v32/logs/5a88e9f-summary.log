@@ -1,0 +1,24 @@
+验收运行日志摘录（UTC+08:00）
+开始：2026-11-27 19:13:51 +0800
+完成：2026-11-27 19:15:48 +0800
+构建前 git rev-parse HEAD：5a88e9fcecb6f8273dbb290ac62b4d7d855ad145
+构建前 git status --porcelain：空
+Compose 项目：i3-issue-27-evidence
+LEDGER_PREFIX=issue27-evidence/ WORKFLOW_NAME=i3-delivery RUN_TAG=issue27evidence
+/api/health：pubsub.checked=true pubsub.ok=true localPort=8080 sidecarAppPort=8080
+构建容器：go version go1.26.1 linux/arm64
+工程验证宿主：go version go1.26.11 darwin/arm64
+浏览器容器：Node v22.23.5；Chromium 142.0.7444.59 Alpine Linux
+
+go vet ./...：退出码 0
+go test -count=1 ./...：退出码 0
+npm --prefix web ci：退出码 0
+npm --prefix web run build：退出码 0
+node --test require_pubsub.test.cjs：1/1，退出码 0
+
+acceptance_v32.cjs：SUMMARY 51/51 passed
+acceptance_exec.cjs：SUMMARY 28/28 passed
+acceptance_flow.cjs：SUMMARY 33/33 passed
+acceptance_full.cjs：SUMMARY 20/20 passed
+acceptance_v26.cjs：SUMMARY 66/66 passed
+五套串行执行退出码 0；合计 198/198
