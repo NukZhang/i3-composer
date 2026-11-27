@@ -485,7 +485,9 @@ func seedProject(ctx context.Context, log *store.Store) error {
 	}
 	for _, u := range Units() {
 		cur, ok := have[u.ID]
-		if ok && cur.Kind == u.Kind && cur.AgentID == u.AgentID {
+		// PA 的作废和后续登记优先于演示数据迁移，重启时不复活或覆盖。
+		if _, removed := uv.Removed[u.ID]; removed || cur.Reregistered ||
+			(ok && cur.Kind == u.Kind && cur.AgentID == u.AgentID) {
 			continue
 		}
 		// OpID 里带上构成：构成变了就再落一条（ProjectUnits 按 id 覆盖）。
@@ -498,7 +500,7 @@ func seedProject(ctx context.Context, log *store.Store) error {
 		}
 	}
 	for _, id := range removedUnits {
-		if _, ok := have[id]; !ok {
+		if current, ok := have[id]; !ok || current.Reregistered {
 			continue
 		}
 		if _, err := log.AppendOp(ctx, "units", "seed/v26/unit/removed/"+id, store.FactUnitRemoved, ActorSeed,

@@ -82,6 +82,94 @@ func TestUnitsEndpointReportsKindAndProgress(t *testing.T) {
 	}
 }
 
+func TestRemoveUnitPreservesFactsAndAllowsReregisteringID(t *testing.T) {
+	h := newHarness(t)
+	const path = "/api/units/retired?createdSeq=1"
+	const statePath = "/api/state?pbc=retired"
+	create := func(name string) {
+		t.Helper()
+		resp, out := h.do(t, http.MethodPost, "/api/units", map[string]string{
+			"id": "retired", "name": name, "kind": "pbc",
+		}, RolePA)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("登记应返回 201，实际 %d %v", resp.StatusCode, out)
+		}
+	}
+	registry := func() []store.Fact {
+		t.Helper()
+		facts, err := h.st.Load(t.Context(), unitsLog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return facts
+	}
+	create("旧登记")
+	if _, err := h.st.Append(t.Context(), "retired", store.FactItemCreated, "BA", store.Item{
+		ID: "US-01", Title: "历史工作项", Kind: "Story", PBC: "retired",
+		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := h.st.Load(t.Context(), "retired")
+	if err != nil || len(before) < 2 {
+		t.Fatalf("单元历史未准备好：%+v，%v", before, err)
+	}
+	if resp, out := h.do(t, http.MethodDelete, path, nil, RoleDA); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("越权作废应返回 403，实际 %d %v", resp.StatusCode, out)
+	}
+	if facts := registry(); len(facts) != 1 {
+		t.Fatalf("越权作废不得落账：%+v", facts)
+	}
+	if resp, out := h.do(t, http.MethodDelete, path, nil, RolePA); resp.StatusCode != http.StatusOK {
+		t.Fatalf("PA 作废应返回 200，实际 %d %v", resp.StatusCode, out)
+	}
+	facts := registry()
+	if len(facts) != 2 || facts[1].Type != store.FactUnitRemoved || facts[1].Actor != "PA" {
+		t.Fatalf("应追加一条 PA 作废事实：%+v", facts)
+	}
+	if resp, _ := h.do(t, http.MethodDelete, path, nil, RolePA); resp.StatusCode != http.StatusNotFound || len(registry()) != 2 {
+		t.Fatalf("重复作废应返回 404 且不追加事实，实际 %d", resp.StatusCode)
+	}
+	if resp, out := h.do(t, http.MethodGet, "/api/units", nil, RolePA); resp.StatusCode != http.StatusOK || len(out["units"].([]any)) != 0 {
+		t.Fatalf("作废后列表不应包含该单元，实际 %d %v", resp.StatusCode, out)
+	}
+	if resp, out := h.do(t, http.MethodGet, statePath, nil, RolePA); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("作废后详情应返回 404，实际 %d %v", resp.StatusCode, out)
+	}
+	if resp, out := h.do(t, http.MethodPost, "/api/items/US-01/run?pbc=retired", nil, RoleDA); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("作废后不得发起交付，实际 %d %v", resp.StatusCode, out)
+	}
+	if resp, out := h.do(t, http.MethodPost, "/api/tasks?pbc=retired", map[string]string{"title": "作废后新需求"}, RoleBA); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("作废后不得新建工作项，实际 %d %v", resp.StatusCode, out)
+	}
+	if resp, out := h.do(t, http.MethodPost, "/api/units", map[string]string{
+		"id": "retired", "name": "改业务实现", "kind": "pbc", "profile": domain.ProfileMaterialInbound,
+	}, RolePA); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("旧业务账本不能复用为另一种实现，实际 %d %v", resp.StatusCode, out)
+	}
+	registerUnit(t, h.st, "other")
+	if resp, out := h.do(t, http.MethodPost, "/api/tasks?pbc=other", map[string]string{"title": "另一单元的工作项"}, RoleBA); resp.StatusCode != http.StatusCreated || out["id"] != "US-02" {
+		t.Fatalf("别的单元不得占用历史编号，实际 %d %v", resp.StatusCode, out)
+	}
+
+	create("新登记")
+	if resp, out := h.do(t, http.MethodDelete, path, nil, RolePA); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("旧登记的作废请求应返回 409，实际 %d %v", resp.StatusCode, out)
+	}
+	if resp, out := h.do(t, http.MethodGet, statePath, nil, RolePA); resp.StatusCode != http.StatusOK || out["name"] != "新登记" {
+		t.Fatalf("重登后应读到新登记，实际 %d %v", resp.StatusCode, out)
+	}
+	after, err := h.st.Load(t.Context(), "retired")
+	if err != nil || len(after) != len(before)+1 {
+		t.Fatalf("重登应只追加单元登记事实：%+v，%v", after, err)
+	}
+	for i := range before {
+		if before[i].Hash != after[i].Hash {
+			t.Fatalf("原事实序号 %d 的摘要变化", before[i].Seq)
+		}
+	}
+}
+
 func TestCreateUnitRequiresPbcActAndAgentRef(t *testing.T) {
 	h := newHarness(t)
 	// DA 没有 pbc 权限。

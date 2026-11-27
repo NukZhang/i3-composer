@@ -402,6 +402,15 @@ func (s *Server) checkDecide(w http.ResponseWriter, r *http.Request, c reqCtx) e
 			return fmt.Errorf("%w：严重级只能是 阻塞 / 严重 / 一般 / 建议", errBadRequest)
 		}
 	}
+	s.unitRegistryMu.Lock()
+	defer s.unitRegistryMu.Unlock()
+	units, err := s.loadUnits(r.Context())
+	if err != nil {
+		return err
+	}
+	if _, removed := units.Removed[c.PBC]; removed {
+		return fmt.Errorf("%w：单元 %s 已作废", errNotFound, c.PBC)
+	}
 	v, err := s.load(r, c.PBC)
 	if err != nil {
 		return err
@@ -410,10 +419,6 @@ func (s *Server) checkDecide(w http.ResponseWriter, r *http.Request, c reqCtx) e
 	if len(v.Commits) > 0 {
 		// 老单元的构成可能只在登记表里，与验证页和打 tag 一样以登记为准。
 		kind := domain.ParseKind(v.Kind)
-		units, err := s.loadUnits(r.Context())
-		if err != nil {
-			return err
-		}
 		for _, u := range units.Units {
 			if u.ID == c.PBC {
 				kind = domain.ParseKind(u.Kind)
@@ -487,8 +492,16 @@ func (s *Server) nextGlobalItemID(r *http.Request, current string) (string, erro
 	if err != nil {
 		return "", err
 	}
+	if _, removed := uv.Removed[current]; removed {
+		return "", fmt.Errorf("%w：单元 %s 已作废", errNotFound, current)
+	}
+	// 作废保留历史工作项。复登后它们会重新出现在需求池，编号不能被其他单元抢用。
+	units := uv.Units
+	for _, u := range uv.Removed {
+		units = append(units, u)
+	}
 	ids := map[string]*store.Item{}
-	for _, u := range uv.Units {
+	for _, u := range units {
 		v, err := s.load(r, u.ID)
 		if err != nil {
 			return "", err

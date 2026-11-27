@@ -278,6 +278,8 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 			return fmt.Errorf("%w：项目 %s 不存在", errBadRequest, in.Proj)
 		}
 	}
+	s.unitRegistryMu.Lock()
+	defer s.unitRegistryMu.Unlock()
 	uv, err := s.loadUnits(r.Context())
 	if err != nil {
 		return err
@@ -296,25 +298,75 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 			return fmt.Errorf("%w：Agent %s 不存在", errBadRequest, in.AgentID)
 		}
 	}
+	// 已经有业务事实的单元复登后仍使用原账本。不能把旧项目、构成或
+	// Agent 的提交和发布证明移到另一个交付物上。
+	if old, removed := uv.Removed[in.ID]; removed && (old.Proj != in.Proj || old.Kind != k.String() ||
+		old.AgentID != in.AgentID || old.Profile != in.Profile) {
+		facts, err := s.Log.Load(r.Context(), in.ID)
+		if err != nil {
+			return err
+		}
+		for _, fact := range facts {
+			if fact.Type != store.FactUnitCreated {
+				return fmt.Errorf("%w：同 ID 复登会保留原账本，请沿用项目、构成及业务实现", errBadRequest)
+			}
+		}
+	}
 	code := strings.TrimSpace(in.Code)
 	if code == "" {
 		code = "PBC-" + strings.ToUpper(in.ID)
 	}
-	if _, err := s.Log.Append(r.Context(), unitsLog, store.FactUnitCreated, c.Role.String(), map[string]any{
-		"id": in.ID, "name": in.Name, "code": code, "kind": k.String(), "agentId": in.AgentID, "proj": in.Proj, "profile": in.Profile,
-	}); err != nil {
-		return err
-	}
-	// 单元自己的日志也要有 unit.created：/api/state 的 kind / name / agentId 由此而来。
-	// 同一条写入同时落两处（注册表 + 单元日志），两者都是投影的输出，不会分叉。
+	// 先更新单元元数据，再发布有效登记。中途失败时单元仍未登记，客户端可以继续重试。
 	if _, err := s.Log.Append(r.Context(), in.ID, store.FactUnitCreated, c.Role.String(), map[string]any{
 		"name": in.Name, "kind": k.String(), "agentId": in.AgentID, "profile": in.Profile,
 	}); err != nil {
 		return err
 	}
+	record, err := s.Log.Append(r.Context(), unitsLog, store.FactUnitCreated, c.Role.String(), map[string]any{
+		"id": in.ID, "name": in.Name, "code": code, "kind": k.String(), "agentId": in.AgentID, "proj": in.Proj, "profile": in.Profile,
+	})
+	if err != nil {
+		return err
+	}
 	s.publish(in.ID, "unit.created", map[string]any{"id": in.ID})
-	writeJSON(w, http.StatusCreated, map[string]any{"id": in.ID, "kind": k.String(), "proj": in.Proj, "profile": in.Profile})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": in.ID, "kind": k.String(), "proj": in.Proj, "profile": in.Profile, "registrySeq": record.Seq})
 	return nil
+}
+
+func (s *Server) removeUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	if err := Require(c.Role, ActPbc); err != nil {
+		return err
+	}
+	seq, err := strconv.Atoi(r.URL.Query().Get("createdSeq"))
+	if err != nil || seq < 1 {
+		return fmt.Errorf("%w：作废需要当前登记序号 createdSeq（见 /api/units 的 registrySeq）", errBadRequest)
+	}
+	s.unitRegistryMu.Lock()
+	defer s.unitRegistryMu.Unlock()
+	units, err := s.loadUnits(r.Context())
+	if err != nil {
+		return err
+	}
+	id := r.PathValue("id")
+	for _, unit := range units.Units {
+		if unit.ID != id {
+			continue
+		}
+		if unit.RegistrySeq != seq {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "单元登记已变化，请刷新后重新确认"})
+			return nil
+		}
+		// 作废针对当前登记。迟到的请求不能误删同 ID 的后续登记。
+		opID := fmt.Sprintf("unit/removed/%s/%d", id, unit.RegistrySeq)
+		if _, err := s.Log.AppendOp(r.Context(), unitsLog, opID, store.FactUnitRemoved, c.Role.String(),
+			map[string]any{"id": id, "createdSeq": unit.RegistrySeq}); err != nil {
+			return err
+		}
+		s.publish(id, store.FactUnitRemoved, map[string]any{"id": id})
+		writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "removed"})
+		return nil
+	}
+	return fmt.Errorf("%w：单元 %s 不存在", errNotFound, id)
 }
 
 // ---------- BRD ----------

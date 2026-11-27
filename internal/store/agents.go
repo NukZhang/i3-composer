@@ -27,12 +27,16 @@ type Unit struct {
 	// Proj 是所属项目（v2.7 起交付单元挂在项目下，不再是全局列表）。
 	// 老账本里没有这个字段的单元归入 DefaultProject。
 	Proj string `json:"proj,omitempty"`
+	// RegistrySeq 绑定作废请求与这一版登记，避免延迟写入误伤重登后的单元。
+	RegistrySeq  int  `json:"registrySeq,omitempty"`
+	Reregistered bool `json:"-"`
 }
 
 // UnitsView 是 units 日志的投影。
 type UnitsView struct {
-	Seq   int    `json:"seq"`
-	Units []Unit `json:"units"`
+	Seq     int             `json:"seq"`
+	Units   []Unit          `json:"units"`
+	Removed map[string]Unit `json:"-"`
 }
 
 // BRDVersion 是项目级 BRD 的一次保存。
@@ -64,7 +68,7 @@ type AgentsView struct {
 }
 
 func ProjectUnits(facts []Fact) (*UnitsView, error) {
-	v := &UnitsView{Seq: len(facts)}
+	v := &UnitsView{Seq: len(facts), Removed: map[string]Unit{}}
 	seen := map[string]bool{}
 	for _, f := range facts {
 		switch f.Type {
@@ -80,27 +84,35 @@ func ProjectUnits(facts []Fact) (*UnitsView, error) {
 				u.Proj = DefaultProject
 			}
 			u.Kind = domain.ParseKind(u.Kind).String()
+			u.RegistrySeq = f.Seq
 			if seen[u.ID] {
 				for i := range v.Units {
 					if v.Units[i].ID == u.ID {
+						u.Reregistered = v.Units[i].Reregistered
 						v.Units[i] = u
 					}
 				}
 				continue
 			}
 			seen[u.ID] = true
+			_, u.Reregistered = v.Removed[u.ID]
+			delete(v.Removed, u.ID)
 			v.Units = append(v.Units, u)
 
 		case FactUnitRemoved:
 			var p struct {
-				ID string `json:"id"`
+				ID         string `json:"id"`
+				CreatedSeq int    `json:"createdSeq"`
 			}
 			if err := json.Unmarshal(f.Payload, &p); err != nil {
 				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
 			}
 			for i := range v.Units {
-				if v.Units[i].ID == p.ID {
+				// 旧账本的作废事实没有登记序号，仍按 ID 重放。
+				if v.Units[i].ID == p.ID && (p.CreatedSeq == 0 || v.Units[i].RegistrySeq == p.CreatedSeq) {
+					v.Removed[p.ID] = v.Units[i]
 					v.Units = append(v.Units[:i], v.Units[i+1:]...)
+					delete(seen, p.ID)
 					break
 				}
 			}

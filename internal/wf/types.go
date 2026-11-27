@@ -39,6 +39,8 @@ type Input struct {
 	// 是 Dapr 决定的，进程不能自己决定「我用的是哪本账」。
 	// 把前缀放进输入，activity 就永远写进工作项该去的那本账。
 	Ledger string `json:"ledger,omitempty"`
+	// 登记可能在交付途中被作废或改名，新实例保持发起时的制品输入。
+	Unit *UnitInfo `json:"unit,omitempty"`
 }
 
 // StepResult 是单个 activity 的结果。只回报「成没成」+ 一句说明；

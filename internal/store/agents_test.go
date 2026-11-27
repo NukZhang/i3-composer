@@ -32,6 +32,26 @@ func TestProjectUnitsRejectsMissingID(t *testing.T) {
 	}
 }
 
+func TestProjectUnitsAllowsReregisteringRemovedID(t *testing.T) {
+	facts := []Fact{
+		{Seq: 1, Type: FactUnitCreated, Payload: []byte(`{"id":"fee","name":"旧登记","kind":"pbc"}`)},
+		{Seq: 2, Type: FactUnitCreated, Payload: []byte(`{"id":"dun","name":"催缴","kind":"pbc"}`)},
+		{Seq: 3, Type: FactUnitRemoved, Payload: []byte(`{"id":"fee"}`)},
+		{Seq: 4, Type: FactUnitCreated, Payload: []byte(`{"id":"fee","name":"新登记","kind":"pbc"}`)},
+		{Seq: 5, Type: FactUnitRemoved, Payload: []byte(`{"id":"fee","createdSeq":1}`)},
+	}
+	v, err := ProjectUnits(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Units) != 2 || v.Units[0].ID != "dun" || v.Units[1].ID != "fee" || v.Units[1].Name != "新登记" {
+		t.Fatalf("重登后的单元应重新出现在登记顺序末尾：%+v", v.Units)
+	}
+	if !v.Units[1].Reregistered || v.Units[1].RegistrySeq != 4 || len(v.Removed) != 0 {
+		t.Fatalf("过时的作废事实不能撤销新登记：%+v", v)
+	}
+}
+
 func agentFacts(pass, total int) []Fact {
 	a := domain.Agent{
 		ID: "x-fe", Name: "X-全栈", Ver: "1.0.0", Model: "m",
