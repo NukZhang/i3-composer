@@ -97,6 +97,10 @@ type Deploy struct {
 	At     string `json:"at"`
 	By     string `json:"by"`
 	Status string `json:"status"`
+	// Batch 是落下这条部署的批次号：让每条部署都能被某个批次认领（#41）。
+	Batch string `json:"batch,omitempty"`
+	// Reason 是回退原因（deploy.rolledback 之后才有）：让人知道这条部署为什么不算数了。
+	Reason string `json:"reason,omitempty"`
 }
 
 type Anno struct {
@@ -363,6 +367,26 @@ func apply(v *View, f Fact) error {
 			return err
 		}
 		v.Deploys = append(v.Deploys, d)
+
+	case FactDeployRolledback:
+		// 部署成功之后才发现整批没成：进程已经收回，那条 success 不能只剩下一句谎话。
+		// 账本只追加，所以这里按 URL 认领那条部署事实、把读出来的状态改成 rolledback。
+		var p struct {
+			URL    string `json:"url"`
+			Reason string `json:"reason"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		for i := len(v.Deploys) - 1; i >= 0; i-- {
+			if v.Deploys[i].URL == p.URL && v.Deploys[i].Status == "success" {
+				v.Deploys[i].Status = "rolledback"
+				if v.Deploys[i].Reason == "" {
+					v.Deploys[i].Reason = p.Reason
+				}
+				break
+			}
+		}
 
 	case FactItemCreated:
 		var it Item

@@ -185,7 +185,10 @@ func (s *Server) wrap(h handler) http.HandlerFunc {
 				return
 			}
 			code := http.StatusInternalServerError
-			if errors.Is(err, ErrForbidden) {
+			if errors.Is(err, store.ErrAppendBusy) || errors.Is(err, dapr.ErrConflict) {
+				// 写入没成是「这会儿并发太高」，不是「账本坏了」，更不是「不存在」（#41）。
+				code = http.StatusConflict
+			} else if errors.Is(err, ErrForbidden) {
 				code = http.StatusForbidden
 			} else if errors.Is(err, errBadRequest) {
 				code = http.StatusBadRequest
@@ -193,7 +196,11 @@ func (s *Server) wrap(h handler) http.HandlerFunc {
 				code = http.StatusNotFound
 			}
 			slog.Warn("bff", "path", r.URL.Path, "role", role, "err", err)
-			writeJSON(w, code, map[string]any{"error": err.Error()})
+			body := map[string]any{"error": err.Error()}
+			if code == http.StatusConflict {
+				body["retryable"] = true
+			}
+			writeJSON(w, code, body)
 		}
 	}
 }

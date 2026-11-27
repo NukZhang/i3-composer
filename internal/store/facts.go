@@ -114,6 +114,11 @@ const (
 	// 批次是发布的单位：一个批次锁多个 tag 与 digest，只能整批回滚。
 	FactReleaseBatch    = "release.batch.created"
 	FactReleaseRollback = "release.batch.rolledback"
+	// v3.3：批次的中间态与失败态（#41）。账本只追加：部署成功的事实已经落下之后
+	// 才发现整批没成，不能删，只能再落一条「它被撤销了」，读出来才是最终真相。
+	FactReleaseProgress  = "release.batch.progress" // 批次里第 i 个单元已部署（带 batch / url）
+	FactReleaseFailed    = "release.batch.failed"   // 批次没走完：已起的进程已收回，原因在 payload
+	FactDeployRolledback = "deploy.rolledback"      // 某条部署事实（按 url 认）被撤销
 
 	// v3.3：入口准入。工作项进流水线之前，先判五件事（三项硬、两项软）。
 	//
@@ -236,7 +241,38 @@ func (s *Store) Append(ctx context.Context, pbc, typ, actor string, payload any)
 	return s.AppendOp(ctx, pbc, "", typ, actor, payload)
 }
 
+// AppendFor 是「用某个 handler 的账本写某个单元的事实」。
+//
+// 平时 s 就是前缀为空的账本，Append 用起来和以前一样。在隔离账本实例上
+// （LEDGER_PREFIX 非空，见 #41 自测）遇到过更隐蔽的一种：s 是隔离账本，
+// 而事实其实该落在空前缀的那本账上——以前调用方拿到的 s 是真账本（LogFor），
+// 现在一律换成 s 再写，就写进了另一本账：接口回 200、读出来却没有。
+// 所以凡是跨单元、跨线的写入都显式说明「用哪本账」：
+// 空 = 服务主账本；非空 = 前缀账本。落到别的账本时沿用调用方那本账的 Notify，
+// 不然 SSE 收不到这次变化，页面要等下一次轮询才动。
+func (s *Store) AppendFor(ctx context.Context, ledger, pbc, typ, actor string, payload any) (Fact, error) {
+	if ledger != "" && ledger != s.prefix {
+		o := New(s.c, s.state, ledger)
+		o.Notify = s.Notify
+		return o.Append(ctx, pbc, typ, actor, payload)
+	}
+	return s.Append(ctx, pbc, typ, actor, payload)
+}
+
+// Client 返回账本背后的 Dapr 客户端：只给「同一客户端上开另一本账」这种装配用，
+// 业务读写一律走 Store 的方法。
+func (s *Store) Client() *dapr.Client { return s.c }
+
+// AppendShared 写服务主账本（空前缀）。跨单元/跨线的公共事实（发布批次、单元构成）用它。
+func (s *Store) AppendShared(ctx context.Context, pbc, typ, actor string, payload any) (Fact, error) {
+	if s.prefix == "" {
+		return s.Append(ctx, pbc, typ, actor, payload)
+	}
+	return New(s.c, s.state, "").Append(ctx, pbc, typ, actor, payload)
+}
+
 func (s *Store) AppendOp(ctx context.Context, pbc, opID, typ, actor string, payload any) (Fact, error) {
+	var last error
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return Fact{}, err
@@ -267,12 +303,22 @@ func (s *Store) AppendOp(ctx context.Context, pbc, opID, typ, actor string, payl
 			}
 			return Fact{}, err
 		}
+		last = err
 		if backoff(ctx, attempt) != nil {
 			return Fact{}, ctx.Err()
 		}
 	}
-	return Fact{}, fmt.Errorf("append 放弃：%d 次 etag 冲突，写入并发过高", s.maxRetry)
+	// 冲突耗尽：必须如实说「是冲突」，不能说「不存在」——
+	// 调用方据此把 409 报成 404，批次循环里的 return err 也就看不出是没写成（#41）。
+	if last != nil {
+		return Fact{}, fmt.Errorf("append 放弃：%d 次写入都没有成功，最后一次是 %v：%w", s.maxRetry, last, ErrAppendBusy)
+	}
+	return Fact{}, fmt.Errorf("append 放弃：%d 次 etag 冲突，写入并发过高：%w", s.maxRetry, ErrAppendBusy)
 }
+
+// ErrAppendBusy 表示重试耗尽仍没写进去（多数是 etag 冲突）。调用方应回 409/503 并让人重试，
+// 而不是把它当成「不存在」或「账本坏了」。
+var ErrAppendBusy = errors.New("store: 写入没有成功，请重试")
 
 // errNoLog 表示日志尚未建立（head 不存在）。此时 etag 为空，
 // first-write-wins 无法串行化并发写，所以不能直接写。

@@ -63,3 +63,29 @@ func TestProjectReleasesEmpty(t *testing.T) {
 		t.Fatalf("不应有批次：%+v", v.Batches)
 	}
 }
+
+// progress 要按单元认领，不能按「第一个还没 URL 的」填（#41 自测发现）：
+// 批次里 Agent 排在前面时（它不部署、不发 progress），PBC 的地址会被填到 Agent 名下，
+// 真正部署的那个单元读出来 URL 是空——回滚按 URL 判空跳过它，进程就留在机器上了。
+func TestReleaseProgressClaimsNamedUnit(t *testing.T) {
+	rv, err := ProjectReleases([]Fact{
+		releaseFact(t, FactReleaseBatch, map[string]any{
+			"id": "REL-9", "proj": "p1", "env": "SIT", "mode": "full",
+			"units": []map[string]any{
+				{"id": "qa", "kind": "agent", "binary": false},
+				{"id": "dun", "kind": "pbc", "binary": true},
+			},
+		}),
+		releaseFact(t, FactReleaseProgress, map[string]any{"id": "REL-9", "unit": "dun", "url": "http://dun", "at": "x"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := rv.Batches[0]
+	if b.Units[0].URL != "" || b.Units[0].Status == "deployed" {
+		t.Fatalf("progress 不该落到没部署的 Agent 上：%+v", b.Units[0])
+	}
+	if b.Units[1].URL != "http://dun" || b.Units[1].Status != "deployed" {
+		t.Fatalf("PBC 应认领自己的部署地址：%+v", b.Units[1])
+	}
+}

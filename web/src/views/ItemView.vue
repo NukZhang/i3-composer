@@ -36,10 +36,14 @@ const buildDigest = computed(() => {
   const head = (st.commits || [])[0];
   return head ? (st.builds || {})[head.no] || '' : '';
 });
-const deployURL = computed(() => {
+// 最后一条「仍然算数」的部署：被回滚的（deploy.rolledback 之后 status=rolledback）不算，
+// 否则页面会把一个已经收掉的地址当成「已发布生产」（#41）。
+const liveDeploy = computed(() => {
   const ds = (S.state && S.state.deploys) || [];
-  return ds.length ? ds[ds.length - 1].url : '';
+  for (let i = ds.length - 1; i >= 0; i--) if (ds[i].status === 'success') return ds[i];
+  return null;
 });
+const deployURL = computed(() => (liveDeploy.value && liveDeploy.value.url) || '');
 
 const note = ref('');
 const busy = ref(false);

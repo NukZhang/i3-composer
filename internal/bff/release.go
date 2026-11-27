@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zhangkun/i3-composer/internal/domain"
@@ -25,8 +29,20 @@ const releasesLog = "releases"
 // 是同一份编排的四个规格档；生产只允许通过批次变更。
 var ReleaseEnvs = []string{"SIT", "UAT", "预发", "生产"}
 
+// sharedLog 是服务主账本（空前缀）。发布批次是项目级资产、落在主账本上；
+// 隔离实例（LEDGER_PREFIX 非空）里 s.Log 是隔离账本，读批次也必须读主账本，
+// 否则「刚发的批次查不到」——接口回 201，回滚却 404（#41 自测遇过）。
+func (s *Server) sharedLog() *store.Store {
+	if s.Log.Prefix() == "" {
+		return s.Log
+	}
+	o := store.New(s.Log.Client(), s.Log.StateStore())
+	o.Notify = s.Log.Notify
+	return o
+}
+
 func (s *Server) loadReleases(ctx context.Context) (*store.ReleasesView, error) {
-	facts, err := s.Log.Load(ctx, releasesLog)
+	facts, err := s.sharedLog().Load(ctx, releasesLog)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +212,10 @@ type orchView struct {
 	Proj    string               `json:"proj"`
 	Units   []orchUnit           `json:"units"`
 	Batches []store.ReleaseBatch `json:"batches"`
-	Envs    []string             `json:"envs"`
+	// Live[i] 是 Batches[i] 的进程是否还活着（任何一个单元地址 /healthz 200 即 true）。
+	// 与状态并列而不是塞进状态里：账本记的是「发过什么」，进程是执行侧的事实（#29）。
+	Live []bool   `json:"live"`
+	Envs []string `json:"envs"`
 }
 
 // orch 是项目级发布编排的读接口：编排链上的单元 + 就绪判断 + 历史批次。
@@ -258,6 +277,31 @@ func (s *Server) orch(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 			out.Batches = append(out.Batches, b)
 		}
 	}
+	// 每个批次带一句「进程还在不在」：#29 的现象是旧批次仍显示「已上线」而地址已经死了。
+	// 探测并行走、每个 800ms 封顶，批次再多也就是一个超时的时间。
+	live := make([]bool, len(out.Batches))
+	var wg sync.WaitGroup
+	for i := range out.Batches {
+		b := &out.Batches[i]
+		if b.Status != "active" {
+			continue
+		}
+		for j := range b.Units {
+			u := &b.Units[j]
+			if u.URL == "" {
+				continue
+			}
+			wg.Add(1)
+			go func(i int, url string) {
+				defer wg.Done()
+				if liveURL(r.Context(), url) {
+					live[i] = true
+				}
+			}(i, u.URL)
+		}
+	}
+	wg.Wait()
+	out.Live = live
 	writeJSON(w, http.StatusOK, out)
 	return nil
 }
@@ -364,16 +408,60 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if s.Pipe == nil {
 		return fmt.Errorf("执行侧未接入，无法发布")
 	}
-	// 真部署：PBC 产物起进程并等 /healthz；Agent 产物没有进程，如实标 activated。
-	var done []string
-	fail := func(reason string) error {
-		for _, id := range done {
-			s.Pipe.Stop(id, in.Env)
-		}
-		return fmt.Errorf("%w：%s", errBadRequest, reason)
-	}
+	// 单元账本要先存在，后面的部署事实与撤销事实才落得进去。
 	for i := range locked {
-		l := &locked[i]
+		if err := s.Log.Ensure(r.Context(), locked[i].ID); err != nil {
+			return err
+		}
+	}
+	// 真部署：PBC 产物起进程并等 /healthz；Agent 产物没有进程，如实标 activated。
+	//
+	// 落账顺序（#41）：**先写批次，再部署，成功一个补一条 progress**。
+	// 以前是先部署、全部成功后才写批次：中途失败时前面几条 deploy.succeeded 已经落进单元账本，
+	// 却没有任何批次引用它们，进程又被收回——账本上留下一串「success 的死地址」，而且只会累加。
+	// 现在失败也有记录：已起的进程逐个收回，每个都补一条 deploy.rolledback，再补一条 release.batch.failed。
+	id := s.nextBatchID(r.Context(), proj)
+	b := store.ReleaseBatch{
+		ID: id, Proj: proj, Env: in.Env, Mode: in.Mode, Units: locked,
+		By: string(c.Role), At: stampNow(), Status: "active",
+	}
+	// 批次在公共账本里：单元自己的账本也要先存在（失败的单元同样要有撤销事实可落）。
+	rel := s.sharedLog()
+	if err := rel.Ensure(r.Context(), releasesLog); err != nil {
+		return err
+	}
+	if _, err := rel.Append(r.Context(), releasesLog, store.FactReleaseBatch, string(c.Role), b); err != nil {
+		return err
+	}
+	// fail 收尾一次失败：停进程、逐条撤销已落的部署事实、把批次标成 failed，然后把原因报给调用方。
+	fail := func(reason string) error {
+		for i := range b.Units {
+			l := &b.Units[i]
+			if l.URL == "" || !l.Binary {
+				continue
+			}
+			s.Pipe.Stop(l.ID, in.Env)
+			// 撤销事实落在单元自己的账本里（部署事实就在那儿）；落不进去就如实报，不吞。
+			rb := map[string]any{"url": l.URL, "batch": id, "reason": reason, "at": stampNow()}
+			if _, err := s.Log.Append(r.Context(), l.ID, store.FactDeployRolledback, string(c.Role), rb); err != nil {
+				slog.Warn("发布失败后撤销部署事实没落账", "unit", l.ID, "url", l.URL, "err", err)
+			}
+			// 头号嫌疑自查：fail 之前同 pbc 的旧 env 进程有没有被收掉。
+			// 没收掉的话，新进程可能根本没起在自己的键上（#41 自测遇过：进程还在应答，账本却说是回滚了）。
+			if s.Pipe != nil {
+				slog.Info("发布失败收尾后核对进程是否还在", "unit", l.ID, "env", in.Env, "alive", s.Pipe.Alive(l.ID, in.Env))
+			}
+			l.Status = "rolledback"
+		}
+		if _, err := rel.Append(r.Context(), releasesLog, store.FactReleaseFailed, string(c.Role),
+			map[string]any{"id": id, "reason": reason, "at": stampNow()}); err != nil {
+			slog.Warn("批次失败事实没落账", "batch", id, "err", err)
+		}
+		s.publish("releases", "release.batch.failed", map[string]any{"id": id, "proj": proj})
+		return fmt.Errorf("%w：批次 %s 没有上线：%s", errBadRequest, id, reason)
+	}
+	for i := range b.Units {
+		l := &b.Units[i]
 		if !l.Binary {
 			l.Status = "activated"
 			continue
@@ -392,25 +480,19 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 			return fail("部署 " + l.Name + "（" + l.Commit + "）失败：" + err.Error() + "；" + where)
 		}
 		l.URL, l.Status = out.URL, "deployed"
-		done = append(done, l.ID)
 		// 部署事实落在单元自己的账本里：这条线的「谁在哪个环境、部署了哪个字节」可查。
+		// batch 让每条部署都能被某个批次认领——这是 #41 里那些「无批次引用的 success」不再出现的原因。
 		d := store.Deploy{ID: "release", Tag: l.Tag, Commit: l.Commit, URL: out.URL,
-			At: stampNow(), By: string(c.Role), Status: "success"}
+			At: stampNow(), By: string(c.Role), Status: "success", Batch: id}
 		if _, err := s.Log.Append(r.Context(), l.ID, store.FactDeploySucceeded, string(c.Role), d); err != nil {
-			return err
+			return fail("部署 " + l.Name + " 已起进程，但部署事实没落进账本：" + err.Error())
 		}
-	}
-
-	id := s.nextBatchID(r.Context(), proj)
-	b := store.ReleaseBatch{
-		ID: id, Proj: proj, Env: in.Env, Mode: in.Mode, Units: locked,
-		By: string(c.Role), At: stampNow(), Status: "active",
-	}
-	if err := s.Log.Ensure(r.Context(), releasesLog); err != nil {
-		return err
-	}
-	if _, err := s.Log.Append(r.Context(), releasesLog, store.FactReleaseBatch, string(c.Role), b); err != nil {
-		return err
+		if _, err := rel.Append(r.Context(), releasesLog, store.FactReleaseProgress, string(c.Role),
+			map[string]any{"id": id, "unit": l.ID, "url": out.URL, "at": stampNow()}); err != nil {
+			// progress 只是「这一批已经上到第几个」，丢了不影响真相（部署事实 + 批次都在）；
+			// 但账本不全会让人以为没上，宁可让发布失败、由人决定重发。
+			return fail("部署事实已落账，但批次进度没记上：" + err.Error())
+		}
 	}
 	s.publish("releases", "release.batch.created", map[string]any{"id": id, "proj": proj})
 	writeJSON(w, http.StatusCreated, b)
@@ -448,12 +530,29 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, c reqCtx) erro
 	}
 	if s.Pipe != nil {
 		for _, u := range b.Units {
-			if u.URL != "" {
-				s.Pipe.Stop(u.ID, b.Env)
+			if u.URL == "" || !u.Binary {
+				continue
 			}
+			s.Pipe.Stop(u.ID, b.Env)
+			// 回滚同样要撤销单元账本里的那条部署事实：否则单元账本永远停在「成功上线」（#41）。
+			rb := map[string]any{"url": u.URL, "batch": b.ID, "reason": "整批回滚：" + in.Note, "at": stampNow()}
+			if _, err := s.Log.Append(r.Context(), u.ID, store.FactDeployRolledback, string(c.Role), rb); err != nil {
+				slog.Error("回滚：撤销事实没落账", "unit", u.ID, "err", err)
+				return err
+			}
+			slog.Info("回滚：撤销事实已落账", "unit", u.ID, "batch", b.ID)
+			// 进程账要留痕：回滚之后登记表里还认不认得这个 (pbc, env)，日志里说清楚。
+			// 「接口回 200 但进程还在应答」只有靠这一行才能区分是「没收」还是「别的进程在应答」。
+			slog.Info("回滚：部署事实已撤销", "unit", u.ID, "env", b.Env, "url", u.URL, "alive", s.Pipe.Alive(u.ID, b.Env))
 		}
 	}
-	if _, err := s.Log.Append(r.Context(), releasesLog, store.FactReleaseRollback, string(c.Role),
+	// 回滚写两份账：单元账本上的撤销事实（上面）与公共账本上的批次回滚。
+	// 公共账本同样要从前缀里找出来——以前拿主账本写，隔离实例上接口回 200 却没落账（#41 自测遇过）。
+	rel := s.sharedLog()
+	if err := rel.Ensure(r.Context(), releasesLog); err != nil {
+		return err
+	}
+	if _, err := rel.Append(r.Context(), releasesLog, store.FactReleaseRollback, string(c.Role),
 		map[string]any{"id": b.ID, "by": string(c.Role), "at": stampNow(), "note": in.Note}); err != nil {
 		return err
 	}
@@ -463,18 +562,45 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, c reqCtx) erro
 }
 
 // nextBatchID 生成 REL-YYYYMMDD-NN：同一项目当天按顺序编号。
+//
+// 取「已有最大号 + 1」而不是「个数 + 1」：失败批次也留在账上了（#41），
+// 按个数数会把同一个号发两次，回滚时捞到的是哪个批次就说不清了。
 func (s *Server) nextBatchID(ctx context.Context, proj string) string {
 	day := time.Now().Format("20060102")
 	rv, err := s.loadReleases(ctx)
-	n := 0
+	max := 0
 	if err == nil {
 		for _, b := range rv.Batches {
-			if b.Proj == proj && strings.Contains(b.ID, day) {
-				n++
+			if b.Proj != proj {
+				continue
+			}
+			if n, err := strconv.Atoi(b.ID[strings.LastIndex(b.ID, "-")+1:]); err == nil && strings.Contains(b.ID, day) && n > max {
+				max = n
 			}
 		}
 	}
-	return fmt.Sprintf("REL-%s-%02d", day, n+1)
+	return fmt.Sprintf("REL-%s-%02d", day, max+1)
+}
+
+// liveURL 探一次部署地址是否还活着：账本说「部署过这个字节」，进程还在不在是执行侧的事实，
+// 两边都要说清楚（宪法 I）。编排页据此区分「在线」与「进程不在」，而不是拿账本当进程真相（#29）。
+func liveURL(ctx context.Context, u string) bool {
+	if u == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(u, "/")+"/healthz", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := (&http.Client{Timeout: 800 * time.Millisecond}).Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<12))
+	return resp.StatusCode == http.StatusOK
 }
 
 func stampNow() string { return time.Now().Format("01-02 15:04") }

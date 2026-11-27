@@ -24,21 +24,24 @@ type ReleaseUnit struct {
 	Digest  string `json:"digest"`
 	Binary  bool   `json:"binary"`
 	URL     string `json:"url,omitempty"` // Agent 产物没有进程，就是空
-	Status  string `json:"status"`        // deployed | activated
+	Status  string `json:"status"`        // deployed | activated | rolledback
 }
 
 // ReleaseBatch 是一个发布批次。
 type ReleaseBatch struct {
-	ID         string        `json:"id"`
-	Proj       string        `json:"proj"`
-	Env        string        `json:"env"`
-	Mode       string        `json:"mode"` // full | gray
-	Units      []ReleaseUnit `json:"units"`
-	By         string        `json:"by"`
-	At         string        `json:"at"`
-	Status     string        `json:"status"` // active | rolledback
-	RollbackAt string        `json:"rollbackAt,omitempty"`
-	RollbackBy string        `json:"rollbackBy,omitempty"`
+	ID     string        `json:"id"`
+	Proj   string        `json:"proj"`
+	Env    string        `json:"env"`
+	Mode   string        `json:"mode"` // full | gray
+	Units  []ReleaseUnit `json:"units"`
+	By     string        `json:"by"`
+	At     string        `json:"at"`
+	Status string        `json:"status"` // active | rolledback | failed
+	// Reason 只在 failed 时有：哪一步没成。失败批次也留在账上——
+	// 以前它连记录都没有，账本于是留下「success、无批次引用、指向死进程」的部署事实（#41）。
+	Reason     string `json:"reason,omitempty"`
+	RollbackAt string `json:"rollbackAt,omitempty"`
+	RollbackBy string `json:"rollbackBy,omitempty"`
 }
 
 // ReleasesView 是 releases 日志的投影。批次新的在前。
@@ -64,6 +67,56 @@ func ProjectReleases(facts []Fact) (*ReleasesView, error) {
 				b.Status = "active"
 			}
 			v.Batches = append([]ReleaseBatch{b}, v.Batches...)
+		case FactReleaseProgress:
+			// 只记「这一批已部署到第几个单元」，不改锁定清单：tag / digest 是发布时定的。
+			// 必须带 unit：以前按「第一个还没有 URL 的单元」填，Agent 单元没有 URL、
+			// 也不会收到 progress（它不部署），于是 PBC 的地址被填到了排在它前面的 Agent 名下——
+			// 单元账本写着「上线了」，批次里那个 PBC 的 url 却是空，回滚时按 url 判空就跳过了它，
+			// 进程留在机器上（#41 自测遇过）。progress 自己说清是哪个单元。
+			var p struct {
+				ID   string `json:"id"`
+				Unit string `json:"unit"`
+				URL  string `json:"url"`
+				At   string `json:"at"`
+			}
+			if err := json.Unmarshal(f.Payload, &p); err != nil {
+				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
+			}
+			for i := range v.Batches {
+				if v.Batches[i].ID != p.ID {
+					continue
+				}
+				for j := range v.Batches[i].Units {
+					u := &v.Batches[i].Units[j]
+					// 新事实带 unit，按名字认；老事实（没有 unit）按「第一个还没有 URL 的」认，
+					// 已有记录的重放结果不变。
+					if p.Unit != "" && u.ID != p.Unit {
+						continue
+					}
+					if p.Unit == "" && u.URL != "" {
+						continue
+					}
+					if p.URL != "" {
+						u.URL = p.URL
+					}
+					u.Status = "deployed"
+					break
+				}
+			}
+		case FactReleaseFailed:
+			var p struct {
+				ID     string `json:"id"`
+				Reason string `json:"reason"`
+			}
+			if err := json.Unmarshal(f.Payload, &p); err != nil {
+				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
+			}
+			for i := range v.Batches {
+				if v.Batches[i].ID == p.ID {
+					v.Batches[i].Status = "failed"
+					v.Batches[i].Reason = p.Reason
+				}
+			}
 		case FactReleaseRollback:
 			var p struct {
 				ID string `json:"id"`
@@ -78,6 +131,13 @@ func ProjectReleases(facts []Fact) (*ReleasesView, error) {
 					v.Batches[i].Status = "rolledback"
 					v.Batches[i].RollbackAt = p.At
 					v.Batches[i].RollbackBy = p.By
+					// 回滚是整批的：批次里每个真正上线的单元都随之撤销。
+					// 以前只改批次状态，单元行还写着 deployed、URL 还在，编排页读起来像「还在线上」（#29）。
+					for j := range v.Batches[i].Units {
+						if v.Batches[i].Units[j].Status == "deployed" {
+							v.Batches[i].Units[j].Status = "rolledback"
+						}
+					}
 				}
 			}
 		}

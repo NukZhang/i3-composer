@@ -64,6 +64,27 @@ const blocked = computed(() => selected.value.filter((u) => !u.ready));
 const unselected = computed(() => units.value.filter((u) => !sel.value[u.id]));
 const canRelease = computed(() => selected.value.length > 0 && blocked.value.length === 0);
 
+// 批次状态：账本里是什么就是什么；failed / superseded 不再被画成绿色「已上线」。
+function batchText(b) {
+  // active 只代表「账本上是这一批在上」，不代表进程还活着——是否在线由 live 标签单独说（#29）。
+  return ({ active: '已发布', rolledback: '已回滚', failed: '发布失败' })[b.status] || b.status;
+}
+function batchCls(b) {
+  return ({ active: 't-ok', rolledback: 't-err', failed: 't-err' })[b.status] || 't-gray';
+}
+// 只有 active 且没回滚的批次还能「整批回滚」；失败批次已收过进程，不需要再回滚。
+function canRollback(b) {
+  return b.status === 'active' || b.status === 'failed';
+}
+function hasURL(b) {
+  return (b.units || []).some((u) => u.url);
+}
+// live 是编排接口现场探的 /healthz：账本说发过，进程在不在是另一回事（#29）。
+function liveOf(b) {
+  const i = ((data.value && data.value.batches) || []).findIndex((x) => x.id === b.id);
+  return i >= 0 && !!((data.value.live || [])[i]);
+}
+
 function toggle(u) {
   sel.value[u.id] = !sel.value[u.id];
 }
@@ -218,9 +239,12 @@ async function rollback(b) {
         <span class="tag t-info" style="font-size: 9px">{{ b.env }}</span>
         <span class="tag t-gray" style="font-size: 9px">{{ b.mode === 'gray' ? '灰度' : '全量' }}</span>
         <span class="small" style="flex: 1">{{ b.units.map((u) => u.name + ' ' + u.tag + (u.url ? ' · ' + u.url : ' · 定义')).join('；') }}</span>
-        <span class="tag" :class="b.status === 'rolledback' ? 't-err' : 't-ok'" style="font-size: 9px">{{ b.status === 'rolledback' ? '已回滚' : '已上线' }}</span>
+        <!-- 状态只说账本里的结论；进程在不在由 live 单独说（#29：以前旧批次明明已经死了还写「已上线」） -->
+        <span class="tag" :class="batchCls(b)" style="font-size: 9px">{{ batchText(b) }}</span>
+        <span v-if="b.status === 'active' && hasURL(b)" class="tag" :class="liveOf(b) ? 't-ok' : 't-err'" style="font-size: 9px">{{ liveOf(b) ? '进程在线' : '进程不在' }}</span>
+        <span v-if="b.reason" class="small" style="color: var(--err); flex: 1 0 100%">{{ b.reason }}</span>
         <span class="small muted">{{ b.by }} · {{ b.at }}</span>
-        <button class="btn small" v-if="b.status !== 'rolledback' && can('tag')" :disabled="busy" @click="rollback(b)">整批回滚</button>
+        <button class="btn small" v-if="canRollback(b) && can('tag')" :disabled="busy" @click="rollback(b)">整批回滚</button>
       </div>
     </div>
 

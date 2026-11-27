@@ -51,6 +51,29 @@ async function waitFor(fn, ms, step) {
   page.on('console', (m) => { if (m.type() === 'error') pageErrors.push('console: ' + m.text()); });
   page.on('response', (r) => { if (r.status() >= 400) httpErrors.push(r.status() + ' ' + r.url()); });
 
+  // 回滚前记一笔本机时钟：之后要判断「地址还应答」是不是 SIGKILL 刚过、内核还没收端口。
+  let tRollback = 0;
+  // 「进程停没停」用 Node 侧的新连接判：它不是页面的一部分，没有浏览器缓存/连接的干扰。
+  // #41 自测遇过：浏览器里的 fetch 对已停掉的地址仍回 200（缓存/HTTP 缓存语义），
+  // Node 侧 0.6s 就是连不上——用浏览器判会把「已经停了」判成「没停」。
+  // 部署进程的 /healthz 正文是 JSON；别的东西（浏览器错误页、代理回答、别的服务）不是。
+  // 只比 200 会把「端口被别的进程占着」误判成「我们的部署还活着」（#41 自测遇过：地址回 200，正文却不是 JSON）。
+  const probeSvc = async (url) => {
+    let ctl; let timer;
+    try {
+      ctl = new AbortController();
+      timer = setTimeout(() => ctl.abort(), 1500);
+      const r = await fetch(url + '/healthz', { cache: 'no-store', signal: ctl.signal });
+      const txt = await r.text();
+      let json = false;
+      try { JSON.parse(txt); json = true; } catch { json = false; }
+      return { code: r.status, json, server: r.headers.get('server') || '', body: txt.slice(0, 60) };
+    } catch (e) {
+      return { code: 0, err: String(e && e.message || e).slice(0, 60) };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const api = (p, opts) => page.evaluate(async ([x, o]) => {
     const r = await fetch(x, o || {});
     return { code: r.status, body: await r.json().catch(() => null) };
@@ -143,12 +166,41 @@ async function waitFor(fn, ms, step) {
     body: JSON.stringify({ id: batch.id, note: '验收回滚' }),
   });
   check('4 整批回滚返回 200', rb.code === 200 && rb.body.status === 'rolledback', rb.body);
+  tRollback = Date.now();
   if (pbcUnit && pbcUnit.url) {
+    // SIGKILL 不会让进程自己释放端口：内核异步回收它的 fd，几十毫秒内还可能应答一次
+    // （#41 自测遇过：600ms 仍读到 200）。这里等到「不再 200」为止，上限 5s，
+    // 超时才判失败并带上最终状态——不是一读到 200 就断言。
     await new Promise((r) => setTimeout(r, 600));
-    let after = null;
-    try { after = (await fetch(pbcUnit.url + '/healthz')).status; } catch { after = 0; }
-    check('4 回滚后部署进程真的停了', after !== 200, after);
+    let after = { code: 0 };
+    const end = Date.now() + 5000;
+    for (;;) {
+      after = await probeSvc(pbcUnit.url);
+      if (!(after.code === 200 && after.json) || Date.now() > end) break;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    check('4 回滚后部署进程真的停了', !(after.code === 200 && after.json), { http: after, msAfterRollback: Date.now() - tRollback });
   }
+  // #41 / #29：回滚之后账本不再说「部署成功」，批次状态与进程状态分开说
+  const depAfter = ((await api('/api/state?pbc=' + pbcUnit.id)).body || {}).deploys || [];
+  // 只看批次里那个单元的部署：本批次的 success 必须已被撤销，且每条都带批次号。
+  // 不要求「一条 success 都没有」——别的批次/账号里的历史部署不归这条断言管，而它只应该
+  // 在「这条部署本该被撤销却还写着 success」时失败。
+  const mine = depAfter.filter((d) => d.batch === batch.id);
+  check('4 回滚后单元账本里没有仍算数的部署（旧 success 被撤销）',
+    mine.length > 0 && !mine.some((d) => d.status === 'success'),
+    depAfter.map((d) => d.status + ' ' + d.url + ' @' + d.batch));
+  check('4 部署事实能被批次认领（带 batch 号）',
+    depAfter.every((d) => d.batch), depAfter.map((d) => d.batch));
+  const orchAfter = ((await api('/api/projects/p1/orch')).body || {});
+  const bi = (orchAfter.batches || []).findIndex((x) => x.id === batch.id);
+  check('4 编排接口给出批次进程是否在线（回滚后不在线）', bi >= 0 && orchAfter.live[bi] === false,
+    { live: orchAfter.live && orchAfter.live[bi], status: bi >= 0 && orchAfter.batches[bi].status });
+  // #29：批次回滚后，里面上过线的单元行也要撤销——不能只改批次状态、单元还写着 deployed。
+  const rbUnits = bi >= 0 ? orchAfter.batches[bi].units.filter((u) => u.binary) : [];
+  check('4 批次回滚后单元行不再是 deployed', rbUnits.length > 0 && rbUnits.every((u) => u.status === 'rolledback'),
+    rbUnits.map((u) => u.id + ':' + u.status));
+
   const rb2 = await api('/api/projects/p1/orch/rollback', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: batch.id }),
@@ -161,6 +213,24 @@ async function waitFor(fn, ms, step) {
     body: JSON.stringify({ env: 'SIT', mode: 'full', units: ['fee'] }),
   });
   check('5 未打 tag 的单元被拦，且点名', relFee.code === 400 && /还没打 tag/.test(relFee.body.error) && /收费缴费/.test(relFee.body.error), relFee.body);
+
+  // #29：同单元再发一次，新批次在线、旧地址已死——账本状态与进程状态分开说。
+  {
+    const rel1 = await api('/api/projects/p1/orch/release', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ env: '预发', mode: 'full', units: [pbcUnit && pbcUnit.id] }),
+    });
+    const okURL = rel1.code === 201 ? ((rel1.body.units || [])[0] || {}).url : '';
+    const o2 = ((await api('/api/projects/p1/orch')).body || {});
+    const i2 = (o2.batches || []).findIndex((x) => x.id === (rel1.body && rel1.body.id));
+    check('5.1 同单元再发一次，新批次 live=true', !!okURL && i2 >= 0 && o2.live[i2] === true,
+      { code: rel1.code, okURL, live: o2.live && o2.live[i2] });
+    const newFacts = ((((await api('/api/state?pbc=' + pbcUnit.id)).body || {}).deploys) || []);
+    check('5.1 两条部署事实分别归两个批次（后一条 success 并带新批次号）',
+      newFacts.filter((d) => d.batch).length === 2 && newFacts[newFacts.length - 1].status === 'success' &&
+        newFacts[newFacts.length - 1].batch === rel1.body.id,
+      newFacts.map((d) => d.status + '@' + d.batch));
+  }
 
   // ---- 6. 打 tag 的前置：验收没全过就打不动 ----
   const tagFee = await api('/api/units/fee/tag', { method: 'POST' });

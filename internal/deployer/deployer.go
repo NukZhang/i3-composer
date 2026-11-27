@@ -16,6 +16,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -124,8 +125,29 @@ func (d *Deployer) Deploy(ctx context.Context, pbc, env, commit, digest, binary 
 	}()
 
 	d.mu.Lock()
+	// 登记的同一刻就派一个哨兵盯着 reaper：进程自己退出/被杀之后，这张表必须跟着清掉。
+	// 不这样做的话，表里留着一个已经死掉的 proc，「同 (pbc, env) 只有一个活着的」就成了假话：
+	// 回滚 Stop 收的是这个死条目，真正占着端口的那次部署（同 pbc、另一个 env 键）就漏掉了（#41 自测遇过）。
+	// 顺带把 PID 落日志：进程没被收掉时，日志里能直接看到是哪一个。
+	slog.Info("部署进程已起", "pbc", pbc, "env", env, "pid", inst.PID, "url", inst.URL, "key", key(pbc, env))
+	// 登记之前再看一眼：Deploy 开头停旧进程之后、登记之前，可能已经有同一个键的新进程登记进来
+	// （并发发布同一个单元）。直接覆盖会让先登记的那个变成没人认领的孤儿。
+	prev, had := d.running[key(pbc, env)]
 	d.running[key(pbc, env)] = p
 	d.mu.Unlock()
+	if had && prev != nil && prev != p {
+		slog.Warn("同一 (pbc, env) 已有登记的进程，覆盖前先收掉旧的", "pbc", pbc, "env", env, "旧pid", prev.inst.PID, "新pid", inst.PID)
+		stopProc(prev)
+	}
+	go func() {
+		<-p.done
+		d.mu.Lock()
+		if d.running[key(pbc, env)] == p {
+			delete(d.running, key(pbc, env))
+			slog.Info("部署进程自行退出，已从登记表移除", "pbc", pbc, "env", env, "pid", inst.PID)
+		}
+		d.mu.Unlock()
+	}()
 	return inst, nil
 }
 
@@ -196,8 +218,49 @@ func (d *Deployer) Stop(pbc, env string) {
 	d.mu.Lock()
 	p := d.running[k]
 	delete(d.running, k)
+	// 同 pbc、别的 env 名下还登记着的进程：部署只等旧 env 的进程真的停了才起新的，
+	// 但它可能已经自己退出而哨兵还没清表。这些一律收掉——同一个单元不该有第二个进程活着。
+	var others []*proc
+	for kk, pp := range d.running {
+		if kk != k && strings.HasPrefix(kk, pbc+"/") {
+			others = append(others, pp)
+			delete(d.running, kk)
+		}
+	}
 	d.mu.Unlock()
+	for _, pp := range others {
+		slog.Warn("Stop：同单元在别的环境还有登记的进程，一并收掉", "pbc", pbc, "env", env,
+			"foundEnv", pp.inst.Env, "pid", pp.inst.PID)
+		stopProc(pp)
+	}
+	if p == nil {
+		// 没收到不代表线上没进程：登记表可能因为键对不上（同 pbc 换了 env）而漏过，
+		// 而「回滚了但进程还在应答」比「多杀一个」严重得多。所以这里按 pbc 兜底，
+		// 把同 pbc 名下所有还活着的部署都收掉，并把被兜底收掉的条目记下来（#41）。
+		var extra []*proc
+		d.mu.Lock()
+		for kk, pp := range d.running {
+			if strings.HasPrefix(kk, pbc+"/") {
+				extra = append(extra, pp)
+				delete(d.running, kk)
+			}
+		}
+		d.mu.Unlock()
+		for _, pp := range extra {
+			slog.Warn("Stop 没找到该 (pbc, env) 的登记，按 pbc 兜底收掉", "pbc", pbc, "env", env,
+				"foundEnv", pp.inst.Env, "pid", pp.inst.PID)
+			stopProc(pp)
+		}
+		slog.Info("Stop：登记表里没有对应进程", "pbc", pbc, "env", env, "兜底收掉", len(extra))
+		return
+	}
 	stopProc(p)
+	select {
+	case <-p.done:
+		slog.Info("Stop：已收掉部署进程", "pbc", pbc, "env", env, "pid", p.inst.PID)
+	case <-time.After(3 * time.Second):
+		slog.Error("Stop：进程 3s 内没收掉", "pbc", pbc, "env", env, "pid", p.inst.PID)
+	}
 }
 
 // StopAll 停掉所有还在跑的部署。
