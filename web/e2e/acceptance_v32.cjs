@@ -320,14 +320,15 @@ async function waitFor(fn, ms, step) {
     if (p) p.click();
   }, null);
   await page.waitForTimeout(700);
-  await page.evaluate((name) => {
-    const rows = Array.from(document.querySelectorAll('.sidebar .trow'));
-    const p = rows.find((x) => x.textContent.trim().startsWith(name));
-    if (p) p.click();
-  }, '验收单元' + RUN);
+  // 按 data-unit 精确点：同一账本上跑过多轮时同名单元不止一行，按名字会点进别人的账（#61）。
+  await page.evaluate((id) => {
+    const el = document.querySelector('.sidebar [data-unit="' + id + '"]');
+    if (el) el.click();
+  }, unitID);
   await page.waitForTimeout(600);
   await page.evaluate(() => { const s = Array.from(document.querySelectorAll('.sidebar .trow.sub2')).find((x) => x.textContent.trim().startsWith('验证')); if (s) s.click(); });
-  await page.waitForTimeout(900);
+  // 等回放证据区真出现（切单元会重拉投影），别把渲染慢读成「没有回放」。
+  await page.waitForSelector('.replay-box', { timeout: 5000 }).catch(() => {});
   const rpUI = await page.evaluate(() => {
     const box = document.querySelector('.replay-box');
     return box ? { text: box.textContent.trim().slice(0, 200), chips: box.querySelectorAll('.replay-gates .tag').length } : null;

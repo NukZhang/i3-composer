@@ -452,9 +452,14 @@ function check(name, ok, detail) {
   check('10 没读到输入时装配归因写「没读到输入」而不是「没召回」',
     !!blockedAsm && /^没读到输入/.test(blockedAsm.note || '') && /query 是空/.test(blockedAsm.note || ''),
     blockedAsm);
+  // 失败时分清两种情况：本轮自己没被拦（pinned=false），或本轮被拦了但「最近一轮」读了空轮。
+  // 「最近一轮试跑」在同一本 agents 日志上是全局的，多实例共用时这里会是别人的一轮（#61）。
   check('10 被白名单拦掉的一轮不进 lastLoadedTrial（最近一次检索仍钉在真召回那轮）',
     blockedAsm.pinned && blockedAsm.lastAt !== '' && blockedAsm.lastAt !== blockedAsm.trialAt,
-    { lastAt: blockedAsm.lastAt, trialAt: blockedAsm.trialAt, pinned: blockedAsm.pinned });
+    {
+      lastAt: blockedAsm.lastAt, trialAt: blockedAsm.trialAt, pinned: blockedAsm.pinned,
+      reason: blockedAsm.pinned ? '' : '本轮被拦的一轮没被标成拦下，或「最近一轮」不是本轮（同一本 agents 日志上多实例同时试跑，见 #61）',
+    });
 
   // 对话验收不能拿一轮被拦下的执行拼回复：拒绝，且一条对话事实都不落。
   // 对话是 BA 的活（验收台），DA 点这个口子会被 403 拦住——先切回 BA。
