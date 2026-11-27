@@ -166,6 +166,18 @@ function check(name, ok, detail) {
     /\d+\/\d+ 通过/.test(pageText) && pageText.includes(shortDigest),
     { digest: shortDigest, shown: shot, hasPass: /\d+\/\d+ 通过/.test(pageText), unit: picked.after });
 
+  const gateCard = page.locator('.card').filter({ has: page.getByRole('heading', { name: /^交付四闸/ }) });
+  const gateSummary = await gateCard.locator('.ch .tag').evaluate((tag) => ({
+    text: tag.textContent.trim(), warning: tag.classList.contains('t-warn'),
+  }));
+  const visualMark = await gateCard.locator('.achip').filter({ hasText: '原型还原' }).locator('b').innerText();
+  const gates = st.gates.all;
+  const unknown = gates.filter((gate) => gate.unknown);
+  check('5 判不了的门禁用问号且不计入通过数（#78）',
+    gates.length === 4 && unknown.length === 1 && unknown[0].key === 'visual' &&
+    gateSummary.text === '3/4 通过 · 1 判不了' && gateSummary.warning && visualMark === '?',
+    { summary: gateSummary, visualMark, unknown: unknown.map((gate) => gate.key) });
+
   // ---- 6. 种子写的历史与真跑的事实分得开 ----
   // 种子事实查种子单元（fee）；真跑的事实查这次新建的单元。
   const facts = ((((await api('/api/facts?pbc=' + unit)).body || {}).facts) || []);

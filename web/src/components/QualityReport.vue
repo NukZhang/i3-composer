@@ -22,10 +22,10 @@ const props = defineProps({
 const all = computed(() => props.gates.all || []);
 const pbcGates = computed(() => props.gates.pbc || []);
 const agGates = computed(() => props.gates.agent || []);
-const passAll = computed(() => all.value.filter((g) => g.ok).length);
 // 判不了的闸（比如此刻还没接视觉比对的那条）不算通过，但要单独说清楚。
+const passAll = computed(() => all.value.filter((g) => g.ok && !g.unknown).length);
 const unknownCount = computed(() => all.value.filter((g) => g.unknown).length);
-const canRelease = computed(() => all.value.length > 0 && passAll.value === all.value.length);
+const canRelease = computed(() => all.value.length > 0 && all.value.every((g) => g.ok));
 
 // 这次提交构建出来的产物摘要。
 const digest = computed(() => (props.head && props.builds[props.head]) || '');
