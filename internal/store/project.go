@@ -136,7 +136,7 @@ type Item struct {
 	Type      string `json:"type"` // new | feature | defect | backlog | doc
 	Mode      string `json:"mode"` // fast | guided
 	Env       string `json:"env"`
-	Run       string `json:"run"` // idea | running | waiting | paused | blocked | published
+	Run       string `json:"run"` // idea | running | waiting | paused | blocked | failed | published
 	Step      int    `json:"step"`
 	Steps     []Step `json:"steps,omitempty"`
 	Version   string `json:"version,omitempty"`
@@ -145,7 +145,10 @@ type Item struct {
 	By        string `json:"by,omitempty"`
 	Blocked   string `json:"blocked,omitempty"`
 	BlockedBy string `json:"blockedBy,omitempty"`
-	At        string `json:"at,omitempty"`
+	// 最近一轮 run 的失败原因与 Dapr 终态（#53）。重跑时清空。
+	Failed       string `json:"failed,omitempty"`
+	FailedStatus string `json:"failedStatus,omitempty"`
+	At           string `json:"at,omitempty"`
 
 	// 准入输入：建单时由人写下的目标断言、数据范围与责任人。
 	//
@@ -456,6 +459,7 @@ func apply(v *View, f Fact) error {
 			it.Step = 0
 			it.Tag, it.Version, it.URL = "", "", ""
 			it.Blocked, it.BlockedBy = "", ""
+			it.Failed, it.FailedStatus = "", ""
 			for i := range it.Steps {
 				it.Steps[i].St = "todo"
 				it.Steps[i].At = ""
@@ -475,6 +479,26 @@ func apply(v *View, f Fact) error {
 			it.Steps[p.Step].St = "done"
 			it.Steps[p.Step].At = p.At
 			it.Step = p.Step + 1
+		}
+
+	case FactItemRunFailed:
+		var p struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		if it := v.Items[p.ID]; it != nil {
+			// 只对「还在跑」的那一轮生效：失败事实晚于重跑起始到达时，
+			// 不能把新一轮又打回失败。
+			if it.Run == "running" {
+				it.Run = "failed"
+				it.St = "done"
+				it.Failed = p.Reason
+				it.FailedStatus = p.Status
+			}
 		}
 
 	case FactItemWaiting:

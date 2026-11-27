@@ -264,6 +264,17 @@ type WorkflowStatus struct {
 	} `json:"properties"`
 }
 
+// DaprStatus 把 Dapr 的终态翻成人能读懂的一句话；失败时优先给 sidecar 的原话。
+func (st *WorkflowStatus) DaprStatus() string {
+	if st == nil {
+		return ""
+	}
+	if st.Properties.DaprFailureMessage != "" {
+		return st.RuntimeStatus + "：" + st.Properties.DaprFailureMessage
+	}
+	return st.RuntimeStatus
+}
+
 // GetWorkflow 查询实例状态。实例不存在返回 (nil, nil)。
 func (c *Client) GetWorkflow(ctx context.Context, component, instanceID string) (*WorkflowStatus, error) {
 	u := fmt.Sprintf("%s/v1.0/workflows/%s/%s", c.base, url.PathEscape(component), url.PathEscape(instanceID))

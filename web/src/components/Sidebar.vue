@@ -16,7 +16,8 @@ function badgeColor(k) {
 }
 
 const todoCount = computed(
-  () => S.inbox.filter((x) => x.run === 'waiting' || (x.owner === S.role && x.st !== 'done' && x.run !== 'waiting' && x.run !== 'tagged')).length,
+  // 失败的工作项要人看见并重来：它也算「待我处理」（#53）。
+  () => S.inbox.filter((x) => x.run === 'waiting' || x.run === 'failed' || (x.owner === S.role && x.st !== 'done' && x.run !== 'waiting' && x.run !== 'tagged')).length,
 );
 const unread = computed(() => S.notifications.length);
 // v3.2：单元只剩四个阶段。发布被提到项目级——「发布编排」不是第五个阶段，

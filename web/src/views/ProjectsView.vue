@@ -39,11 +39,11 @@ function runText(run) {
   return {
     idea: '未发起', draft: '未发起', running: '执行中',
     verified: '待打 tag', waiting: '待打 tag', tagged: '已交付',
-    paused: '已介入', blocked: '受阻', published: '已交付',
+    paused: '已介入', blocked: '受阻', failed: '失败', published: '已交付',
   }[run] || run || '—';
 }
 function runCls(run) {
-  return 'cr-state ' + (['published', 'running', 'waiting', 'paused', 'blocked'].includes(run) ? run : 'draft');
+  return 'cr-state ' + (['published', 'running', 'waiting', 'paused', 'blocked', 'failed'].includes(run) ? run : 'draft');
 }
 function openItem(x) {
   S.pbcId = x.pbc;

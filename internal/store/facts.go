@@ -105,6 +105,12 @@ const (
 	// v3.2：单元只做到「可以交付」。机器跑完五步就停，人打 tag 进池；
 	// 上哪个环境、和谁一起上，在项目级「发布编排」里定，单元不再自己发布。
 	FactItemVerified = "item.verified"
+	// v3.3：一次 run 的失败也要落账（#53）。
+	//
+	// item.run.started 是发起方写的；workflow 之后失败时没有 activity 能可靠地
+	// 回来写一句（失败本身就可能发生在 activity 跑不起来的时候）。所以失败由
+	// 读取侧向 Dapr 对账后补落——它同样是发生过的事实，只是晚一步记账。
+	FactItemRunFailed = "item.run.failed"
 	// 批次是发布的单位：一个批次锁多个 tag 与 digest，只能整批回滚。
 	FactReleaseBatch    = "release.batch.created"
 	FactReleaseRollback = "release.batch.rolledback"

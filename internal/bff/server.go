@@ -419,7 +419,8 @@ func nextItemID(items map[string]*store.Item) (string, error) {
 }
 
 func (s *Server) getItem(w http.ResponseWriter, r *http.Request, c reqCtx) error {
-	v, err := s.load(r, c.PBC)
+	// 详情页要显示失败原因：先对账，别让「执行中」一直挂着（#53）。
+	v, err := s.loadState(r, c.PBC)
 	if err != nil {
 		return err
 	}
@@ -506,6 +507,7 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if !ok {
 		return fmt.Errorf("%w：%s", errNotFound, c.ItemID)
 	}
+	// running 只说明发起过；失败的那一轮要当场对账掉，否则人永远等不到重跑（#53）。
 	if it.Run == "running" || it.Run == "waiting" {
 		return fmt.Errorf("%w：%s 已在执行中（run=%s）", errBadRequest, c.ItemID, it.Run)
 	}
@@ -515,6 +517,7 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if it.Run == "published" {
 		return fmt.Errorf("%w：%s 已发布（%s），如需变更请新建工作项", errBadRequest, c.ItemID, it.Tag)
 	}
+	// failed 可以重跑：上一轮为什么失败写在 item.run.failed 里，重跑开新一轮，旧事实不删（#53）。
 	if it.Kind != "Story" || len(it.Steps) == 0 {
 		return fmt.Errorf("%w：%s 不是可执行的工作项", errBadRequest, c.ItemID)
 	}
@@ -586,7 +589,7 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request, c reqCtx) error 
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
 		return fmt.Errorf("%w：%v", errBadRequest, err)
 	}
-	v, err := s.load(r, c.PBC)
+	v, err := s.loadState(r, c.PBC)
 	if err != nil {
 		return err
 	}

@@ -106,10 +106,10 @@ async function decide(approve) {
 }
 
 function runText(run) {
-  return { idea: '未发起', draft: '未发起', running: '执行中', waiting: '待发布', paused: '已介入', blocked: '受阻', published: '已发布' }[run] || run || '—';
+  return { idea: '未发起', draft: '未发起', running: '执行中', waiting: '待发布', paused: '已介入', blocked: '受阻', failed: '失败', published: '已发布' }[run] || run || '—';
 }
 function runCls(run) {
-  return 'cr-state ' + (['published', 'running', 'waiting', 'paused', 'blocked'].includes(run) ? run : 'draft');
+  return 'cr-state ' + (['published', 'running', 'waiting', 'paused', 'blocked', 'failed'].includes(run) ? run : 'draft');
 }
 function stepCls(st) {
   return st === 'done' ? 'done' : st === 'doing' ? 'doing' : st === 'blocked' ? 'blocked' : st.human ? 'human' : '';
@@ -130,6 +130,7 @@ function factText(f) {
     'publish.decided': '人的发布决定',
     'item.published': '已发布（打 tag）',
     'item.blocked': '受阻',
+    'item.run.failed': '这一轮执行失败',
     'tag.created': '打了 tag',
     'test.run': '真跑测试',
     'build.succeeded': '镜像构建完成',
@@ -186,6 +187,7 @@ function factDetail(f) {
           <template v-if="item.run === 'published'">已发布 {{ item.version || '' }}{{ item.tag ? ' · tag ' + item.tag : '' }}</template>
           <template v-else-if="item.run === 'blocked'">卡在 {{ ((item.steps || [])[item.step] || {}).n || '' }}：{{ item.blocked || '' }}</template>
           <template v-else-if="item.run === 'waiting'">全链已跑通，就差你一句「发不发」</template>
+          <template v-else-if="item.run === 'failed'">上一轮没跑完：{{ item.failed || 'Dapr 没给原因' }}</template>
           <template v-else-if="item.run === 'running'">正在跑，可以随时介入</template>
         </span>
         <span class="spacer" style="flex: 1" />
@@ -253,9 +255,10 @@ function factDetail(f) {
       </div>
     </div>
 
-    <div v-if="item.run === 'idea' || item.run === 'blocked'" class="row" style="margin-bottom: 11px; gap: 6px; flex-wrap: wrap">
+    <!-- failed 与 blocked 一样给出口：失败是可看见、可重来的一次事件，不是永久损伤（#53） -->
+    <div v-if="['idea', 'blocked', 'failed'].includes(item.run)" class="row" style="margin-bottom: 11px; gap: 6px; flex-wrap: wrap">
       <button class="btn primary" :disabled="!canBuild || busy" @click="run">
-        <span v-html="icon('play', 12)" /> {{ item.run === 'blocked' ? '重新发起' : '发起直通' }}
+        <span v-html="icon('play', 12)" /> {{ item.run === 'blocked' || item.run === 'failed' ? '重新发起' : '发起直通' }}
       </button>
       <span class="small muted">
         {{ canBuild ? '会自动跑完制品→提交→测试→镜像→' + item.env + '，停在发布前由 SA 拍板' : '当前角色没有 build 权限（DA 专属）' }}

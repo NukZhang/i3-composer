@@ -15,7 +15,7 @@ const list = computed(() => {
   if (t === 'review') return S.inbox.filter((x) => x.run === 'waiting');
   if (t === 'mine') return S.inbox.filter((x) => x.by === S.role);
   return S.inbox.filter(
-    (x) => x.owner === S.role && x.st !== 'done' && !['waiting', 'verified', 'tagged', 'published'].includes(x.run),
+    (x) => x.run === 'failed' || (x.owner === S.role && x.st !== 'done' && !['waiting', 'verified', 'tagged', 'published'].includes(x.run)),
   );
 });
 
@@ -77,7 +77,7 @@ function unitName(id) {
         <span>{{ x.id }} · {{ unitName(x.pbc) }} · {{ x.kind }}{{ x.by ? ' · 由 ' + x.by + ' 提' : '' }}{{ x.run === 'waiting' ? ' · 全链已跑通，待你拍板' : '' }}</span>
       </div>
       <span class="due">{{ x.at || '—' }}</span>
-      <span class="tag" :class="x.run === 'waiting' ? 't-warn' : 't-gray'">{{ x.run === 'waiting' ? '待发布' : '待处理' }}</span>
+      <span class="tag" :class="x.run === 'waiting' ? 't-warn' : x.run === 'failed' ? 't-err' : 't-gray'">{{ x.run === 'waiting' ? '待发布' : x.run === 'failed' ? '失败' : '待处理' }}</span>
     </div>
   </div>
 

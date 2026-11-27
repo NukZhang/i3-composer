@@ -168,7 +168,9 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	if !known {
 		return fmt.Errorf("%w：单元 %s 不存在", errNotFound, c.PBC)
 	}
-	v, err := s.load(r, c.PBC)
+	// 这里才是 /api/state 真正的投影出口：v3 起 v23.state 覆盖了 v2 的 state，
+	// 对账必须挂在这一层，否则前端永远看不到失败（#53）。
+	v, err := s.loadState(r, c.PBC)
 	if err != nil {
 		return err
 	}
