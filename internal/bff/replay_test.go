@@ -98,6 +98,31 @@ func TestPBCTagRequiresPassingAcceptanceForCurrentCommit(t *testing.T) {
 	}
 }
 
+func TestPBCTagRejectsUncommittedDraft(t *testing.T) {
+	h := newHarness(t)
+	taggedUnit(t, h, "fee")
+	resp, draft := h.do(t, http.MethodPost, "/api/artifacts?pbc=fee", map[string]any{
+		"artifact": "code", "files": map[string]string{"main.go": "package main\nfunc main(){}\n"},
+	}, RoleDA)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("保存草稿：%d %v", resp.StatusCode, draft)
+	}
+	want := "code " + fmt.Sprint(draft["version"])
+	resp, out := h.do(t, http.MethodPost, "/api/units/fee/tag", nil, RoleSA)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out["error"]), want) {
+		t.Errorf("未提交草稿应阻止打 tag 并给出版本 %q：%d %v", want, resp.StatusCode, out)
+	}
+	facts, err := h.st.Load(t.Context(), "fee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range facts {
+		if fact.Type == store.FactGateEvaluated || fact.Type == store.FactTagCreated {
+			t.Errorf("拒绝打 tag 不应写入 %s", fact.Type)
+		}
+	}
+}
+
 func TestLegacyAgentAcceptanceDoesNotRequireCommit(t *testing.T) {
 	h := newHarness(t)
 	taggedUnit(t, h, "qa")

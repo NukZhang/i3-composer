@@ -310,10 +310,90 @@ async function requireSeedLedger() {
     body: JSON.stringify({ st: 'pass', commit: head.no }),
   });
   check('7 BA 核实当前提交的测试与摘要并判定通过', verdict?.code === 201, verdict?.body);
+
+  // 先把 HEAD 验收完，再保存新草稿，单独验证交付闸的拒绝原因。
+  await role('DA');
+  const tagPath = `/api/units/${unitID}/tag`;
+  const statePath = `/api/state?pbc=${unitID}`;
+  const draftCode = (st.versions.code || []).find((v) => v.v === head.tree.code);
+  const marker = 'issue71ManualDraft';
+  const draftFiles = {
+    ...draftCode.files,
+    'main.go': draftCode.files['main.go'] + '\nconst ' + marker + ' = "已保存的手工代码"\n',
+    'manual_draft_test.go': 'package main\nimport "testing"\nfunc TestManualDraft(t *testing.T) { if ' + marker + ' == "" { t.Fatal("缺少手工代码") } }\n',
+  };
+  const savedDraft = await api(`/api/artifacts?pbc=${unitID}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifact: 'code', files: draftFiles }),
+  });
+  const draftVersion = savedDraft.body.version;
+  const draftState = (await api(statePath)).body;
+  const acceptedGate = draftState.gates.all.find((g) => g.key === 'accepted');
+  const digestGate = draftState.gates.all.find((g) => g.key === 'digest');
+  check('7 保存代码草稿后门禁点名版本，旧测试和摘要仍归属原提交',
+    savedDraft.code === 201 && acceptedGate?.ok === false && acceptedGate.detail.includes('code ' + draftVersion)
+      && digestGate?.ok === false && draftState.test?.commit === head.no && draftState.commits[0].digest === head.digest,
+    { commit: head.no, draft: draftVersion, acceptedGate, digestGate });
+  await page.locator('.sidebar .trow.sub2').filter({ hasText: '构建' }).click();
+  await page.locator('.ptab').filter({ hasText: '质量报告' }).click();
+  const draftChip = verifyStage.locator('.achip').filter({ hasText: 'code ' + draftVersion });
+  await draftChip.waitFor({ timeout: 5000 }).catch(() => {});
+  check('7 质量报告展示草稿门禁和原提交的测试依据',
+    await draftChip.isVisible()
+      && await verifyStage.getByRole('heading', { name: `测试与构建 · 提交 ${head.no}`, exact: true }).isVisible());
+  await page.screenshot({ path: path.join(SHOTS, 'issue71-draft-gates.png') });
+  await page.locator('.sidebar .trow.sub2').filter({ hasText: '验证' }).click();
   await role('SA');
-  const tag = await api(`/api/units/${unitID}/tag`, { method: 'POST' });
-  check('7 SA 打 tag 进池', tag.code === 201 && !!tag.body.tag, tag.body);
-  const tag2 = await api(`/api/units/${unitID}/tag`, { method: 'POST' });
+  check('7 SA 验证页禁用草稿状态下的打 tag',
+    await page.getByRole('button', { name: '打 tag 固化交付物' }).isDisabled());
+  const deniedDraft = await api(tagPath, { method: 'POST' });
+  const blockedFacts = (await api(factsPath)).body.facts;
+  const savedFact = blockedFacts.find((f) => f.seq === draftState.seq && f.type === 'artifact.drafted' && f.actor === 'DA');
+  check('7 SA 打 tag 被草稿门禁拒绝，未生成门禁或 tag 事实',
+    !!savedFact && deniedDraft.code === 400 && deniedDraft.body.error.includes('code ' + draftVersion)
+      && !blockedFacts.some((f) => f.seq > savedFact.seq && ['gate.evaluated', 'tag.created'].includes(f.type)),
+    { savedFact, code: deniedDraft.code, error: deniedDraft.body.error });
+
+  await role('BA');
+  const rebuild = await api('/api/tasks?pbc=' + unitID, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: '验收单元 · 重新提交人工代码草稿', type: 'feature', env: 'test', mode: 'fast',
+      accept: ['当保存的代码草稿重新构建时，则应通过新增的机器测试'],
+      data: ['fee.bill.amount'], acceptBy: 'BA 业务', complyBy: 'SA 系统',
+    }),
+  });
+  const rebuildID = rebuild.body.id;
+  await role('DA');
+  const rerun = await api(`/api/items/${rebuildID}/run?pbc=${unitID}`, { method: 'POST' });
+  const builtDraft = await waitFor(async () => {
+    const value = (await api(statePath)).body;
+    return ['verified', 'blocked', 'failed'].includes(value.items?.[rebuildID]?.run) ? value : null;
+  }, 180000, 1000);
+  const rebuiltHead = builtDraft?.commits?.[0];
+  const rebuiltCode = builtDraft?.versions?.code?.find((v) => v.v === rebuiltHead?.tree.code);
+  const rebuildFacts = (await api(`/api/items/${rebuildID}?pbc=${unitID}`)).body.facts || [];
+  const newTest = rebuildFacts.find((f) => f.type === 'test.run' && f.payload.commit === rebuiltHead?.no);
+  const newBuild = rebuildFacts.find((f) => f.type === 'build.succeeded' && f.payload.commit === rebuiltHead?.no);
+  check('7 重新交付使用人工代码，机器测试与构建证据归属新提交',
+    rebuild.code === 201 && rerun.code === 202 && builtDraft?.items?.[rebuildID]?.run === 'verified'
+      && rebuiltHead.no !== head.no && rebuiltCode?.files?.['main.go'] === draftFiles['main.go']
+      && rebuiltCode.files['manual_draft_test.go'] === draftFiles['manual_draft_test.go']
+      && newTest?.payload.total > st.test.total && newTest.payload.pass === newTest.payload.total
+      && newBuild?.payload.digest === rebuiltHead.digest && builtDraft.gates.all.find((g) => g.key === 'accepted')?.ok,
+    { rebuildID, commit: rebuiltHead?.no, code: rebuiltCode?.v, test: newTest?.payload, build: newBuild?.payload });
+  await role('SA');
+  const awaitingAT = await api(tagPath, { method: 'POST' });
+  check('7 新提交还要重新完成人工验收', awaitingAT.code === 400 && /还差 1 条/.test(awaitingAT.body.error), awaitingAT.body);
+  await role('BA');
+  const currentAT = await api(`/api/checks/AT-01/decide?pbc=${unitID}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ st: 'pass', commit: rebuiltHead?.no }),
+  });
+  await role('SA');
+  const tag = await api(tagPath, { method: 'POST' });
+  check('7 SA 打 tag 进池', currentAT.code === 201 && tag.code === 201 && tag.body.commit === rebuiltHead?.no && !!tag.body.tag, tag.body);
+  const tag2 = await api(tagPath, { method: 'POST' });
   check('7 重复打 tag 被拒', tag2.code === 400, tag2.body);
   const unitNow = ((await api('/api/units')).body.units || []).find((u) => u.id === unitID);
   check('7 单元 HEAD 上有 tag', !!unitNow && unitNow.headTag === tag.body.tag, unitNow && { head: unitNow.head, headTag: unitNow.headTag });
@@ -374,12 +454,24 @@ async function requireSeedLedger() {
 
   // ---- 11. 回放：按 tag 打下去的那一刻重算投影 ----
   // 「凭什么能发」要能当场核对：闸是当时算的那组，不是今天的账本重算一遍。
+  await role('DA');
+  const laterDraft = await api(`/api/artifacts?pbc=${unitID}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifact: 'code', files: { ...draftFiles, 'main.go': draftFiles['main.go'] + '\n// 下一轮草稿\n' } }),
+  });
+  await role('SA');
   const rp = await api(`/api/units/${unitID}/replay?tag=${encodeURIComponent(tag.body.tag)}`);
   check('11 已打 tag 的单元可回放（200）', rp.code === 200, rp.body && rp.body.tag);
   check('11 回放停在打 tag 的那次提交', rp.code === 200 && rp.body.commit === tag.body.commit, rp.body && { commit: rp.body.commit, tagCommit: tag.body.commit });
   check('11 回放带出当时那组闸（四条，含「判不了」）',
     rp.code === 200 && (rp.body.gates || []).length === 4 && rp.body.gates.some((g) => g.unknown),
     rp.body && rp.body.gates);
+  const nowGate = (await api(statePath)).body.gates.all.find((g) => g.key === 'accepted');
+  const historicGate = rp.body.gates?.find((g) => g.key === 'accepted');
+  check('11 二次保存草稿后，当前闸阻断且原 tag 仍保留当时证据',
+    laterDraft.code === 201 && nowGate?.ok === false && nowGate.detail.includes(laterDraft.body.version)
+      && historicGate?.ok && rp.body.commit === tag.body.commit,
+    { current: nowGate, historic: historicGate, commit: tag.body.commit, tag: tag.body.tag });
   check('11 回放保留打 tag 时通过的人工验收',
     (rp.body.checks || []).some((c) => c.id === 'AT-01' && c.st === 'pass'), rp.body.checks);
   check('11 回放窗口右端是 tag.created 的 seq', rp.code === 200 && (rp.body.facts || []).some((f) => f.seq === rp.body.seq && f.type === 'tag.created'), rp.body && { seq: rp.body.seq });

@@ -3,6 +3,7 @@ package bff
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -845,7 +846,12 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request, c reqCtx) err
 	} else {
 		ver.MD = in.Text
 	}
-	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactArtifactDrafted, c.Role.String(), ver); err != nil {
+	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactArtifactDrafted, c.Role.String(), ver,
+		store.AppendCondition{AfterSeq: v.Seq}); err != nil {
+		if errors.Is(err, store.ErrSnapshotChanged) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "单元账本已更新，请刷新后重新保存草稿"})
+			return nil
+		}
 		return err
 	}
 	s.publish(c.PBC, "artifact.drafted", map[string]any{"artifact": string(t), "version": nv})

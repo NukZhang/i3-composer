@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -198,12 +200,18 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 	unit := a.unitOf(ctx, in.Input)
 
 	n := 0
+	seq := v.Seq
 	for _, t := range Complete(Affected(in.Type), have) {
-		cur := latest(t)
-		if ver, ok := domain.Find(v.Versions, t, cur); ok && manualPlan(ver) {
+		op := fmt.Sprintf("%s/artifact/%s", in.OpID, t)
+		if store.HasOp(facts, op) {
+			n++
 			continue
 		}
-		nv, err := domain.NextVersion(cur)
+		cur, _ := domain.LatestVersion(v.Versions, t)
+		if keepManualContent(cur) {
+			continue
+		}
+		nv, err := domain.NextVersion(cur.V)
 		if err != nil {
 			return StepResult{}, err
 		}
@@ -233,10 +241,16 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 				ver.MD = md
 			}
 		}
-		op := fmt.Sprintf("%s/artifact/%s", in.OpID, t)
-		if _, err := log.AppendOp(ctx, pbc, op, store.FactArtifactDrafted, workerFor(t), ver); err != nil {
+		// 如果人工在生成期间落了草稿，让 activity 重新读账本后再判断。
+		fact, err := log.AppendOp(ctx, pbc, op, store.FactArtifactDrafted, workerFor(t), ver,
+			store.AppendCondition{AfterSeq: seq})
+		if err != nil {
 			return StepResult{}, err
 		}
+		if fact.Seq != seq+1 {
+			return StepResult{}, store.ErrSnapshotChanged
+		}
+		seq = fact.Seq
 		n++
 	}
 	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Detail: fmt.Sprintf("%d 个制品草稿", n)})
@@ -245,6 +259,11 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 // 人工方案由负责角色编辑。流水线收敛时只重接这些制品的引用。
 func manualPlan(v domain.Version) bool {
 	return v.Source == domain.SourceManual && (v.T == domain.PRD || v.T == domain.AD || v.T == domain.AT)
+}
+
+// 这轮交付应提交已经保存的人工草稿，否则重新跑测试就会测到重新生成的内容。
+func keepManualContent(v domain.Version) bool {
+	return manualPlan(v) || (v.Source == domain.SourceManual && v.St == domain.StDraft)
 }
 
 // unitOf 读这个工作项所属交付单元的登记信息。
@@ -313,6 +332,7 @@ func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, er
 			return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Detail: "工作区已收敛"})
 		}
 		latest := func(t domain.Artifact) string { return domain.Latest(v.Versions, t) }
+		seq := v.Seq
 		for _, s := range stale {
 			nv, err := domain.NextVersion(s.V)
 			if err != nil {
@@ -325,9 +345,9 @@ func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, er
 			}
 			// 重算也要带真内容：否则重算出来的制品是空壳，
 			// 收敛之后的工作区反而比收敛前更假。
-			if prev, ok := domain.Find(v.Versions, s.T, s.V); ok && manualPlan(prev) {
-				ver.MD, ver.By, ver.Source = prev.MD, prev.By, prev.Source
-				ver.Note = "保留人工正文，按上游最新版本更新引用"
+			if prev, _ := domain.LatestVersion(v.Versions, s.T); keepManualContent(prev) || len(s.On) == 0 {
+				ver.MD, ver.Files, ver.By, ver.Source = prev.MD, prev.Files, prev.By, prev.Source
+				ver.Note = "保留人工制品内容，按上游最新版本更新引用"
 			} else if a.D.Exec != nil {
 				if s.T == domain.Code {
 					files, err := a.D.Exec.Code(ctx, unit, in.Title, in.Type)
@@ -343,10 +363,16 @@ func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, er
 					ver.MD = md
 				}
 			}
-			op := fmt.Sprintf("%s/recalc/%d/%s", in.OpID, round, s.T)
-			if _, err := a.logOf(in.Input).AppendOp(ctx, pbc, op, store.FactArtifactDrafted, workerFor(s.T), ver); err != nil {
+			op := fmt.Sprintf("%s/recalc/%s/%s", in.OpID, s.T, s.V)
+			fact, err := a.logOf(in.Input).AppendOp(ctx, pbc, op, store.FactArtifactDrafted, workerFor(s.T), ver,
+				store.AppendCondition{AfterSeq: seq})
+			if errors.Is(err, store.ErrSnapshotChanged) || (err == nil && fact.Seq != seq+1) {
+				break
+			}
+			if err != nil {
 				return StepResult{}, err
 			}
+			seq = fact.Seq
 		}
 	}
 	return StepResult{OK: false, Step: in.Step, Detail: "8 轮后仍有制品过期，依赖配置可能有环"}, nil
@@ -395,7 +421,7 @@ func (a *Activities) Commit(ctx context.Context, in StepInput) (StepResult, erro
 		payload.Checks = domain.ChecksFromAT(at.MD)
 	}
 	if _, err := a.logOf(in.Input).AppendOp(ctx, pbc, in.OpID+"/commit",
-		store.FactCommitCreated, "i3-pipeline", payload); err != nil {
+		store.FactCommitCreated, "i3-pipeline", payload, store.AppendCondition{AfterSeq: v.Seq}); err != nil {
 		return StepResult{}, err
 	}
 	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, CommitNo: no, Detail: "已提交 " + no})
@@ -455,16 +481,11 @@ func (a *Activities) Test(ctx context.Context, in StepInput) (StepResult, error)
 
 // codeFiles 取一个提交里代码制品的文件。
 func codeFiles(v *store.View, c domain.Commit) map[string]string {
-	ver := c.Tree[domain.Code]
-	if ver == "" {
+	if c.Tree[domain.Code] == "" {
 		return nil
 	}
-	for _, x := range v.Versions[domain.Code] {
-		if x.V == ver {
-			return x.Files
-		}
-	}
-	return nil
+	code, _ := domain.Find(v.Versions, domain.Code, c.Tree[domain.Code])
+	return code.Files
 }
 
 // Build 构建产物，产出 digest 并写回提交（事实 build.succeeded）。
@@ -564,15 +585,30 @@ func (a *Activities) Deploy(ctx context.Context, in StepInput) (StepResult, erro
 	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, URL: u, Detail: "已部署 " + in.Env})
 }
 
-// Publish 打 tag 并标记发布。这是唯一的人工闸的落地点：
-// workflow 只有在收到 publish 事件后才会走到这里。
-//
-// 这里重新校验四闸，因为从「人看到卡片」到「人点发布」之间可能隔了三天，
-// 期间上游可能又变了。前端显示的通过与否不算数。
+// Publish 为升级前的工作流保留，恢复后写入前要核对当时可见的交付证据。
 func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, error) {
-	facts, err := a.logOf(in.Input).Load(ctx, in.PBC)
+	log := a.logOf(in.Input)
+	facts, err := log.Load(ctx, in.PBC)
 	if err != nil {
 		return StepResult{}, err
+	}
+	for _, f := range facts {
+		if f.OpID != in.OpID+"/tag" || f.Type != store.FactTagCreated {
+			continue
+		}
+		// 已打 tag 的重试继续写发布事实，后续草稿不应改变该次交付的身份。
+		var saved struct {
+			Tag    string `json:"tag"`
+			Commit string `json:"commit"`
+		}
+		if err := json.Unmarshal(f.Payload, &saved); err != nil {
+			return StepResult{}, err
+		}
+		snapshot, err := store.ProjectAsOf(in.PBC, facts, f.Seq)
+		if err != nil {
+			return StepResult{}, err
+		}
+		return a.finishPublish(ctx, in, snapshot, saved.Tag, saved.Commit)
 	}
 	v, err := store.Project(in.PBC, facts)
 	if err != nil {
@@ -582,6 +618,9 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 		return StepResult{OK: false, Step: in.Step, Detail: "没有可发布的提交"}, nil
 	}
 	head := v.Commits[0]
+	if head.Tag != "" {
+		return StepResult{OK: false, Step: in.Step, Detail: "当前提交已打 tag " + head.Tag}, nil
+	}
 
 	// 视觉比对未接入：传 nil。这条闸会说「判不了」，而不是「无差异」。
 	pbcGates := domain.CheckCommit(head, v.Versions, nil)
@@ -590,7 +629,8 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 	// 结果是 Agent / 组合单元只要制品齐了就能发，它自己的评测与服务验收根本没参与。
 	gates := pbcGates
 	unit := a.unitOf(ctx, in.Input)
-	switch domain.ParseKind(unit.Kind) {
+	kind := domain.ParseKind(unit.Kind)
+	switch kind {
 	case domain.KindAgent:
 		gates = domain.AgentGates(a.agentOf(ctx, in.Input, unit.AgentID))
 	case domain.KindHybrid:
@@ -609,6 +649,12 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 			}
 		}
 		return StepResult{OK: false, Step: in.Step, Detail: "发布闸未过：" + bad}, nil
+	}
+	if kind != domain.KindAgent && (len(v.Checks) == 0 || v.CheckCommit != head.No) {
+		return StepResult{OK: false, Step: in.Step, Detail: "当前提交缺少人工验收清单"}, nil
+	}
+	if kind != domain.KindAgent && (v.Test == nil || v.Test.Commit != head.No || v.Test.Pass != v.Test.Total) {
+		return StepResult{OK: false, Step: in.Step, Detail: "当前提交缺少通过的机器测试"}, nil
 	}
 
 	tag := domain.NextTag(v.Tags)
@@ -629,18 +675,27 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 			ev.Checks.Todo++
 		}
 	}
-	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/gates",
-		store.FactGateEvaluated, "SA", ev); err != nil {
+	if ev.Checks.Pass != ev.Checks.Total {
+		return StepResult{OK: false, Step: in.Step, Detail: "人工验收未全过"}, nil
+	}
+	p := map[string]any{"tag": tag, "commit": head.No, "treeSha": head.TreeSHA, "digest": head.Digest}
+	saved, err := log.AppendOp(ctx, in.PBC, in.OpID+"/tag", store.FactTagCreated, "SA", p, store.AppendCondition{
+		AfterSeq: v.Seq,
+		Before:   &store.PendingFact{Type: store.FactGateEvaluated, Payload: ev},
+	})
+	if err != nil {
 		return StepResult{}, err
 	}
-	p := map[string]any{"tag": tag, "commit": head.No, "treeSha": head.TreeSHA}
-	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/tag",
-		store.FactTagCreated, "SA", p); err != nil {
-		return StepResult{}, err
+	if saved.Seq != v.Seq+2 {
+		return StepResult{}, store.ErrSnapshotChanged
 	}
+	return a.finishPublish(ctx, in, v, tag, head.No)
+}
+
+func (a *Activities) finishPublish(ctx context.Context, in StepInput, v *store.View, tag, commit string) (StepResult, error) {
 	// 发布事实与打 tag 分开记：tag 可回滚，published 不可。
 	pub := map[string]any{
-		"id": in.ItemID, "version": head.No, "tag": tag, "url": deployURL(v),
+		"id": in.ItemID, "version": commit, "tag": tag, "url": deployURL(v),
 	}
 	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/published",
 		store.FactItemPublished, "SA", pub); err != nil {
@@ -648,9 +703,9 @@ func (a *Activities) Publish(ctx context.Context, in StepInput) (StepResult, err
 	}
 	if a.D.Pub != nil {
 		_ = a.D.Pub.Publish(ctx, TopicTagCreated,
-			map[string]any{"pbc": in.PBC, "tag": tag, "commit": head.No})
+			map[string]any{"pbc": in.PBC, "tag": tag, "commit": commit})
 	}
-	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Tag: tag, CommitNo: head.No, Detail: "已打 tag " + tag})
+	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Tag: tag, CommitNo: commit, Detail: "已打 tag " + tag})
 }
 
 // ---------- 纯辅助 ----------

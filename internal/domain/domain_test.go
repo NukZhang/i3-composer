@@ -128,6 +128,36 @@ func TestCheckCommitFourGates(t *testing.T) {
 	if !GatesPass(CheckCommit(Commit{No: "1.0.1", Tree: tree, Digest: "sha256:x"}, m, intPtr(0))) {
 		t.Error("四闸齐备时应当通过")
 	}
+	t.Run("仅活动草稿阻断新交付", func(t *testing.T) {
+		built := Commit{No: "1.0.1", Tree: tree, Digest: "sha256:x"}
+		m[Code] = append(m[Code], ver(Code, "1.0.3", StSuperseded), ver(Code, "1.0.3", StDraft))
+		m[AT] = append(m[AT], ver(AT, "1.0.2", StDraft))
+		defer func() {
+			m[Code] = m[Code][:1]
+			m[AT] = m[AT][:1]
+		}()
+		gates := CheckCommit(built, m, nil)
+		if !gates[0].OK || gates[1].OK || gates[2].OK ||
+			gates[1].Detail != "待提交草稿：at 1.0.2、code 1.0.3" {
+			t.Fatalf("应按制品顺序点名活动草稿，旧提交的引用仍然闭合：%+v", gates)
+		}
+		m[Code][2].St = StSuperseded
+		m[AT][1].St = StSuperseded
+		if !GatesPass(CheckCommit(built, m, nil)) {
+			t.Fatal("已经被取代的草稿不应阻断打 tag")
+		}
+	})
+	t.Run("旧账本同号活动草稿需要晋版", func(t *testing.T) {
+		versions := line(ver(PRD, "1.0.1", StAccepted), ver(PRD, "1.0.1", StDraft))
+		locked, _ := Find(versions, PRD, "1.0.1")
+		if locked.St != StAccepted {
+			t.Fatal("旧提交仍应引用已接受的版本")
+		}
+		stale := Stale(versions)
+		if len(stale) != 1 || stale[0].T != PRD || stale[0].V != "1.0.1" {
+			t.Fatalf("同号活动草稿须在收敛时晋版，得到 %+v", stale)
+		}
+	})
 	if GatesPass(CheckCommit(Commit{No: "1.0.1", Tree: tree, Digest: "sha256:x"}, m, intPtr(3))) {
 		t.Error("有未处理视觉差异时不应通过")
 	}
