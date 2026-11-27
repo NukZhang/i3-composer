@@ -78,6 +78,12 @@ type EvalCase struct {
 	Tok   string  `json:"tok"`
 	Score float64 `json:"score"`
 	OK    bool    `json:"ok"`
+	// Assemblies 是沉淀这条用例时那一轮的上下文装配结果。
+	//
+	// 评测说「这条失败」时，光有输入输出回答不了「是不是没召回」；
+	// 把当轮装配钉在用例上，点开失败详情就能看到这一轮到底载入了什么、
+	// 漏了多少——而不是去查最新一轮（那条常常已经不是失败的那次了）。
+	Assemblies []ContextAssembly `json:"assemblies,omitempty"`
 }
 
 // FailGroup 是失败聚类：同一原因归一组。

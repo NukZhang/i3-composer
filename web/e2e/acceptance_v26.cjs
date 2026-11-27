@@ -129,6 +129,38 @@ function check(name, ok, detail) {
     chain: document.querySelectorAll('.as-chain span').length,
   }));
   check('4 试跑有输出与逐节点耗时链', /risk/.test(ran.out) && ran.chain >= 4, { chain: ran.chain, out: ran.out.slice(0, 60) });
+
+  // ---- 4b. 当轮装配：kb 节点能展开「载入 N 篇 / 省略 M 篇（原因）」 ----
+  // 光看「跑通」回答不了「是不是没召回」，所以装配要落事实、也要看得见。
+  const trialAsm = await page.evaluate(async (base) => {
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
+    const t = a.trialRun || {};
+    return { assemblies: t.assemblies || [] };
+  }, BASE);
+  const asm0 = trialAsm.assemblies[0];
+  check('4b 试跑结果带当轮装配（载入清单 + 省略 + 预算）',
+    !!asm0 && Array.isArray(asm0.loaded) && asm0.loaded.length > 0
+      && asm0.omitted && typeof asm0.omitted.count === 'number' && asm0.budget && asm0.budget.total === 1,
+    asm0 && { node: asm0.node, loaded: asm0.loaded.length, omitted: asm0.omitted, budget: asm0.budget });
+  check('4b 载入项带 doc / ver / score 与四类边界',
+    !!asm0 && asm0.loaded.every((c) => c.doc && typeof c.score === 'number' && c.score > 0 && c.class),
+    asm0 && asm0.loaded.slice(0, 2));
+  // 页面：选中 kb 节点，就地展开载入清单与省略原因。
+  const kbAssembled = await page.evaluate(() => {
+    const row = Array.from(document.querySelectorAll('.as-li')).find((x) => /检索口径/.test(x.textContent));
+    if (row) row.click();
+    return !!row;
+  });
+  check('4b 编排里有 kb 节点可选', kbAssembled);
+  await page.waitForTimeout(500);
+  const kbPanel = await page.evaluate(() => {
+    const el = document.querySelector('.as-cfg');
+    return el ? el.textContent : '';
+  });
+  check('4b kb 节点展开显示载入篇数、省略数与原因',
+    /当轮装配/.test(kbPanel) && /载入 \d+ 篇/.test(kbPanel) && /省略 \d+ 篇/.test(kbPanel)
+      && /没有省略|省略原因/.test(kbPanel) && /预算占用/.test(kbPanel), kbPanel.slice(0, 200));
+
   await page.click('.as-dbg-r button:has-text("沉淀为评测用例")');
   await page.waitForTimeout(1200);
   const caseAfter = await page.evaluate(async (base) => {
@@ -137,6 +169,9 @@ function check(name, ok, detail) {
   }, BASE);
   check('4 沉淀的用例进评测集', caseAfter.n === caseBefore + 1 && caseAfter.last && caseAfter.last.v === '试跑沉淀',
     { before: caseBefore, after: caseAfter.n });
+  check('4b 沉淀的用例钉住当轮装配（失败详情才答得出「没召回还是答歪」）',
+    !!caseAfter.last && Array.isArray(caseAfter.last.assemblies) && caseAfter.last.assemblies.length > 0,
+    caseAfter.last && { n: caseAfter.last.assemblies && caseAfter.last.assemblies.length });
 
   // ---- 5. 质量报告 tab（机器自检） ----
   await page.click('.ptab:has-text("质量报告")');

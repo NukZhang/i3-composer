@@ -145,6 +145,8 @@ async function toCase() {
       in: t.in,
       out: t.raw || (t.out || []).join(' / '),
       exp: '（待标注期望）',
+      // 把当轮装配一起钉到用例上：以后这条失败了，点开还能看它当时读到了什么。
+      assemblies: t.assemblies || [],
     });
     pushRuntime('ACTOR', 'agent.case.added ' + props.agent.id);
     toast('已沉淀为评测用例 · 进验证阶段的评测集；评测集变了，digest 随之变化，要重新构建并重跑评测', 'ok');
@@ -195,6 +197,13 @@ const trialNodes = computed(() => (trial.value && trial.value.nodes) || []);
 const trialBlocked = computed(() =>
   trialNodes.value.filter((n) => n.blocked && n.blocked.length),
 );
+// 当轮装配：试跑结果里 kb 节点带 assembly。按节点 id 找，选中哪个 kb 节点看哪个。
+const trialAssemblies = computed(() => (trial.value && trial.value.assemblies) || []);
+const curAssembly = computed(() => {
+  const n = cur.value;
+  if (!n) return null;
+  return trialAssemblies.value.find((a) => a.node === n.id) || null;
+});
 </script>
 
 <template>
@@ -331,6 +340,38 @@ const trialBlocked = computed(() =>
             </div>
             <div class="as-lb">输出变量</div>
             <div class="as-code">{{ (cur.cfg && cur.cfg.out) || '—' }}</div>
+            <!-- 当轮装配：这一轮这个 kb 节点到底载入了哪几篇、省了几篇、为什么。
+                 只显示「跑通」回答不了「是不是没召回」，所以载入清单要能就地展开。 -->
+            <template v-if="curAssembly">
+              <div class="as-lb" style="margin-top: 8px">
+                当轮装配
+                <span class="small muted" style="font-weight: 400">
+                  · 载入 {{ curAssembly.loaded.length }} 篇 · 省略 {{ curAssembly.omitted.count }} 篇
+                </span>
+              </div>
+              <div class="small" style="color: var(--tx-5); line-height: 1.7">
+                查询「{{ curAssembly.query || '（空）' }}」
+                <span v-if="curAssembly.omitted.count">
+                  ；省略原因：{{ curAssembly.omitted.reason }}
+                </span>
+                <span v-else>；没有省略（命中全部进了上下文）</span>
+              </div>
+              <div v-if="curAssembly.loaded.length" class="tree-box" style="margin-top: 6px">
+                <div v-for="(c, i) in curAssembly.loaded" :key="i" class="tree-line">
+                  <span class="k" style="width: 118px">{{ c.lib }}/{{ c.doc }}</span>
+                  <span class="v">
+                    <span class="tag t-gray" style="font-size: 8px">{{ c.class }}</span>
+                    <span style="color: var(--tx-10)"> ver {{ c.ver || '未登记' }} · 命中 {{ c.score }}</span>
+                  </span>
+                </div>
+              </div>
+              <div v-else class="small" style="color: var(--warn); margin-top: 4px">
+                这一轮一篇都没载入——该进的没进，属于「没召回」，不是「答歪」。
+              </div>
+              <div class="small muted" style="margin-top: 4px">
+                预算占用 {{ (curAssembly.budget.used * 100).toFixed(1) }}%（{{ Math.round(curAssembly.budget.used * 4000) }}/4000 字符）
+              </div>
+            </template>
             <div class="as-tip">库的版本写进 digest。换库不换版本，评测还停在旧库上，线上已经用新库回答。</div>
           </template>
 

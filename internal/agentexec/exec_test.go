@@ -118,16 +118,151 @@ func TestDifferentInputProducesDifferentOutput(t *testing.T) {
 	}
 }
 
-// 知识库检索要真命中，并且带出处。
+// 知识库检索要真命中，并且带出处、库版本与命中分。
 func TestKnowledgeSearchReturnsSources(t *testing.T) {
 	e := &Exec{}
-	chunks := e.search("x-qc", "承诺疗效 年轻五岁", 5)
+	chunks, _ := e.search(&domain.Agent{ID: "x-qc"}, "承诺疗效 年轻五岁", 5)
 	if len(chunks) == 0 {
 		t.Fatal("应检索到文档")
 	}
 	c := chunks[0]
 	if c["lib"] == "" || c["title"] == "" {
 		t.Fatalf("检索结果应带出处：%v", c)
+	}
+	// 验收标准：chunk 带 doc / ver / score。ver 允许为空（语料文档没写、库也没登记），
+	// 但字段必须在，且 score 是正整数。
+	if _, ok := c["doc"]; !ok {
+		t.Fatalf("chunk 应带 doc 字段：%v", c)
+	}
+	if _, ok := c["ver"]; !ok {
+		t.Fatalf("chunk 应带 ver 字段（可为空串，但不能缺）：%v", c)
+	}
+	if s, ok := c["score"].(int); !ok || s <= 0 {
+		t.Fatalf("chunk 的 score 应为正整数：%v", c["score"])
+	}
+}
+
+// docVer：文档自带 ver 优先，否则按库名到 Agent 的 KB 里取。
+func TestDocVerPrefersDocThenLibThenEmpty(t *testing.T) {
+	a := &domain.Agent{ID: "x", KB: &domain.KB{Libs: []domain.KBLib{{N: "产品口径字典", V: "2026.11.1"}}}}
+	if v := docVer(a, kbDoc{Lib: "产品口径字典", Doc: "热玛吉", Ver: "v9"}); v != "v9" {
+		t.Fatalf("文档自带版本应优先，得到 %q", v)
+	}
+	if v := docVer(a, kbDoc{Lib: "产品口径字典", Doc: "热玛吉"}); v != "2026.11.1" {
+		t.Fatalf("没写版本时应回退到库版本，得到 %q", v)
+	}
+	if v := docVer(a, kbDoc{Lib: "未登记的库", Doc: "x"}); v != "" {
+		t.Fatalf("查不到版本时返回空，不编一个，得到 %q", v)
+	}
+	if v := docVer(nil, kbDoc{Lib: "产品口径字典"}); v != "" {
+		t.Fatalf("没有 Agent 时返回空，得到 %q", v)
+	}
+}
+
+// ctxFlow 是一个最小的「开始 → 检索 → 结束」编排，专门喂一条确定的 query，
+// 用来验装配事实本身（不掺会话读取与判定的分支）。
+func ctxFlow(query string) *domain.Flow {
+	return &domain.Flow{
+		Nodes: []domain.FlowNode{
+			{ID: "n1", N: "会话进入", T: domain.NodeStart,
+				Cfg: map[string]any{"vars": []any{[]any{"sessionText", "string", "必填", "会话"}}}},
+			{ID: "n3", N: "检索口径", T: domain.NodeKB,
+				Cfg: map[string]any{"topK": 3}},
+			{ID: "n4", N: "结束", T: domain.NodeEnd},
+		},
+		Edges: [][3]string{{"n1", "n3", ""}, {"n3", "n4", ""}},
+	}
+}
+
+// 装配事实：一次试跑至少一条装配结果，字段可解析，
+// 且「载入 N 篇 / 省略 M 篇（原因）」不互相矛盾。
+func TestExecuteEmitsContextAssembly(t *testing.T) {
+	e := &Exec{}
+	// 语料里确有文档命中这几个词（见 TestKnowledgeSearchReturnsSources）。
+	a := &domain.Agent{
+		ID: "x-qc", Flow: ctxFlow("承诺疗效 年轻五岁"),
+		KB: &domain.KB{Libs: []domain.KBLib{{N: "医美合规规则库", V: "2026.10.20"}}},
+	}
+	run, err := e.Execute(context.Background(), a, map[string]any{"sessionText": "承诺疗效 年轻五岁"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(run.Assemblies) == 0 {
+		t.Fatal("一次试跑至少要有一条装配结果")
+	}
+	asm := run.Assemblies[0]
+	if asm.Node != "n3" || asm.Query == "" {
+		t.Fatalf("装配结果要说清哪个节点、查了什么：%+v", asm)
+	}
+	if len(asm.Loaded) == 0 {
+		t.Fatalf("这条查询应载入文档：%+v", asm)
+	}
+	for _, c := range asm.Loaded {
+		if c.Doc == "" || c.Score <= 0 {
+			t.Fatalf("载入项要带 doc 与正分：%+v", c)
+		}
+		if c.Class == "" {
+			t.Fatalf("载入项要标四类边界：%+v", c)
+		}
+	}
+	if asm.Budget.Total != 1.0 {
+		t.Fatalf("预算总量应为 1.0：%+v", asm.Budget)
+	}
+	if asm.Budget.Used <= 0 || asm.Budget.Used > 1.0 {
+		t.Fatalf("预算占用应落在 (0,1]：%+v", asm.Budget)
+	}
+	// 省了就要说清为什么；没省就不该编原因。
+	if asm.Omitted.Count > 0 && asm.Omitted.Reason == "" {
+		t.Fatalf("有省略时必须给出原因：%+v", asm.Omitted)
+	}
+	if asm.Omitted.Count == 0 && asm.Omitted.Reason != "" {
+		t.Fatalf("没省略却给了原因，是编的：%+v", asm.Omitted)
+	}
+}
+
+// 一片没命中也要留装配事实：载入 0 篇本身就是「这轮没召回」的证据，
+// 不能因为结果为空就什么都不记。此时省略原因必须为空（不是被 topK 截的）。
+func TestExecuteRecordsEmptyAssembly(t *testing.T) {
+	e := &Exec{}
+	a := &domain.Agent{ID: "x-qc", Flow: ctxFlow("完全无关的词")}
+	run, err := e.Execute(context.Background(), a, map[string]any{"sessionText": "完全无关的词"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(run.Assemblies) != 1 {
+		t.Fatalf("命中 0 篇也要有一条装配结果，实际 %d", len(run.Assemblies))
+	}
+	asm := run.Assemblies[0]
+	if len(asm.Loaded) != 0 {
+		t.Fatalf("这条查询不该命中：%+v", asm.Loaded)
+	}
+	if asm.Omitted.Count != 0 || asm.Omitted.Reason != "" {
+		t.Fatalf("没命中不是被截断，不该编省略：%+v", asm.Omitted)
+	}
+	if asm.Budget.Used != 0 {
+		t.Fatalf("没载入正文时预算占用应为 0：%+v", asm.Budget)
+	}
+}
+
+// topK 截断：把 topK 压到 1，命中多篇时必须如实报「省略 = 命中数 - 1」。
+func TestAssemblyReportsTopKTruncation(t *testing.T) {
+	e := &Exec{}
+	a := qcAgent()
+	// 用一个宽查询让多篇命中，再压 topK=1，逼出省略。
+	chunks, omitted := e.search(a, "承诺 疗效 规则 样本 年轻", 1)
+	if len(chunks) != 1 {
+		t.Fatalf("topK=1 只应返回 1 篇，实际 %d", len(chunks))
+	}
+	if omitted <= 0 {
+		t.Fatalf("命中多篇只留 1 篇时，省略数应 >0，实际 %d", omitted)
+	}
+	// 装配时把省略数与 chunks 一起交给事实：原因要指明是 topK 截断。
+	asm := assembleContext("n3", "q", chunks, omitted)
+	if asm.Omitted.Count != omitted {
+		t.Fatalf("省略数应如实取检索结果（%d），实际 %d", omitted, asm.Omitted.Count)
+	}
+	if asm.Omitted.Reason == "" || !strings.Contains(asm.Omitted.Reason, "topK") {
+		t.Fatalf("省略原因要指明是 topK 截断：%q", asm.Omitted.Reason)
 	}
 }
 

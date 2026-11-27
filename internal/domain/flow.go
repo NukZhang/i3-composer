@@ -242,6 +242,44 @@ type Trial struct {
 	// Source 说明结果从哪来：executor=执行器真跑，sample=回放样例，
 	// submitted=外部提交。页面据此显示，不把回放说成执行。
 	Source string `json:"source,omitempty"`
+	// Assemblies 是这一轮每个 kb 节点实际载入了什么（含省略多少、为什么）。
+	// 存在 Trial 上、随 agent.trial.run 落账：失败用例点开能看到「当轮装配」，
+	// 而不是去查最新一轮——最新一轮常常已经不是失败的那条了。
+	Assemblies []ContextAssembly `json:"assemblies,omitempty"`
+}
+
+// ContextAssembly 是一次 kb 检索的装配结果：进了哪些文档、省了多少、预算用了多少。
+//
+// 它不是「检索过程日志」，而是「这一轮模型看到的上下文」的证据：
+// 评测说一条用例失败时，要能回答是「没召回」（该进的没进）还是「进了答歪了」。
+// 四类边界（强制输入 / 可选参考 / 按需检索 / 禁止输入）写在 Class 上。
+type ContextAssembly struct {
+	Node    string        `json:"node"`
+	Query   string        `json:"query"`
+	Loaded  []LoadedChunk `json:"loaded"`
+	Omitted OmittedInfo   `json:"omitted"`
+	Budget  BudgetInfo    `json:"budget"`
+}
+
+// LoadedChunk 是被载入上下文的一片文档。Ver 是库版本，Score 是命中分。
+type LoadedChunk struct {
+	Lib   string `json:"lib"`
+	Doc   string `json:"doc"`
+	Ver   string `json:"ver"`
+	Score int    `json:"score"`
+	Class string `json:"class"`
+}
+
+// OmittedInfo 记录检索到但没进上下文的部分。数量如实，原因如实（topK 截断）。
+type OmittedInfo struct {
+	Count  int    `json:"count"`
+	Reason string `json:"reason"`
+}
+
+// BudgetInfo 是上下文预算占用：used/total 是字符预算比，不是编出来的 token 数。
+type BudgetInfo struct {
+	Used  float64 `json:"used"`
+	Total float64 `json:"total"`
 }
 
 // TrialNode 是一个节点的执行记录。

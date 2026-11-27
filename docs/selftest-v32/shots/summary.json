@@ -1,11 +1,11 @@
 {
-  "run": "586497",
+  "run": "v32",
   "orch": {
     "ready": 2,
     "blocked": 2
   },
   "batch": {
-    "id": "REL-20261126-01",
+    "id": "REL-20261127-01",
     "proj": "p1",
     "env": "SIT",
     "mode": "full",
@@ -29,14 +29,14 @@
         "commit": "1.0.1",
         "digest": "sha256:33e58178426e031dd67fa156e1314ecf84c4ad69866b24d9c34a257c83372120",
         "binary": true,
-        "url": "http://127.0.0.1:61753",
+        "url": "http://127.0.0.1:60762",
         "status": "deployed"
       }
     ],
     "by": "SA",
-    "at": "11-26 17:19",
+    "at": "11-27 02:14",
     "status": "active"
   },
-  "unit": "v32x586497",
+  "unit": "v32xv32",
   "tag": "v1.0.0"
 }

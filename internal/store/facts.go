@@ -72,8 +72,14 @@ const (
 	FactAgentBuilt     = "agent.built"
 	FactAgentTrial     = "agent.trial.run"
 	FactAgentCase      = "agent.case.added"
-	FactAgentRetired   = "agent.retired"
-	FactKBIssue        = "kb.issue.dispatched"
+	// context.assembled 是「这一轮载入了什么」的独立事实：哪个节点、查了什么、
+	// 进了哪几篇（带库版本与命中分）、省了几篇（为什么）、预算用了多少。
+	//
+	// 为什么不只塞进 agent.trial.run 里：评测失败要能归因到「没召回」还是「答歪」，
+	// 归因要能按节点、按文档去查，而不是把整轮 trial 解析一遍再看嵌套字段。
+	FactContextAssembled = "context.assembled"
+	FactAgentRetired     = "agent.retired"
+	FactKBIssue          = "kb.issue.dispatched"
 
 	// v2.5/v2.6：真人验收台。清单、判定、bug 与验收对话全部进账本，
 	// 因为「验过了」本身就是一条事实，不能只活在前端内存里。

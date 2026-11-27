@@ -97,6 +97,9 @@ type kbDoc struct {
 	Doc   string `json:"doc"`
 	Title string `json:"title"`
 	Text  string `json:"text"`
+	// Ver 是这篇文档所属库的版本。缺省时按库取 KB.Libs 的版本，再缺省为 v0，
+	// 保证装配事实里「这篇来自哪一版」不空着冒充成最新。
+	Ver string `json:"ver,omitempty"`
 }
 
 var theCorpus corpus
@@ -129,6 +132,8 @@ type Run struct {
 	Branch []string `json:"branch,omitempty"`
 	// Escalated 为真表示这轮转了人工。
 	Escalated bool `json:"escalated,omitempty"`
+	// Assemblies 是这一轮每个 kb 节点的装配结果（载入了什么、省了多少）。
+	Assemblies []domain.ContextAssembly `json:"assemblies,omitempty"`
 }
 
 // Blocked 返回这一轮里被工具白名单拒掉的节点。
@@ -201,10 +206,21 @@ func (e *Exec) Execute(ctx context.Context, a *domain.Agent, input map[string]an
 			break
 		}
 		t0 := e.now()
-		out, wait, notes := e.runNode(a, node, run.Input, vars, outs)
+		out, wait, notes, asm := e.runNode(a, node, run.Input, vars, outs)
 		ms := e.now().Sub(t0).Milliseconds()
 		if ms < 1 {
 			ms = 1
+		}
+		if asm != nil {
+			run.Assemblies = append(run.Assemblies, *asm)
+			// 装配结果同时挂回节点输出：试跑页在 kb 节点上就地展开，
+			// 不用跨节点去找「这一轮载入了什么」。
+			nrOut := map[string]any{}
+			for k, v := range out {
+				nrOut[k] = v
+			}
+			nrOut["assembly"] = asm
+			out = nrOut
 		}
 		nr := NodeRun{ID: node.ID, Name: node.N, Type: node.T, Ms: ms, Out: out, Notes: notes}
 		if wait != "" {
@@ -231,8 +247,8 @@ func (e *Exec) Execute(ctx context.Context, a *domain.Agent, input map[string]an
 	return run, nil
 }
 
-// runNode 执行一个节点。
-func (e *Exec) runNode(a *domain.Agent, n *domain.FlowNode, input map[string]any, vars map[string]any, outs map[string]map[string]any) (map[string]any, string, []string) {
+// runNode 执行一个节点。返回节点输出、等待口径、备注，以及（kb 节点才有）装配结果。
+func (e *Exec) runNode(a *domain.Agent, n *domain.FlowNode, input map[string]any, vars map[string]any, outs map[string]map[string]any) (map[string]any, string, []string, *domain.ContextAssembly) {
 	cfg := n.Cfg
 	switch n.T {
 	case domain.NodeStart:
@@ -245,7 +261,7 @@ func (e *Exec) runNode(a *domain.Agent, n *domain.FlowNode, input map[string]any
 			}
 			out[name] = val
 		}
-		return out, "", nil
+		return out, "", nil, nil
 
 	case domain.NodeTool:
 		tool, _ := cfg["tool"].(string)
@@ -257,25 +273,27 @@ func (e *Exec) runNode(a *domain.Agent, n *domain.FlowNode, input map[string]any
 				reason = "这个 Agent 没有工具白名单，任何工具都不许调用（" + tool + " 被拒）"
 			}
 			return map[string]any{"blocked": true, "tool": tool, "reason": reason}, "",
-				[]string{"tool.blocked：" + reason}
+				[]string{"tool.blocked：" + reason}, nil
 		}
-		return e.runTool(tool, cfg, input, vars, outs), "", nil
+		return e.runTool(tool, cfg, input, vars, outs), "", nil, nil
 
 	case domain.NodeKB:
 		query := stringFrom(vars, "sessionText", "customerText", "draft")
-		chunks := e.search(a.ID, query, numOf(cfg, "topK", 5))
+		chunks, omitted := e.search(a, query, numOf(cfg, "topK", 5))
+		asm := assembleContext(n.ID, query, chunks, omitted)
 		return map[string]any{
-			"chunks": chunks,
-			"count":  len(chunks),
-			"query":  query,
-		}, "", nil
+			"chunks":   chunks,
+			"count":    len(chunks),
+			"query":    query,
+			"assembly": &asm,
+		}, "", nil, &asm
 
 	case domain.NodeLLM:
-		return e.decide(a, n, input, vars, outs), "", nil
+		return e.decide(a, n, input, vars, outs), "", nil, nil
 
 	case domain.NodeBranch:
 		// 分支节点本身不产出值：它决定往哪走，由 nextNode 判定。
-		return nil, "", nil
+		return nil, "", nil, nil
 
 	case domain.NodeHITL:
 		who, _ := cfg["who"].(string)
@@ -286,12 +304,12 @@ func (e *Exec) runNode(a *domain.Agent, n *domain.FlowNode, input map[string]any
 			"timeout":   to,
 			"onTimeout": onTimeout,
 			"status":    "waiting",
-		}, "等待 " + who + "（超时口径：" + onTimeout + "）", nil
+		}, "等待 " + who + "（超时口径：" + onTimeout + "）", nil, nil
 
 	case domain.NodeEnd:
-		return map[string]any{"done": true}, "", nil
+		return map[string]any{"done": true}, "", nil, nil
 	}
-	return nil, "", nil
+	return nil, "", nil, nil
 }
 
 // runTool 调真工具。
@@ -301,7 +319,10 @@ func (e *Exec) runNode(a *domain.Agent, n *domain.FlowNode, input map[string]any
 func (e *Exec) runTool(tool string, cfg map[string]any, input map[string]any, vars map[string]any, outs map[string]map[string]any) map[string]any {
 	switch tool {
 	case "session.read":
-		id := stringFrom(input, "sessionId")
+		// 先从 vars 取：开始节点声明「缺的用样例值兜底」，兜底值落在 vars 里；
+		// 只查 input 会让不带入参的试跑读到空 id，工具报「会话不存在」，
+		// 检索节点也跟着拿到空 query——看起来像「没召回」，其实是没读到输入。
+		id := stringFrom(vars, "sessionId")
 		s := theCorpus.findSession(id)
 		if s == nil {
 			return map[string]any{"error": "会话不存在：" + id}
@@ -314,11 +335,11 @@ func (e *Exec) runTool(tool string, cfg map[string]any, input map[string]any, va
 		}
 
 	case "order.read":
-		acct := stringFrom(input, "orderId", "account")
+		acct := stringFrom(vars, "orderId", "account")
 		return map[string]any{"account": acct, "project": "热玛吉", "price": 4200, "source": "产品口径字典"}
 
 	case "bill.read", "customer.read":
-		acct := stringFrom(input, "customerId", "account")
+		acct := stringFrom(vars, "customerId", "account")
 		b := theCorpus.findBill(acct)
 		if b == nil {
 			return map[string]any{"error": "账单不存在：" + acct}
@@ -573,9 +594,18 @@ func keysInOrder(outs map[string]map[string]any) []string {
 	return ids
 }
 
-// search 在知识库里检索：按关键词命中度排序，带出处。
-func (e *Exec) search(agentID, query string, topK int) []map[string]any {
-	docs := theCorpus.Knowledge[agentID]
+// ctxBudgetChars 是单个 kb 节点的上下文预算（字符）。
+//
+// 这是装配事实里 budget.total 的分母：used/total 是「这一轮载入的正文占预算多少」，
+// 不是编出来的 token 数。改检索实现的人要知道这个数从哪来——它就是这里的常量。
+const ctxBudgetChars = 4000
+
+// search 在知识库里检索：按关键词命中度排序，带出处与库版本。
+//
+// 返回的第二值是「检索到但没进 topK 的篇数」——装配事实要用它回答
+// 「这一轮漏了多少本该参考的文档」（宪法 II：数得出来就如实报，数不出来才说判不了）。
+func (e *Exec) search(a *domain.Agent, query string, topK int) ([]map[string]any, int) {
+	docs := theCorpus.docsFor(a)
 	if topK <= 0 {
 		topK = 5
 	}
@@ -613,10 +643,60 @@ func (e *Exec) search(agentID, query string, topK int) []map[string]any {
 		}
 		out = append(out, map[string]any{
 			"lib": s.doc.Lib, "doc": s.doc.Doc, "title": s.doc.Title,
-			"text": s.doc.Text, "score": s.score,
+			"text": s.doc.Text, "score": s.score, "ver": docVer(a, s.doc),
 		})
 	}
-	return out
+	omitted := len(list) - len(out)
+	if omitted < 0 {
+		omitted = 0
+	}
+	return out, omitted
+}
+
+// docVer 取这篇文档所属库的版本：文档自带 ver 优先，否则按库名到 Agent 的 KB 里找。
+//
+// 拿不到就返回空——空表示「不知道这一版」，不编一个 v1 冒充。
+func docVer(a *domain.Agent, d kbDoc) string {
+	if d.Ver != "" {
+		return d.Ver
+	}
+	if a != nil && a.KB != nil {
+		for _, l := range a.KB.Libs {
+			if l.N == d.Lib {
+				return l.V
+			}
+		}
+	}
+	return ""
+}
+
+// assembleContext 把一次检索的结果整理成装配事实：载入清单、省略多少、预算占用。
+func assembleContext(node, query string, chunks []map[string]any, omitted int) domain.ContextAssembly {
+	loaded := make([]domain.LoadedChunk, 0, len(chunks))
+	used := 0
+	for _, c := range chunks {
+		lib, _ := c["lib"].(string)
+		doc, _ := c["doc"].(string)
+		ver, _ := c["ver"].(string)
+		text, _ := c["text"].(string)
+		score, _ := c["score"].(int)
+		used += len([]rune(text))
+		loaded = append(loaded, domain.LoadedChunk{
+			Lib: lib, Doc: doc, Ver: ver, Score: score, Class: "按需检索",
+		})
+	}
+	reason := ""
+	if omitted > 0 {
+		// topK 截断是这里唯一会「漏」的原因；说清楚是哪条规则砍的，别让人猜。
+		reason = fmt.Sprintf("topK 截断（只保留前 %d 篇）", len(chunks))
+	}
+	return domain.ContextAssembly{
+		Node:    node,
+		Query:   query,
+		Loaded:  loaded,
+		Omitted: domain.OmittedInfo{Count: omitted, Reason: reason},
+		Budget:  domain.BudgetInfo{Used: float64(used) / float64(ctxBudgetChars), Total: 1.0},
+	}
 }
 
 // renderRaw 把这一轮渲染成可读输出（JSON）。
@@ -632,6 +712,46 @@ func (e *Exec) renderRaw(run *Run) string {
 }
 
 // ---------- 语料查询 ----------
+
+// docsFor 取一个 Agent 能检索到的文档。
+//
+// 语料是按「库」组织的，Knowledge 的键是当初写下这批文档时的 Agent 标识
+// （x-qc / x-dun）。交付的 Agent 叫 qa-agent / dun-agent，键对不上——
+// 按 Agent id 直接取会是空集，检索就成了摆设，装配事实里永远「载入 0 篇」。
+// 所以按 Agent 引用的库名去取：库才是知识的归属，Agent 改名、重建都不该丢文档。
+// Agent 没有登记库（或库还没同步）时退回按 id 取，保证老账本仍有文档可用。
+func (c *corpus) docsFor(a *domain.Agent) []kbDoc {
+	if a == nil {
+		return nil
+	}
+	if a.KB != nil && len(a.KB.Libs) > 0 {
+		libs := make(map[string]bool, len(a.KB.Libs))
+		for _, l := range a.KB.Libs {
+			libs[l.N] = true
+		}
+		var out []kbDoc
+		// 同一个库可能被多个 Agent 分组各收一份同样的文档；按 (lib, doc) 去重，
+		// 否则装配清单里会出现两条同名同分的同一篇。
+		seen := map[string]bool{}
+		for _, docs := range c.Knowledge {
+			for _, d := range docs {
+				if !libs[d.Lib] {
+					continue
+				}
+				k := d.Lib + "\x00" + d.Doc
+				if seen[k] {
+					continue
+				}
+				seen[k] = true
+				out = append(out, d)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return c.Knowledge[a.ID]
+}
 
 func (c *corpus) findSession(id string) *session {
 	for i := range c.Sessions {
@@ -875,39 +995,56 @@ func numOf(m map[string]any, key string, def int) int {
 	return def
 }
 
+// isCJK 判断是否汉字区间。切词用它区分「中文要滑窗」与「英文数字整串用」。
+func isCJK(r rune) bool { return r >= '一' && r <= '鿿' }
+
 // splitTerms 把查询切成检索词。
+//
+// 中文没有空格，一整句「你们这个热玛吉能维持多久」按原样去 Contains 永远命中不了
+// 写成「热玛吉」的文档——检索等于没做，装配事实里永远是「载入 0 篇」，
+// 看起来像模型没召回，其实是切词把句子切丢了。这里把中文长串切成两字滑窗
+// （bigram）：仍是词面命中，不引入向量或重排，只是让中文能被检索到。
 func splitTerms(q string) []string {
 	fields := strings.FieldsFunc(q, func(r rune) bool {
 		return !(r >= '一' && r <= '鿿') && !strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", r)
 	})
 	out := make([]string, 0, len(fields))
+	seen := map[string]bool{}
+	add := func(s string) {
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
 	for _, f := range fields {
 		f = strings.TrimSpace(f)
-		if len(f) >= 2 {
-			out = append(out, f)
+		if f == "" {
+			continue
+		}
+		r := []rune(f)
+		if !isCJK(r[0]) || len(r) <= 4 {
+			// 英文/数字串原样用；中文短词（≤4 字）本身就是完整口径。
+			if len(r) >= 2 {
+				add(f)
+			}
+			continue
+		}
+		// 中文长句：两字滑窗。单字不保留（区分度太低，会把所有文档都算命中）。
+		for i := 0; i+1 < len(r); i++ {
+			add(string(r[i : i+2]))
 		}
 	}
 	return out
 }
 
 // sampleFor 给缺输入的变量一个样例值（开始节点声明的来源就是兜底口径）。
+//
+// 先认变量名，再认来源列：来源是「这类数据从哪个系统来」，同一来源下常挂多个
+// 变量（会话 id 与订单 id 都可能写「调度器」）。只按来源兜底会把订单号塞进
+// sessionId，于是读会话报「会话不存在」、检索拿到空 query——看着像没召回，
+// 其实是样例填错了。变量名是具体口径，比来源列更精确。
 func sampleFor(name string, decl []string) any {
-	src := ""
-	if len(decl) > 3 {
-		src = decl[3]
-	}
-	switch {
-	case strings.Contains(src, "会话"):
-		return "S-20261124-0912"
-	case strings.Contains(src, "账单"), strings.Contains(src, "客户"):
-		return "C-40912"
-	case strings.Contains(src, "订单"):
-		return "ORD-88213"
-	case strings.Contains(src, "策略"):
-		return "T-20261124-0087"
-	case strings.Contains(src, "调度器"):
-		return "T-20261124-0087"
-	}
 	switch name {
 	case "sessionId":
 		return "S-20261124-0912"
@@ -919,6 +1056,22 @@ func sampleFor(name string, decl []string) any {
 		return 4600
 	case "overdueDays":
 		return 32
+	case "attempt":
+		return 2
+	}
+	src := ""
+	if len(decl) > 3 {
+		src = decl[3]
+	}
+	switch {
+	case strings.Contains(src, "会话"):
+		return "S-20261124-0912"
+	case strings.Contains(src, "账单"), strings.Contains(src, "客户"):
+		return "C-40912"
+	case strings.Contains(src, "订单"):
+		return "ORD-88213"
+	case strings.Contains(src, "策略"), strings.Contains(src, "调度器"):
+		return "T-20261124-0087"
 	}
 	return ""
 }
