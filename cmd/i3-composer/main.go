@@ -137,7 +137,10 @@ func run() error {
 			out, err := exec.Test(ctx, pbc, commit, files)
 			return out.Pass, out.Total, out.Failures, err
 		}}
-		if err := seed.Run(context.Background(), log, so); err != nil {
+		// 种子跑在 sidecar 起来之后：拿不到账本就一直重试到 ctx 结束，
+		// 而不是打一条 warn 就带着空账本对外服务（#43 验证时遇过：sidecar 晚到，
+		// 进程照常监听，整轮验收对着空库跑）。
+		if err := seed.Run(ctx, log, so); err != nil && ctx.Err() == nil {
 			slog.Warn("种子数据写入失败", "err", err)
 		}
 	}

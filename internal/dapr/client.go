@@ -13,11 +13,34 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
 // ErrConflict 表示状态写入的 etag 不匹配（并发写输家）。
 var ErrConflict = errors.New("dapr: state etag conflict")
+
+// Unreachable 判断一次状态读写是不是「连不上 sidecar」。
+// 连接被拒、sidecar 在重启、3xx/5xx 都属于可重试；业务语义错误（409 等）不算。
+// 调用方据此决定等一下再试，而不是当成账本坏了。
+func Unreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "connect: connection refused") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, ": 500 ") ||
+		strings.Contains(msg, ": 503 ")
+}
 
 // Client 是 Dapr sidecar 的 HTTP 客户端。
 type Client struct {

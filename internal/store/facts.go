@@ -243,22 +243,26 @@ func (s *Store) AppendOp(ctx context.Context, pbc, opID, typ, actor string, payl
 		if errors.Is(err, errNoLog) {
 			// 日志还没建：建一次再重试同一个 seq。建日志本身是幂等的。
 			if e := s.Ensure(ctx, pbc); e != nil {
-				return Fact{}, e
+				if backoff(ctx, attempt) != nil {
+					return Fact{}, e
+				}
+				continue
 			}
 			continue
 		}
 		if !errors.Is(err, dapr.ErrConflict) {
+			// 连不上 sidecar 是可恢复的：进程可能比 sidecar 早起来（启动顺序不归我们管），
+			// 以前这里直接失败，调用方于是带着空账本继续跑，验收对着空库跑完才发现。
+			if dapr.Unreachable(err) {
+				if backoff(ctx, attempt) != nil {
+					return Fact{}, err
+				}
+				continue
+			}
 			return Fact{}, err
 		}
-		// 指数退避，避免两个写入者互相踩：5ms → 至多 200ms。
-		d := time.Duration(5*(1<<min(attempt, 6))) * time.Millisecond
-		if d > 200*time.Millisecond {
-			d = 200 * time.Millisecond
-		}
-		select {
-		case <-ctx.Done():
+		if backoff(ctx, attempt) != nil {
 			return Fact{}, ctx.Err()
-		case <-time.After(d):
 		}
 	}
 	return Fact{}, fmt.Errorf("append 放弃：%d 次 etag 冲突，写入并发过高", s.maxRetry)
@@ -487,4 +491,19 @@ func min(a, b int) int {
 // String 便于日志输出。
 func (f Fact) String() string {
 	return f.PBC + "#" + strconv.Itoa(f.Seq) + " " + f.Type
+}
+
+// backoff 是写入重试的等待：指数退避，避免两个写入者互相踩（5ms → 至多 200ms）。
+// ctx 结束时立即返回 ctx.Err()。
+func backoff(ctx context.Context, attempt int) error {
+	d := time.Duration(5*(1<<min(attempt, 6))) * time.Millisecond
+	if d > 200*time.Millisecond {
+		d = 200 * time.Millisecond
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
 }
