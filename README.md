@@ -135,6 +135,7 @@ sequenceDiagram
 docker compose up -d
 
 # 2) 构建并启动
+npm --prefix web ci && npm --prefix web run build
 go build -o /tmp/i3-composer-bin ./cmd/i3-composer
 
 ADDR=:8080 \
@@ -148,9 +149,10 @@ ARTIFACT_DIR=/tmp/i3-artifacts \
 
 打开 <http://127.0.0.1:8080>。
 
-> **两个必须知道的点**
+> **启动注意事项**
 > - 用编译好的二进制启动，不要用 `go run`：`go run` 不向前台子进程转发 SIGTERM，部署起的进程会残留。
-> - 应用必须监听 8080：daprd 的 `--app-port` 固定为 8080，换端口时工作流照跑，但 pubsub 事件收不到（启动日志与 `/api/health` 的 `pubsub` 字段会直接说明原因）。
+> - 默认托管当前目录下的 `web/dist`。从其他目录启动时，把 `WEB_DIR` 指向已构建的前端目录；缺少 `index.html` 会直接报出绝对路径并退出。
+> - 本地 Compose 的 daprd 固定投递到 8080。验收时设置 `REQUIRE_PUBSUB=1`，投递端口与 `ADDR` 不匹配或无法核对时拒绝启动；未开启时仍在日志和 `/api/health` 报告接线异常。
 
 前端单独开发：
 
@@ -218,10 +220,12 @@ docs/                     白皮书、执行说明、前端接线、自测报告
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `ADDR` | `:8080` | 监听地址；必须与 sidecar 的 `app-port` 一致 |
+| `WEB_DIR` | `web/dist` | Vite 产物目录；必须包含可读取的 `index.html` |
 | `DAPR_HTTP_ENDPOINT` | `http://127.0.0.1:3500` | sidecar HTTP API |
 | `DAPR_GRPC_ENDPOINT` | `127.0.0.1:50001` | workflow work-item 流 |
 | `STATE_STORE` | `statestore` | Dapr 状态组件名 |
 | `PUBSUB` | `pubsub` | Dapr 发布订阅组件名 |
+| `REQUIRE_PUBSUB` | `0` | 设为 `1` 时要求启动前核实 sidecar 投递端口与 `ADDR` 一致 |
 | `WORKFLOW_COMPONENT` | `dapr` | workflow 组件路径段 |
 | `WORKFLOW_NAME` | `i3-delivery` | workflow 名；不同名 = 不同 actor 类型 |
 | `LEDGER_PREFIX` | 空 | 账本前缀：同一套 Dapr 上跑隔离账本 |

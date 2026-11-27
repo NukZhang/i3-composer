@@ -22,6 +22,9 @@ func TestPortOfAddr(t *testing.T) {
 		":":              0,
 		"":               0,
 		":abc":           0,
+		":8080junk":      0,
+		":65536":         0,
+		"[::1]:8080":     8080,
 	}
 	for addr, want := range cases {
 		if got := PortOfAddr(addr); got != want {

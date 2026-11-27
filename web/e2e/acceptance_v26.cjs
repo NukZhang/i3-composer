@@ -1,6 +1,7 @@
 // v2.6 验收：Vue 前端 + 真实 Dapr 后端（端口由 BASE 决定）。
 // 断言「所见即账本」：编排改 digest、验收判定落事实、bug 进 backlog。
 const { chromium } = require('playwright');
+const { requirePubsub } = require('./require_pubsub.cjs');
 const { isDeepStrictEqual } = require('node:util');
 const fs = require('fs');
 const path = require('path');
@@ -24,6 +25,7 @@ function check(name, ok, detail) {
 }
 
 (async () => {
+  await requirePubsub(BASE);
   const browser = await chromium.launch({ executablePath: CHROME });
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -39,15 +41,6 @@ function check(name, ok, detail) {
   page.on('response', (r) => { if (r.status() >= 400) httpErrors.push(r.status() + ' ' + r.url()); });
 
   try {
-  // 服务起没起先说清楚：连不上时 goto 会抛一句「navigating to …」，
-  // 看不出是哪个接口、什么状态。前置不通就只报这一条，后面无从谈起（#56）。
-  const up = await fetch(BASE + '/api/health').then((r) => r.ok).catch(() => false);
-  if (!up) {
-    check('前置：BFF 可用（' + BASE + '）', false, { reason: '连不上，先起服务再跑' });
-    await browser.close();
-    console.log('SUMMARY 0/' + results.length + ' passed');
-    process.exit(1);
-  }
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1800);
 

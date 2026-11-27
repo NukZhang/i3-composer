@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	path "path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +42,7 @@ type Server struct {
 	// sidecar 把 pubsub 事件投到它配置的 app-port；两者不一致时事件会在别处落地，
 	// 验收里只看到「收到 0 条」，看不出原因。见 CheckPubsubWiring。
 	LocalPort int
+	WebDir    string
 	// Pubsub 是启动时算出的投递地址校验结果，/api/health 原样带出。
 	Pubsub map[string]any
 
@@ -150,8 +153,11 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/events/{topic}", s.wrap(s.receiveEvent))
 	m.HandleFunc("GET /api/events", s.wrap(s.receivedEvents))
 	// ServeMux 里 /api/... 比 / 更具体，优先匹配，静态兜底不会抢接口。
-	// web/dist 是 Vite 构建产物：必须从仓库根起跑（见 docs/SPEC-frontend-wiring.md）。
-	m.Handle("/", spa(http.Dir("web/dist")))
+	webDir := s.WebDir
+	if webDir == "" {
+		webDir = "web/dist"
+	}
+	m.Handle("/", spa(http.Dir(webDir)))
 	return m
 }
 
@@ -686,15 +692,15 @@ func (s *Server) CheckPubsubWiring(ctx context.Context) map[string]any {
 
 // PortOfAddr 从 ":8080" / "127.0.0.1:8080" 这类监听地址里取端口；取不到返回 0。
 func PortOfAddr(addr string) int {
-	i := strings.LastIndex(addr, ":")
-	if i < 0 || i == len(addr)-1 {
+	_, value, err := net.SplitHostPort(addr)
+	if err != nil {
 		return 0
 	}
-	var p int
-	if _, err := fmt.Sscanf(addr[i+1:], "%d", &p); err != nil {
+	port, err := strconv.ParseUint(value, 10, 16)
+	if err != nil {
 		return 0
 	}
-	return p
+	return int(port)
 }
 
 // ---------- SSE ----------

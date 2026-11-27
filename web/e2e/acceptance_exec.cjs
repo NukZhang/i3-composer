@@ -11,6 +11,7 @@
 //
 // 用法：BASE=http://127.0.0.1:8080 node acceptance_exec.cjs
 const { chromium } = require('playwright');
+const { requirePubsub } = require('./require_pubsub.cjs');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const BASE = process.env.BASE || 'http://127.0.0.1:8080';
 const RUN = process.env.RUN_TAG || String(Date.now()).slice(-6);
@@ -22,6 +23,7 @@ function check(name, ok, detail) {
 }
 
 (async () => {
+  await requirePubsub(BASE);
   const browser = await chromium.launch({ executablePath: CHROME });
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -37,15 +39,6 @@ function check(name, ok, detail) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: r }),
   });
 
-  // 服务起没起先说清楚：连不上时 goto 会抛一句「navigating to …」，
-  // 看不出是哪个接口、什么状态。前置不通就只报这一条，后面无从谈起（#56）。
-  const up = await fetch(BASE + '/api/health').then((r) => r.ok).catch(() => false);
-  if (!up) {
-    check('前置：BFF 可用（' + BASE + '）', false, { reason: '连不上，先起服务再跑' });
-    await browser.close();
-    console.log('SUMMARY 0/' + results.length + ' passed');
-    process.exit(1);
-  }
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1500);
 
@@ -185,7 +178,7 @@ function check(name, ok, detail) {
   // 先核对投递地址：sidecar 只往它配置的 app-port 投事件。本实例换个端口起，
   // 下面必然是 0 条——把根因直接报出来，别让人对着空数组猜。
   const wiring = (await api('/api/health')).body.pubsub || {};
-  check('7 pubsub 投递地址与本实例端口一致', wiring.ok === true, wiring);
+  check('7 pubsub 投递地址与本实例端口一致', wiring.checked === true && wiring.ok === true, wiring);
   const evs = (await api('/api/events')).body.events || [];
   check('7 pubsub 收到的事件落了 event.received 事实', evs.length > 0, evs.slice(0, 2).map((e) => e.payload && e.payload.topic));
 

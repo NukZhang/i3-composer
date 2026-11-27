@@ -4,6 +4,7 @@
 // 权限边界不变：发起是 DA 的活，打 tag 是 SA 的活；
 // 越权时账本不能有任何变化（不做乐观更新）。
 const { chromium } = require('playwright');
+const { requirePubsub } = require('./require_pubsub.cjs');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const RUN = process.env.RUN_TAG || String(Date.now()).slice(-6);
 
@@ -38,6 +39,8 @@ const needCall = (res, what) => {
 };
 
 (async () => {
+  const BASE = process.env.BASE || 'http://127.0.0.1:8080';
+  await requirePubsub(BASE);
   const browser = await chromium.launch({ executablePath: CHROME });
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -47,16 +50,6 @@ const needCall = (res, what) => {
   page.on('console', (m) => { if (m.type() === 'error') pageErrors.push('console: ' + m.text()); });
   page.on('response', (r) => { if (r.status() >= 400) httpErrors.push(r.status() + ' ' + r.url()); });
 
-  const BASE = process.env.BASE || 'http://127.0.0.1:8080';
-  // 本服务起没起：连不上时别让页面落到 origin 的 SPA 兜底（那里 /api/* 返回的是 HTML，
-  // 每种读都会被当成「接口可用」）。起不来就只报这一条，后面的 check 无从谈起（#56）。
-  const up = await fetch(BASE + '/api/health').then((r) => r.ok).catch(() => false);
-  if (!up) {
-    check('前置：BFF 可用（' + BASE + '）', false, { reason: '连不上，先起服务再跑' });
-    await browser.close();
-    console.log('SUMMARY 0/' + results.length + ' passed');
-    process.exit(1);
-  }
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1200);
 
