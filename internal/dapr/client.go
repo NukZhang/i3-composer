@@ -161,6 +161,8 @@ func (c *Client) Publish(ctx context.Context, pubsub, topic string, data any) er
 type AppConnection struct {
 	Port    int    `json:"port"`
 	Address string `json:"channelAddress"`
+	// AppID 是 sidecar 的 app-id：workflow 注册表就挂在它名下（#60）。
+	AppID string `json:"appID"`
 }
 
 // AppConnection 读 sidecar 的 app 连接配置。读不到（sidecar 没起、版本不认）时返回错误，
@@ -182,9 +184,14 @@ func (c *Client) AppConnection(ctx context.Context) (AppConnection, error) {
 	}
 	var m struct {
 		AppConnectionProperties AppConnection `json:"appConnectionProperties"`
+		// sidecar 的 /v1.0/metadata 把 app-id 放在顶层字段 id（不是 appID）。
+		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(body, &m); err != nil {
 		return zero, fmt.Errorf("dapr metadata 解析失败：%w", err)
+	}
+	if m.AppConnectionProperties.AppID == "" {
+		m.AppConnectionProperties.AppID = m.ID
 	}
 	return m.AppConnectionProperties, nil
 }
@@ -252,6 +259,8 @@ type WorkflowStatus struct {
 	Properties    struct {
 		DaprWorkflowVersion string          `json:"dapr.workflow.version"`
 		DaprWorkflowInput   json.RawMessage `json:"dapr.workflow.input"`
+		// 失败原因放在 properties 里（"workflow named 'X' is not registered" 就在这）。
+		DaprFailureMessage string `json:"dapr.workflow.failure.error_message"`
 	} `json:"properties"`
 }
 
