@@ -50,6 +50,7 @@ export const S = reactive({
   // 投影（全部来自 /api/*，不持有第二份真相）
   state: null,      // /api/state
   units: [],        // /api/units
+  removedUnits: [], // /api/units.removed：作废过的单元（账本只追加，作废是一条事实，#40）
   projects: [],     // /api/projects → projects
   workspaces: [],   // /api/projects → workspaces
   catalog: { projects: [], spaces: [] },
@@ -146,6 +147,7 @@ async function loadGlobal() {
     api.notifications(),
   ]);
   S.units = units.units || [];
+  S.removedUnits = units.removed || [];
   S.agents = agents.agents || [];
   S.projects = pj.projects || [];
   S.workspaces = pj.workspaces || [];

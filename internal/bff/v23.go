@@ -213,7 +213,55 @@ func (s *Server) units(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 		}
 		out = append(out, up)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"units": out})
+	// 作废过的单元也列出来（单独的 removed 字段）：它们不在 units 里，但用户得能看见
+	// 「这个 id 已经用过了、谁什么时候作废的」，否则只能靠猜（#40）。
+	writeJSON(w, http.StatusOK, map[string]any{"units": out, "removed": uv.Removed})
+	return nil
+}
+
+// removeUnit 作废一个交付单元：账本只追加，不物理删除——删除就是一条 unit.removed 事实（#40）。
+//
+// 作废之后：注册表不再列出它，单元自己的日志一条不动（历史作业、tag、部署都还在，
+// 只是不再是「当前单元」）；同一个 id 可以在单元日志为空时重建。
+// 已发布过的单元不让作废：线上还有它的进程，作废一条事实收不掉——那是回滚的活。
+func (s *Server) removeUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	if err := Require(c.Role, ActPbc); err != nil {
+		return err
+	}
+	id := r.PathValue("id")
+	var in struct {
+		Note string `json:"note"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in)
+	uv, err := s.loadUnits(r.Context())
+	if err != nil {
+		return err
+	}
+	var u *store.Unit
+	for i := range uv.Units {
+		if uv.Units[i].ID == id {
+			u = &uv.Units[i]
+		}
+	}
+	if u == nil {
+		return fmt.Errorf("%w：单元 %s（当前列表里没有它，可能是已经作废过了）", errNotFound, id)
+	}
+	v, err := s.load(r, id)
+	if err != nil {
+		return err
+	}
+	if len(v.Deploys) > 0 {
+		return fmt.Errorf("%w：单元 %s 已经发不过，作废收不掉线上进程——先回滚那个批次", errBadRequest, id)
+	}
+	fact := map[string]any{
+		"id": id, "name": u.Name, "proj": u.Proj, "by": c.Role.String(),
+		"at": time.Now().Format(time.RFC3339), "note": strings.TrimSpace(in.Note),
+	}
+	if _, err := s.Log.Append(r.Context(), unitsLog, store.FactUnitRemoved, c.Role.String(), fact); err != nil {
+		return err
+	}
+	s.publish(unitsLog, "unit.removed", map[string]any{"id": id})
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "removed": true, "note": fact["note"]})
 	return nil
 }
 
@@ -280,10 +328,24 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 	if err != nil {
 		return err
 	}
+	reborn := false
 	for _, u := range uv.Units {
 		if u.ID == in.ID {
 			return fmt.Errorf("%w：单元 %s 已存在", errBadRequest, in.ID)
 		}
+	}
+	for _, u := range uv.Removed {
+		if u.ID == in.ID {
+			reborn = true
+		}
+	}
+	// 作废过的 id 可以重建：账本上多一条 unit.created，投影按最新一条认（#40）。
+	// 但单元日志里若还有历史作业（提交、工作项、tag、部署），重建会把两段历史接进同一本账，
+	// 说不清「这些提交属于哪个单元」——这种情况如实拒绝，让用户换一个 id。
+	if prev, err := s.load(r, in.ID); err != nil {
+		return err
+	} else if len(prev.Commits) > 0 || len(prev.Items) > 0 || len(prev.Tags) > 0 || len(prev.Deploys) > 0 {
+		return fmt.Errorf("%w：单元 %s 曾用过（作废前已有提交 / 工作项 / tag / 部署），换一个 id 重建", errBadRequest, in.ID)
 	}
 	if k != domain.KindPBC {
 		av, err := s.loadAgents(r.Context())
@@ -298,9 +360,14 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 	if code == "" {
 		code = "PBC-" + strings.ToUpper(in.ID)
 	}
-	if _, err := s.Log.Append(r.Context(), unitsLog, store.FactUnitCreated, c.Role.String(), map[string]any{
+	created := map[string]any{
 		"id": in.ID, "name": in.Name, "code": code, "kind": k.String(), "agentId": in.AgentID, "proj": in.Proj,
-	}); err != nil {
+	}
+	// 作废过的 id：这条事实带 reborn，投影据此把它从「已作废」里收回来（#40）。
+	if reborn {
+		created["reborn"] = true
+	}
+	if _, err := s.Log.Append(r.Context(), unitsLog, store.FactUnitCreated, c.Role.String(), created); err != nil {
 		return err
 	}
 	// 单元自己的日志也要有 unit.created：/api/state 的 kind / name / agentId 由此而来。

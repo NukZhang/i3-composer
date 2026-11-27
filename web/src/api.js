@@ -84,6 +84,9 @@ export const api = {
       body: JSON.stringify({ approve, note: note || '' }),
     }),
   createUnit: (body) => request('/api/units', { method: 'POST', body: JSON.stringify(body) }),
+  // 作废单元：账本只追加，删掉就是一条 unit.removed 事实，单元自己的日志一条不动（#40）。
+  removeUnit: (id, note) =>
+    request('/api/units/' + encodeURIComponent(id), { method: 'DELETE', body: JSON.stringify({ note: note || '' }) }),
   svcVerify: (id, body) =>
     request('/api/units/' + encodeURIComponent(id) + '/svcverify', {
       method: 'POST',

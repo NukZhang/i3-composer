@@ -105,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("GET /api/units", s.wrap(s.units))
 	m.HandleFunc("POST /api/units", s.wrap(s.createUnit))
 	m.HandleFunc("POST /api/units/{id}/svcverify", s.wrap(s.svcVerify))
+	m.HandleFunc("DELETE /api/units/{id}", s.wrap(s.removeUnit))
 	m.HandleFunc("GET /api/brd", s.wrap(s.brd))
 	m.HandleFunc("POST /api/brd", s.wrap(s.saveBRD))
 	// v2.7：工作空间 → 项目。项目是承接容器，新建 / 加入已有都进账本。

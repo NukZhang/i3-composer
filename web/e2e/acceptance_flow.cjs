@@ -290,6 +290,33 @@ async function healthPre(BASE) {
   check('5 账本里有 tag.created 与 item.verified',
     facts.includes('tag.created') && facts.includes('item.verified'), facts.filter((t) => t === 'tag.created' || t === 'item.verified'));
 
+  // ---- 5b. 作废单元：账本只追加，删掉是一条 unit.removed 事实；id 作废后可重建（#40）----
+  // 用另一个 id 走这一条，不动上面那个带 tag 的单元（作废它会挡住后续断言）。
+  // 作废是 PA 的写动作：上一段是 SA 在打 tag，先切回来。
+  await page.click('.rolebtn:has-text("PA")');
+  await page.waitForTimeout(500);
+  const gone = unit + 'x';
+  const mk = await api(page, '/api/units', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: gone, name: '作废验收单元', kind: 'pbc', proj: 'p1' }),
+  });
+  check('5b 建一个待作废的单元', mk.code === 201, mk.body);
+  const rm = await api(page, `/api/units/${gone}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: '建错了' }) });
+  check('5b PA 作废单元返回 200', rm.code === 200, rm.body);
+  const afterRm = (await api(page, '/api/units')).body || {};
+  const stillThere = (afterRm.units || []).some((u) => u.id === gone);
+  const trail = (afterRm.removed || []).find((r) => r.id === gone);
+  check('5b 作废后不再列在单元里，但 /api/units 的 removed 留痕（谁、什么时候、为什么）',
+    !stillThere && !!trail && trail.by === 'PA' && !!trail.at && trail.note === '建错了',
+    { stillThere, trail });
+  const goneFacts = ((((await api(page, `/api/facts?pbc=units`)).body || {}).facts) || []).map((f) => f.type);
+  check('5b 账本上留下的是 unit.removed 事实（不是物理删除）', goneFacts.includes('unit.removed'), goneFacts.slice(0, 6));
+  const again = await api(page, '/api/units', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: gone, name: '作废验收单元（重建）', kind: 'pbc', proj: 'p1' }),
+  });
+  check('5b 作废后的 id 可以重建（单元日志里没有历史作业）', again.code === 201, again.body);
+
   // ---- 6. 通知中心由事实派生 ----
   const notes = ((await api(page, '/api/notifications')).body || {}).notifications || [];
   check('6 通知中心出现该单元的 tag 事件', notes.some((n) => n.type === 'tag.created' && n.unit === unit), notes.slice(0, 2));

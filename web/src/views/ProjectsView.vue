@@ -29,6 +29,23 @@ const canBrd = computed(() => (S.acts || []).includes('brd'));
 const creating = ref(false);
 const nf = ref({ id: '', name: '', kind: 'pbc', agentId: '' });
 
+// 作废过的单元：账本只追加，作废是一条事实；这里只负责把「哪个 id 用过了、谁什么时候作废的」摆出来（#40）。
+const projectsRemoved = computed(() => (S.removedUnits || []).filter((r) => !r.proj || r.proj === S.projId));
+
+async function removeUnit(u) {
+  const why = window.prompt(
+    '作废单元「' + u.name + '」？\n\n账本只追加：作废是一条 unit.removed 事实，单元自己的日志一条不动。\n' +
+    '作废后它不再出现在单元列表与发布编排里，id 可以在没有历史作业时重建。\n\n作废原因（可留空）：', '');
+  if (why === null) return;
+  try {
+    await api.removeUnit(u.id, why);
+    toast('已作废 ' + u.id + '（账本上多了一条 unit.removed）', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+  await refresh();
+}
+
 function stTag(st) {
   return st === 'done' ? 't-ok' : st === 'doing' ? 't-info' : 't-gray';
 }
@@ -151,6 +168,22 @@ async function submitTask() {
         <span v-else-if="brd && brd.words" class="small muted">{{ (brd.versions || []).length }} 个版本 · {{ brd.words }} 字</span>
       </div>
     </div>
+    <!-- 作废记录：作废过的 id 不在单元列表里，但得看得见「它已经被谁什么时候作废过」 -->
+    <div v-if="projectsRemoved.length" class="card">
+      <div class="ch"><span v-html="icon('layers')" /><h3>已作废的单元</h3><span class="spacer" />
+        <span class="tag t-gray" style="font-size: 9px">{{ projectsRemoved.length }} 个</span></div>
+      <div v-for="r in projectsRemoved" :key="r.id" class="row small" style="padding: 5px 0; gap: 8px; border-bottom: 1px solid var(--line-e)">
+        <span class="mono" style="min-width: 110px">{{ r.id }}</span>
+        <span>{{ r.name || '（未记名字）' }}</span>
+        <span class="spacer" style="flex: 1" />
+        <span class="muted">{{ r.by || '—' }} · {{ r.at || '—' }}</span>
+        <span v-if="r.note" class="muted">原因：{{ r.note }}</span>
+      </div>
+      <div class="arch-note" style="margin-top: 8px">
+        作废不删数据：账本里留一条 unit.removed，单元自己的提交与工作项原样还在。id 在没有历史作业时可以重建。
+      </div>
+    </div>
+
     <div v-else class="card" style="border-style: dashed">
       <div class="ch">
         <span v-html="icon('doc')" /><h3>还没有 BRD</h3><span class="spacer" />
@@ -181,10 +214,15 @@ async function submitTask() {
         <div v-if="units.some((u) => (u.kind || 'pbc') === g[0])" class="row" style="padding: 8px 0; border-bottom: 1px solid var(--line-e); align-items: flex-start; gap: 9px">
           <span class="tag" :class="kindCls(g[0])" style="font-size: 9px; min-width: 92px; justify-content: center">{{ g[1] }}</span>
           <div class="row wrap" style="gap: 6px; flex: 1">
-            <button v-for="u in units.filter((x) => (x.kind || 'pbc') === g[0])" :key="u.id" class="btn small" @click="openUnit(u.id)">
-              <span v-html="icon(g[0] === 'agent' ? 'robot' : 'layers', 12)" /> {{ u.name }}
-              <span class="mono small" style="color: var(--accent-tx2)">{{ u.head }}</span>
-            </button>
+            <span v-for="u in units.filter((x) => (x.kind || 'pbc') === g[0])" :key="u.id" class="row" style="gap: 2px">
+              <button class="btn small" @click="openUnit(u.id)">
+                <span v-html="icon(g[0] === 'agent' ? 'robot' : 'layers', 12)" /> {{ u.name }}
+                <span class="mono small" style="color: var(--accent-tx2)">{{ u.head }}</span>
+              </button>
+              <!-- 删错的东西要有退路：没有这条入口，做错的单元只能换 id 重来（#40）。 -->
+              <button v-if="canPbc" class="btn small" :title="'作废单元 ' + u.id + '（账本追加一条 unit.removed，不物理删除）'"
+                :data-remove-unit="u.id" @click="removeUnit(u)">作废</button>
+            </span>
           </div>
         </div>
       </div>

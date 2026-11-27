@@ -516,3 +516,58 @@ func TestFactsExposeTrialQueries(t *testing.T) {
 		t.Fatalf("召回那轮应带真 query，实际 %v", prev["queries"])
 	}
 }
+
+// 删错的单元要能作废：账本只追加，删除是一条 unit.removed 事实，不是物理删除（#40）。
+// 作废后注册表不再列出，但 /api/units 的 removed 里留痕；同一个 id 在单元日志为空时可以重建。
+func TestRemoveUnitAppendsFactAndAllowsRecreate(t *testing.T) {
+	h := newHarness(t)
+	resp, out := h.do(t, http.MethodPost, "/api/units",
+		map[string]any{"id": "exec1", "name": "执行侧验收单元", "kind": "pbc"}, RolePA)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("PA 建单元应 201，实际 %d %v", resp.StatusCode, out)
+	}
+	// 删除是 PA 的写动作。
+	resp, _ = h.do(t, http.MethodDelete, "/api/units/exec1", nil, RoleDA)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("DA 删单元应 403，实际 %d", resp.StatusCode)
+	}
+	resp, out = h.do(t, http.MethodDelete, "/api/units/exec1", map[string]any{"note": "建错了"}, RolePA)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PA 作废单元应 200，实际 %d %v", resp.StatusCode, out)
+	}
+	_, list := h.do(t, http.MethodGet, "/api/units", nil, RolePA)
+	for _, u := range list["units"].([]any) {
+		if u.(map[string]any)["id"] == "exec1" {
+			t.Fatalf("作废后注册表不该再列出它：%v", list["units"])
+		}
+	}
+	removed, _ := list["removed"].([]any)
+	if len(removed) != 1 {
+		t.Fatalf("作废记录应留在 removed 里，实际 %v", list["removed"])
+	}
+	r0 := removed[0].(map[string]any)
+	if r0["id"] != "exec1" || r0["by"] != "PA" || r0["note"] != "建错了" || r0["name"] != "执行侧验收单元" {
+		t.Fatalf("作废记录要带 id / 名字 / 谁 / 为什么：%v", r0)
+	}
+	// 已作废的 id 再删一次：404，而不是再落一条事实。
+	resp, _ = h.do(t, http.MethodDelete, "/api/units/exec1", nil, RolePA)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("重复作废应 404，实际 %d", resp.StatusCode)
+	}
+	// 单元日志空的 id 可以重建。
+	resp, out = h.do(t, http.MethodPost, "/api/units",
+		map[string]any{"id": "exec1", "name": "执行侧验收单元（重建）", "kind": "pbc"}, RolePA)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("作废后的 id 应能重建，实际 %d %v", resp.StatusCode, out)
+	}
+	_, list = h.do(t, http.MethodGet, "/api/units", nil, RolePA)
+	var rebuilt bool
+	for _, u := range list["units"].([]any) {
+		if u.(map[string]any)["id"] == "exec1" {
+			rebuilt = true
+		}
+	}
+	if !rebuilt {
+		t.Fatalf("重建后应重新出现在注册表里：%v", list["units"])
+	}
+}

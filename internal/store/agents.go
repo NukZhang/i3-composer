@@ -34,6 +34,20 @@ type Unit struct {
 type UnitsView struct {
 	Seq   int    `json:"seq"`
 	Units []Unit `json:"units"`
+	// Removed 是被 unit.removed 作废掉的单元（作废时投影到这里的快照）。
+	// 账本只追加、不物理删除，所以必须留一条「它被谁、什么时候、为什么作废」的记录：
+	// 否则 id 没了入口也说不清，用户只剩「换个 id 重来」这一条路（#40）。
+	Removed []RemovedUnit `json:"removed,omitempty"`
+}
+
+// RemovedUnit 是一次作废留下的痕迹。
+type RemovedUnit struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	Proj string `json:"proj,omitempty"`
+	By   string `json:"by,omitempty"`
+	At   string `json:"at,omitempty"`
+	Note string `json:"note,omitempty"`
 }
 
 // BRDVersion 是项目级 BRD 的一次保存。
@@ -77,6 +91,7 @@ func ProjectUnits(facts []Fact) (*UnitsView, error) {
 				Kind    string `json:"kind"`
 				AgentID string `json:"agentId"`
 				Proj    string `json:"proj"`
+				Reborn  bool   `json:"reborn"` // 作废后重建的 id
 			}
 			if err := json.Unmarshal(f.Payload, &p); err != nil {
 				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
@@ -89,6 +104,11 @@ func ProjectUnits(facts []Fact) (*UnitsView, error) {
 			}
 			u := Unit{ID: p.ID, Name: p.Name, Code: p.Code,
 				Kind: domain.ParseKind(p.Kind).String(), AgentID: p.AgentID, Proj: p.Proj}
+			// 作废过的 id 重建：事实带 reborn，它要把这个 id 从「已作废」里收回来（#40）。
+			if p.Reborn {
+				v.Units = append(v.Units, u)
+				continue
+			}
 			if seen[p.ID] {
 				for i := range v.Units {
 					if v.Units[i].ID == p.ID {
@@ -102,13 +122,26 @@ func ProjectUnits(facts []Fact) (*UnitsView, error) {
 
 		case FactUnitRemoved:
 			var p struct {
-				ID string `json:"id"`
+				ID   string `json:"id"`
+				Name string `json:"name"`
+				Proj string `json:"proj"`
+				Note string `json:"note"`
+				By   string `json:"by"`
+				At   string `json:"at"`
 			}
 			if err := json.Unmarshal(f.Payload, &p); err != nil {
 				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
 			}
 			for i := range v.Units {
 				if v.Units[i].ID == p.ID {
+					r := RemovedUnit{ID: p.ID, By: p.By, At: p.At, Note: p.Note}
+					if r.Name = p.Name; r.Name == "" {
+						r.Name = v.Units[i].Name
+					}
+					if r.Proj = p.Proj; r.Proj == "" {
+						r.Proj = v.Units[i].Proj
+					}
+					v.Removed = append(v.Removed, r)
 					v.Units = append(v.Units[:i], v.Units[i+1:]...)
 					break
 				}
