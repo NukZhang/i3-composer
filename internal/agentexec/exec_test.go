@@ -242,6 +242,23 @@ func TestExecuteRecordsEmptyAssembly(t *testing.T) {
 	if asm.Budget.Used != 0 {
 		t.Fatalf("没载入正文时预算占用应为 0：%+v", asm.Budget)
 	}
+	// query 读到了、只是没命中，归因要写「没召回」，不能混成「没读到输入」。
+	if !strings.Contains(asm.Note, "没召回") || strings.Contains(asm.Note, "没读到输入") {
+		t.Fatalf("读到了 query 但没命中，应归因「没召回」：%q", asm.Note)
+	}
+}
+
+// query 为空 = 根本没读到输入（查都没查），不是「没召回」。
+// 两者修法不同：一个去补输入、一个去补知识库，归因必须算出来，不能猜（宪法 II）。
+func TestEmptyAssemblyNotesMissingInput(t *testing.T) {
+	got := assemblyNote("", 0)
+	if !strings.Contains(got, "没读到输入") {
+		t.Fatalf("query 为空应归因「没读到输入」：%q", got)
+	}
+	// 有载入时不归因，留空。
+	if n := assemblyNote("热玛吉", 3); n != "" {
+		t.Fatalf("有载入时不该归因：%q", n)
+	}
 }
 
 // topK 截断：把 topK 压到 1，命中多篇时必须如实报「省略 = 命中数 - 1」。

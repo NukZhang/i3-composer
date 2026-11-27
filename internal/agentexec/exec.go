@@ -696,7 +696,23 @@ func assembleContext(node, query string, chunks []map[string]any, omitted int) d
 		Loaded:  loaded,
 		Omitted: domain.OmittedInfo{Count: omitted, Reason: reason},
 		Budget:  domain.BudgetInfo{Used: float64(used) / float64(ctxBudgetChars), Total: 1.0},
+		Note:    assemblyNote(query, len(chunks)),
 	}
+}
+
+// assemblyNote 给「一篇都没载入」算一个准话，别让页面把两种情况混成一句「没召回」。
+//
+//	query 为空        → 根本没读到输入（查都没查），跟知识库有没有文档无关；
+//	query 有、没命中    → 读了、也检索了，但没有一篇够分（真·没召回）；
+//	有载入 / 有省略     → 不归因，留空。
+func assemblyNote(query string, loaded int) string {
+	if query == "" {
+		return "没读到输入：这一轮 kb 节点拿到的 query 是空的，不是知识库没召回"
+	}
+	if loaded == 0 {
+		return "没召回：query 读到了，但没有一篇文档命中阈值，该进知识库补文档或调阈值"
+	}
+	return ""
 }
 
 // renderRaw 把这一轮渲染成可读输出（JSON）。

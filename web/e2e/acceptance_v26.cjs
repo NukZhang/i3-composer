@@ -1,8 +1,20 @@
 // v2.6 验收：Vue 前端 + 真实 Dapr 后端（端口由 BASE 决定）。
 // 断言「所见即账本」：编排改 digest、验收判定落事实、bug 进 backlog。
 const { chromium } = require('playwright');
+const fs = require('fs');
+const path = require('path');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const BASE = process.env.BASE || 'http://127.0.0.1:8091';
+
+// 种子原值：收尾时把 qa-agent 的编排恢复到这里，而不是「本轮开始时的样子」——
+// 本轮开始时可能已经被上一次运行改脏了（#32 现象二）。用种子原值才收得干净。
+function seedFlow(agentId) {
+  const p = path.join(__dirname, '..', '..', 'internal', 'seed', 'agents.json');
+  const arr = JSON.parse(fs.readFileSync(p, 'utf8'));
+  const a = arr.find((x) => x.id === agentId);
+  return a && a.flow ? a.flow : null;
+}
+const SEED_QA_FLOW = seedFlow('qa-agent');
 
 const results = [];
 function check(name, ok, detail) {
@@ -20,6 +32,7 @@ function check(name, ok, detail) {
   page.on('console', (m) => { if (m.type() === 'error') pageErrors.push('console: ' + m.text()); });
   page.on('response', (r) => { if (r.status() >= 400) httpErrors.push(r.status() + ' ' + r.url()); });
 
+  try {
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1800);
 
@@ -137,7 +150,10 @@ function check(name, ok, detail) {
     const t = a.trialRun || {};
     return { assemblies: t.assemblies || [] };
   }, BASE);
-  const asm0 = trialAsm.assemblies[0];
+  // 取「真读到输入、真召回」的那一轮来断言：若账本最后一条 trialRun 恰好是
+  // 第 10 段被白名单拦掉的那轮（query 空、loaded=0），不能拿它当 4b 的证据。
+  const allAsm = trialAsm.assemblies || [];
+  const asm0 = allAsm.find((a) => a.query && a.loaded && a.loaded.length > 0) || allAsm[0];
   check('4b 试跑结果带当轮装配（载入清单 + 省略 + 预算）',
     !!asm0 && Array.isArray(asm0.loaded) && asm0.loaded.length > 0
       && asm0.omitted && typeof asm0.omitted.count === 'number' && asm0.budget && asm0.budget.total === 1,
@@ -393,6 +409,18 @@ function check(name, ok, detail) {
   check('10 试跑结果进账本：tool.blocked 可从 /api/agents/{id} 查回',
     tgRun.nodes.some((n) => n.n === '读会话' && n.blocked.includes(foreign)), tgRun.nodes);
 
+  // 这一轮「读会话」被白名单拦了，kb 节点拿到的 query 是空的——一篇没载入，
+  // 但原因是「没读到输入」不是「没召回」。诊断必须是算出来的，不能写死成没召回（宪法 II）。
+  const blockedAsm = await page.evaluate(async (base) => {
+    const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
+    const asms = (a.trialRun || {}).assemblies || [];
+    const empty = asms.find((x) => !x.query && (!x.loaded || x.loaded.length === 0));
+    return empty ? { note: empty.note, query: empty.query, loaded: (empty.loaded || []).length } : null;
+  }, BASE);
+  check('10 没读到输入时装配归因写「没读到输入」而不是「没召回」',
+    !!blockedAsm && /^没读到输入/.test(blockedAsm.note || '') && /query 是空/.test(blockedAsm.note || ''),
+    blockedAsm);
+
   // 对话验收不能拿一轮被拦下的执行拼回复：拒绝，且一条对话事实都不落。
   // 对话是 BA 的活（验收台），DA 点这个口子会被 403 拦住——先切回 BA。
   await page.click('.rolebtn:has-text("BA")');
@@ -412,7 +440,8 @@ function check(name, ok, detail) {
   check('10 被拒不落对话事实（账本上没有「客户问过、AI 答过」）',
     chat.chats === tgBase.chats, { before: tgBase.chats, after: chat.chats });
 
-  // 复原：把编排写回原样，闸回到原来的说法，红条消失。写编排又是 DA 的活。
+  // 复原：把编排写回**种子原值**（不是本轮开始时的样子——那时可能已被上一轮改脏），
+  // 闸回到原来的说法，红条消失。写编排又是 DA 的活。
   await page.click('.rolebtn:has-text("DA")');
   await page.waitForTimeout(600);
   const putBack = await page.evaluate(async ([base, flow]) => {
@@ -421,7 +450,7 @@ function check(name, ok, detail) {
       body: JSON.stringify({ flow }),
     });
     return r.status;
-  }, [BASE, tgBase.flow]);
+  }, [BASE, SEED_QA_FLOW]);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1500);
   await page.click('.rolebtn:has-text("DA")');
@@ -461,6 +490,22 @@ function check(name, ok, detail) {
   check('无 HTTP 错误（除脚本自造的对话 400 外）', unexpected.length === 0, unexpected.slice(0, 5));
 
   await browser.close();
+  } finally {
+    // 兜底复原：无论中途是否抛错，都把 qa-agent 编排写回种子原值，
+    // 保证下一次跑仍在干净种子上（#32 现象二：不留脏数据）。
+    try {
+      await fetch(BASE + '/api/role', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'DA' }),
+      });
+      await fetch(BASE + '/api/agents/qa-agent/flow', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flow: SEED_QA_FLOW }),
+      });
+    } catch (e) {
+      console.error('复原种子编排失败（不影响断言结果）：', String(e));
+    }
+  }
   const failed = results.filter((r) => !r.ok);
   console.log('SUMMARY ' + (results.length - failed.length) + '/' + results.length + ' passed');
   process.exit(failed.length ? 1 : 0);

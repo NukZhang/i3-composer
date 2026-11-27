@@ -259,6 +259,10 @@ type ContextAssembly struct {
 	Loaded  []LoadedChunk `json:"loaded"`
 	Omitted OmittedInfo   `json:"omitted"`
 	Budget  BudgetInfo    `json:"budget"`
+	// Note 是「为什么是现在这个结果」的可算结论，给页面一个不能靠猜的归因：
+	// 载入 0 篇到底是「没读到输入」还是「读到了但没召回」，两种修法完全不同。
+	// 只有能算清的时候才填；算不清就留空，页面不替它编（宪法 II）。
+	Note string `json:"note,omitempty"`
 }
 
 // LoadedChunk 是被载入上下文的一片文档。Ver 是库版本，Score 是命中分。
