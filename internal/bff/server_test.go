@@ -86,6 +86,7 @@ type harness struct {
 	srv  *httptest.Server
 	fake *fakeDapr
 	st   *store.Store
+	ds   *httptest.Server // sidecar 的替身：要给另一份 Server 接线时用
 }
 
 func newHarness(t *testing.T) *harness {
@@ -99,7 +100,7 @@ func newHarness(t *testing.T) *harness {
 	st.Notify = b.NotifyChange
 	s := httptest.NewServer(b.Handler())
 	t.Cleanup(s.Close)
-	return &harness{srv: s, fake: f, st: st}
+	return &harness{srv: s, fake: f, st: st, ds: ds}
 }
 
 // registerUnit 在 units 注册表里登记一个单元：/api/state 只对登记过的 id 出投影（#43）。
@@ -118,6 +119,12 @@ func registerUnit(t *testing.T, st *store.Store, id string) {
 
 func (h *harness) do(t *testing.T, method, path string, body any, role Role) (*http.Response, map[string]any) {
 	t.Helper()
+	return h.doOn(t, h.srv, method, path, body, role)
+}
+
+// doOn 对指定服务打请求：测「另一份装配」时不能都走 harness 自己那台。
+func (h *harness) doOn(t *testing.T, srv *httptest.Server, method, path string, body any, role Role) (*http.Response, map[string]any) {
+	t.Helper()
 	var rd *bytes.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -125,7 +132,7 @@ func (h *harness) do(t *testing.T, method, path string, body any, role Role) (*h
 	} else {
 		rd = bytes.NewReader(nil)
 	}
-	req, err := http.NewRequest(method, h.srv.URL+path, rd)
+	req, err := http.NewRequest(method, srv.URL+path, rd)
 	if err != nil {
 		t.Fatal(err)
 	}

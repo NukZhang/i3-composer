@@ -139,8 +139,8 @@ function check(name, ok, detail) {
 
   // ---- 6. 种子写的历史与真跑的事实分得开 ----
   // 种子事实查种子单元（fee）；真跑的事实查这次新建的单元。
-  const facts = (await api('/api/facts?pbc=' + unit)).body.facts || [];
-  const seedFacts = (await api('/api/facts?pbc=fee')).body.facts.filter((f) => f.actor === 'seed');
+  const facts = ((((await api('/api/facts?pbc=' + unit)).body || {}).facts) || []);
+  const seedFacts = ((((await api('/api/facts?pbc=fee')).body || {}).facts) || []).filter((f) => f.actor === 'seed');
   const realFacts = facts.filter((f) => f.actor !== 'seed');
   check('6 种子事实 actor 是 seed（演示数据可识别）', seedFacts.length > 0, seedFacts.length);
   check('6 真跑出来的事实 actor 不是 seed', realFacts.length > 0, realFacts.map((f) => f.actor).slice(0, 4));
@@ -163,37 +163,61 @@ function check(name, ok, detail) {
 
   // ---- 8. 打 tag + 批次发布：部署挪到项目级 ----
   await role('SA');
+  // 发布失败时不崩：后面的 check 记 FAIL 并带原因。以前这里一失败，
+  // 后面每个 check 都是 null.find 的 TypeError，整轮塌成 FATAL，
+  // 看不出到底还坏了哪些（#52）。
   const tag = await api('/api/units/' + unit + '/tag', { method: 'POST' });
-  check('8 SA 打 tag 进池', tag.code === 201 && !!tag.body.tag, tag.body);
+  const tagOk = tag.code === 201 && !!(tag.body && tag.body.tag);
+  check('8 SA 打 tag 进池', tagOk, tag.body);
 
-  const rel = await api('/api/projects/p1/orch/release', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ env: 'UAT', mode: 'full', units: [unit] }),
-  });
-  check('8 批次发布返回 201', rel.code === 201, rel.body && rel.body.id);
-  const b = rel.body || {};
-  const ru = (b.units || [])[0] || {};
-  check('8 批次锁住该单元的 tag 与 digest', ru.tag === tag.body.tag && ru.digest === digest, { tag: ru.tag, digest: ru.digest });
+  const b = {};
+  const ru = {};
+  let relErr = null;
+  if (!tagOk) {
+    relErr = { reason: '打 tag 没成，批次发布无从发起', tag: tag.body };
+  } else {
+    const rel = await api('/api/projects/p1/orch/release', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ env: 'UAT', mode: 'full', units: [unit] }),
+    });
+    if (rel.code !== 201) relErr = { code: rel.code, body: rel.body };
+    else Object.assign(b, rel.body || {});
+  }
+  check('8 批次发布返回 201', !relErr, relErr || b.id);
+  Object.assign(ru, (b.units || [])[0] || {});
+  check('8 批次锁住该单元的 tag 与 digest',
+    !!ru.tag && ru.tag === (tag.body || {}).tag && ru.digest === digest,
+    { tag: ru.tag, digest: ru.digest });
+  const depState = (await api('/api/state?pbc=' + unit)).body || {};
   check('8 部署事实落在单元账本（deploy.succeeded 带批次号）',
-    !!(await api('/api/state?pbc=' + unit)).body.deploys.find((d) => d.url === ru.url), ru.url);
+    !!ru.url && (depState.deploys || []).some((d) => d.url === ru.url), ru.url);
   let health = null;
   if (ru.url) {
     health = await fetch(ru.url + '/healthz');
     health = { code: health.status, body: await health.text() };
+  } else {
+    health = relErr || { reason: '批次里没有该单元' };
   }
-  check('8 部署地址能访问且 /healthz 返回 200', health && health.code === 200, health);
+  check('8 部署地址能访问且 /healthz 返回 200', !!(health && health.code === 200), health);
 
   // ---- 9. 整批回滚，进程真的收掉 ----
-  const rb = await api('/api/projects/p1/orch/rollback', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: b.id, note: '执行侧验收回滚' }),
-  });
-  check('9 整批回滚返回 200', rb.code === 200, rb.body);
-  if (ru.url) {
-    await new Promise((r) => setTimeout(r, 600));
-    let after = null;
-    try { after = (await fetch(ru.url + '/healthz')).status; } catch { after = 0; }
-    check('9 回滚后部署进程真的停了', after !== 200, after);
+  if (!b.id) {
+    check('9 整批回滚返回 200', false, { reason: '没有批次可回滚', relErr });
+    check('9 回滚后部署进程真的停了', false, { reason: '没有批次可回滚' });
+  } else {
+    const rb = await api('/api/projects/p1/orch/rollback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: b.id, note: '执行侧验收回滚' }),
+    });
+    check('9 整批回滚返回 200', rb.code === 200, rb.body);
+    if (ru.url) {
+      await new Promise((r) => setTimeout(r, 600));
+      let after = null;
+      try { after = (await fetch(ru.url + '/healthz')).status; } catch { after = 0; }
+      check('9 回滚后部署进程真的停了', after !== 200, after);
+    } else {
+      check('9 回滚后部署进程真的停了', false, { reason: '没有部署地址（发布未成功）' });
+    }
   }
 
   check('页面无 JS 异常', pageErrors.length === 0, pageErrors.slice(0, 3));

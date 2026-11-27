@@ -79,21 +79,30 @@ const api = (page, path, opts) =>
       }),
     }).then((r) => r.status);
   }, [unit, title]);
-  const created = (await api(page, '/api/inbox')).body.items.find((x) => x.t === title);
+  // 建任务失败就如实停在这一步：以前这里 created 为 null，下面每条 check
+  // 都是 TypeError，整轮塌成 FATAL，前因反倒看不见了（#52）。
+  const created = ((((await api(page, '/api/inbox')).body || {}).items) || []).find((x) => x.t === title);
   check('1 BA 建任务走真实接口', !!created && /^US-/.test(created.id), created && created.id);
-  check('1 新项 run=idea 且六步链路齐全', created && created.run === 'idea' && created.steps.length === 6, created && created.run);
+  check('1 新项 run=idea 且六步链路齐全', !!created && created.run === 'idea' && created.steps.length === 6, created && created.run);
+  if (!created) {
+    check('后续 check 未执行', false, { reason: '建任务失败，后续没有对象可验', unit });
+    await browser.close();
+    const failed = results.filter((r) => !r.ok);
+    console.log('SUMMARY ' + (results.length - failed.length) + '/' + results.length + ' passed');
+    process.exit(failed.length ? 1 : 0);
+  }
 
   const id = created.id;
 
   // 刷新后仍在 = 来自事实日志
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1200);
-  const persisted = (await api(page, '/api/inbox')).body.items.some((x) => x.id === id);
+  const persisted = ((((await api(page, '/api/inbox')).body || {}).items) || []).some((x) => x.id === id);
   check('1 刷新后仍在（事实日志而非前端内存）', persisted);
 
   // ---- 2. BA 发起被 403（build 是 DA 的权限）----
   const denied = await api(page, `/api/items/${id}/run?pbc=${unit}`, { method: 'POST' });
-  check('2 BA 发起交付被 403 拒绝', denied.code === 403 && /权限不足/.test(denied.body.error), denied);
+  check('2 BA 发起交付被 403 拒绝', denied.code === 403 && /权限不足/.test((denied.body || {}).error), denied);
 
   // ---- 2b. 入口准入：只写标题的项，DA 发起被 400 挡在门口，且账本不留 run.started ----
   const bare = await api(page, `/api/tasks?pbc=${unit}`, {
@@ -106,8 +115,8 @@ const api = (page, path, opts) =>
   await page.waitForTimeout(400);
   const bareRun = await api(page, `/api/items/${bareID}/run?pbc=${unit}`, { method: 'POST' });
   check('2b 准入不过的发起被 400 拒绝，并点名缺什么、找谁',
-    bareRun.code === 400 && /目标可断言/.test(bareRun.body.error) && /数据与权限/.test(bareRun.body.error) && /责任人/.test(bareRun.body.error), bareRun.body && bareRun.body.error);
-  const bareFacts = (await api(page, `/api/facts?pbc=${unit}`)).body.facts.map((f) => f.type);
+    bareRun.code === 400 && /目标可断言/.test((bareRun.body || {}).error) && /数据与权限/.test((bareRun.body || {}).error) && /责任人/.test((bareRun.body || {}).error), bareRun.body && bareRun.body.error);
+  const bareFacts = ((((await api(page, `/api/facts?pbc=${unit}`)).body || {}).facts) || []).map((f) => f.type);
   check('2b 被拒的发起不落 item.run.started，只留 item.admit.rejected',
     !bareFacts.includes('item.run.started') && bareFacts.includes('item.admit.rejected'), bareFacts.filter((t) => /admit|run.started/.test(t)));
 
@@ -154,7 +163,7 @@ const api = (page, path, opts) =>
     if (b) b.click();
   });
   const fixed = await waitFor(async () => {
-    const f = (await api(page, `/api/facts?pbc=${unit}`)).body.facts.map((x) => x.type);
+    const f = ((((await api(page, `/api/facts?pbc=${unit}`)).body || {}).facts) || []).map((x) => x.type);
     return f.includes('item.admit.inputs') ? f : null;
   }, 8000, 500);
   check('2c 补的四项落成事实 item.admit.inputs', !!fixed, fixed && fixed.filter((t) => t === 'item.admit.inputs'));
@@ -165,7 +174,7 @@ const api = (page, path, opts) =>
   const nowRun = await api(page, `/api/items/${bareID}/run?pbc=${unit}`, { method: 'POST' });
   check('2c 硬项补齐后 DA 发起 202（不再被准入挡）', nowRun.code === 202, nowRun);
   const admitted = await api(page, `/api/items/${bareID}?pbc=${unit}`);
-  const admit = admitted.body.item && admitted.body.item.admit;
+  const admit = ((admitted.body || {}).item || {}).admit;
   check('2c 放行带两条 waiver（软项没补，但不挡发起）',
     !!admit && admit.st === 'admitted' && (admit.waivers || []).length === 2, admit);
   const waiveText = await waitFor(() => page.evaluate(() => {
@@ -185,7 +194,7 @@ const api = (page, path, opts) =>
 
   // 实例在跑时再发一次：Dapr 实例号是锁，必须被拒。
   const rerun = await api(page, `/api/items/${id}/run?pbc=${unit}`, { method: 'POST' });
-  check('3 运行中重复发起被 400 拒绝（Dapr 实例锁）', rerun.code === 400 && /已在执行中/.test(rerun.body.error), rerun);
+  check('3 运行中重复发起被 400 拒绝（Dapr 实例锁）', rerun.code === 400 && /已在执行中/.test((rerun.body || {}).error), rerun);
 
   // 不手动刷新：靠 SSE 通知 + 重拉，页面应自动推进
   const uiVerified = await waitFor(
@@ -203,7 +212,7 @@ const api = (page, path, opts) =>
   // ---- 4. DA 打 tag 被 403：界面不能假装成功 ----
   const before = (await api(page, `/api/state?pbc=${unit}`)).body.commits[0];
   const deny = await api(page, `/api/units/${unit}/tag`, { method: 'POST' });
-  check('4 DA 打 tag 被 403 拒绝', deny.code === 403 && /权限不足/.test(deny.body.error), deny);
+  check('4 DA 打 tag 被 403 拒绝', deny.code === 403 && /权限不足/.test((deny.body || {}).error), deny);
   const afterDeny = (await api(page, `/api/state?pbc=${unit}`)).body.commits[0];
   check('4 越权后账本状态没变（无 tag）', !afterDeny.tag && afterDeny.no === before.no, { before: before.tag, after: afterDeny.tag });
 
@@ -211,17 +220,18 @@ const api = (page, path, opts) =>
   await page.click('.rolebtn:has-text("SA")');
   await page.waitForTimeout(600);
   const ok = await api(page, `/api/units/${unit}/tag`, { method: 'POST' });
-  check('5 SA 打 tag 返回 201', ok.code === 201 && !!ok.body.tag, ok.body);
+  check('5 SA 打 tag 返回 201', ok.code === 201 && !!(ok.body && ok.body.tag), ok.body);
 
-  const unitNow = ((await api(page, '/api/units')).body.units || []).find((u) => u.id === unit);
-  check('5 单元 HEAD 上有 tag（进池）', !!unitNow && unitNow.headTag === ok.body.tag, unitNow && { head: unitNow.head, headTag: unitNow.headTag });
+  const unitNow = (((await api(page, '/api/units')).body || {}).units || []).find((u) => u.id === unit);
+  check('5 单元 HEAD 上有 tag（进池）',
+    !!unitNow && !!ok.body && unitNow.headTag === ok.body.tag, unitNow && { head: unitNow.head, headTag: unitNow.headTag });
 
-  const facts = (await api(page, `/api/facts?pbc=${unit}`)).body.facts.map((f) => f.type);
+  const facts = ((((await api(page, `/api/facts?pbc=${unit}`)).body || {}).facts) || []).map((f) => f.type);
   check('5 账本里有 tag.created 与 item.verified',
     facts.includes('tag.created') && facts.includes('item.verified'), facts.filter((t) => t === 'tag.created' || t === 'item.verified'));
 
   // ---- 6. 通知中心由事实派生 ----
-  const notes = (await api(page, '/api/notifications')).body.notifications;
+  const notes = ((await api(page, '/api/notifications')).body || {}).notifications || [];
   check('6 通知中心出现该单元的 tag 事件', notes.some((n) => n.type === 'tag.created' && n.unit === unit), notes.slice(0, 2));
 
   // 注意：本脚本自己用 fetch 制造了 403 / 400（越权与重复发起），
