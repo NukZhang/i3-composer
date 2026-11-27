@@ -202,7 +202,9 @@ async function submitTask() {
         交付单元从 BRD 里拆。一个 BRD 可以拆成多个单元，每个单元独立走五阶段、独立打 tag，但它们共用这一份 BRD 和同一个需求池。
       </div>
       <div class="row" style="margin-top: 10px; gap: 6px">
-        <button class="btn small" :class="{ primary: hasBRD }" :disabled="!hasBRD || !canPbc">从 BRD 拆解</button>
+        <!-- 拆解是 Agent 跑完后落草稿，没有可直接点的接口；以前这里是个亮着却按了没反应的按钮（#24）。
+             改成说明文本，保留「手动新建」这条真正可用的路径。 -->
+        <span class="small muted">有 BRD 后，拆解由 Agent 跑完落草稿</span>
         <button class="btn small" :disabled="!canPbc" @click="startCreate"><span v-html="icon('plus', 11)" /> 手动新建</button>
         <span v-if="!hasBRD" class="small muted">要先有 BRD</span>
       </div>

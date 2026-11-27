@@ -1,5 +1,5 @@
 PASS 1 首屏挂载 Vue :: "i3i3构建工作台 · 编辑 → 提交 → 构建 → 交付蓝图构建运营配置隐藏右"
-PASS 1 种子单元四个、只有 PBC / Agent 两种构成（ticket 已撤） :: ["fee:pbc:-","qa:agent:qa-agent","dun:pbc:-","dunx:agent:dun-agent","v32x586497:pbc:-","exec610113:pbc:-","flow620769:pbc:-","e2e41327:pbc:-"]
+PASS 1 种子单元四个、只有 PBC / Agent 两种构成（ticket 已撤） :: ["fee:pbc:-","qa:agent:qa-agent","dun:pbc:-","dunx:agent:dun-agent","v32x325033:pbc:-","exec348426:pbc:-","flow356958:pbc:-","e2e77552:pbc:-"]
 PASS 1 Agent 工厂：5 名平台员工 + 2 个交付产物 :: ["x-fe","x-qa","x-ui","x-ops","x-ba","qa-agent","dun-agent"]
 PASS 2 构建页有 Agent 编排 / 质量报告两个新 tab :: ["Backlog 6","Agent 编排","质量报告"]
 PASS 2 编排工作台有 7 个节点 + 连线 :: {"li":7,"node":7,"edge":8}
@@ -8,11 +8,16 @@ PASS 2 工具权限表多一列「用在哪」 :: ["工具类型审批用在哪"
 PASS 2 知识库依赖卡在编排页 :: ["知识库依赖"]
 PASS 2 导出 Dapr Agent 定义（折叠） :: null
 PASS 2 模型节点配置面板显示提示词（可编辑） :: "合规判定模型节点 ID n4模型deepseek-v3 · DSHtemp 0提示词输出变量verdict{risk, hits[]}改这段字就是新版本：dig"
-PASS 3 改编排后 digest 变了 :: {"before":"sha256:687d461c69cf","after":"sha256:3e9487615138"}
-PASS 3 改了没构建：digest 闸变红 :: "编排改了但没构建（当前 sha256:3e9487615138）"
+PASS 3 改编排后 digest 变了 :: {"before":"sha256:687d461c69cf","after":"sha256:89776e8e870e"}
+PASS 3 改了没构建：digest 闸变红 :: "编排改了但没构建（当前 sha256:89776e8e870e）"
 PASS 3 构建后版本号前进且 digest 闸转绿 :: {"ver":"1.2.1","gate":true}
-PASS 4 试跑有输出与逐节点耗时链 :: {"chain":6,"out":" 输出 跑通{\n  \"branch\": [\n    \"常规\"\n  ],\n  \"output\": {\n    \"agent"}
+PASS 4 试跑有输出与逐节点耗时链 :: {"chain":6,"out":" 输出 跑通{\n  \"branch\": [\n    \"常规\"\n  ],\n  \"output\": {\n    \"accou"}
+PASS 4b 试跑结果带当轮装配（载入清单 + 省略 + 预算） :: {"node":"n3","loaded":3,"omitted":{"count":0,"reason":""},"budget":{"used":0.03725,"total":1}}
+PASS 4b 载入项带 doc / ver / score 与四类边界 :: [{"lib":"产品口径字典","doc":"热玛吉","ver":"2026.11.1","score":3,"class":"按需检索"},{"lib":"产品口径字典","doc":"热玛吉疗程包","ver":"2026.11.1","score":2,"class":"按需检索"}]
+PASS 4b 编排里有 kb 节点可选
+PASS 4b kb 节点展开显示载入篇数、省略数与原因 :: "检索口径知识库节点 ID n3引用知识库产品口径字典2026.11.1医美合规规则库2026.10.20历史质检样本2026.11.3topK 5阈值 0.72重排 开出处 必带输出变量chunks[]（带出处与文档版本） 当轮装配  · 载入 3 篇 · 省略 0 篇  查询「你们这个热玛吉能维持多久？」 ；没有省略（命中全部进了上下文）产品口径字典/热玛吉按需检索 ver 2026.11.1 "
 PASS 4 沉淀的用例进评测集 :: {"before":7,"after":8}
+PASS 4b 沉淀的用例钉住当轮装配（失败详情才答得出「没召回还是答歪」） :: {"n":1}
 PASS 5 质量报告有四闸 + 评测台 + 知识库准确度 :: {"m":9}
 PASS 5 知识库准确度有召回/忠实度/引用四格 :: 9
 PASS 5 视觉比对未接入时，这条闸标成判不了（不是假装通过） :: {"key":"visual","label":"原型还原","ok":true,"detail":"视觉比对未接入：这条判不了，别当成证据","unknown":true}
@@ -30,17 +35,27 @@ PASS 9 质检员详情有五个阶段 tab :: ["✓ 方案","✓ 原型","✓ 构
 PASS 9 Agent 详情构建页是编排摘要 + 节点一览 :: ["会话进入开始","读会话工具","检索口径知识库","合规判定模型","风险分级分支","转人工人工","回执入库结束"]
 PASS 9 有「去编排页」按钮 :: null
 PASS 10 工具闸的说法与编排一致（没有越界就不许红，有就越界点名） :: {"outside":[],"gate":{"key":"agent-tools","label":"工具白名单","ok":true,"detail":"4 个，无越权"}}
-PASS 10 越界编排可以保存（越界不是保存错误，是闸的事） :: {"builtDigest":"sha256:3e9487615138","digest":"sha256:8f2314a77a2f","dirty":true,"id":"qa-agent"}
+PASS 10 越界编排可以保存（越界不是保存错误，是闸的事） :: {"builtDigest":"sha256:89776e8e870e","digest":"sha256:4bdbca1e5874","dirty":true,"id":"qa-agent"}
 PASS 10 名单外的工具让 agent-tools 闸变红（不是「判不了」），并点名工具与节点 :: {"key":"agent-tools","label":"工具白名单","ok":false,"detail":"编排用了名单外的工具：bill.read 在 读会话(n2)"}
 PASS 10 越界时 Detail 不再写「无越权」 :: "编排用了名单外的工具：bill.read 在 读会话(n2)"
 PASS 10 编排页工具权限卡点名越界（写 Agent 的人看得见是哪一步） :: null
 PASS 10 试跑状态是「跑完 · 被拒 N 步」，不再只写「跑通」 :: ["跑完 · 被拒 1 步"]
 PASS 10 被拒的节点在链上单独标出（读会话） :: ["读会话 1ms"]
 PASS 10 试跑结果进账本：tool.blocked 可从 /api/agents/{id} 查回 :: [{"n":"会话进入","blocked":""},{"n":"读会话","blocked":"tool.blocked：工具 bill.read 不在白名单内"},{"n":"检索口径","blocked":""},{"n":"合规判定","blocked":""},{"n":"风险分级","blocked":""},{"n":"回执入库","blocked":""}]
+PASS 10 没读到输入时装配归因写「没读到输入」而不是「没召回」 :: {"note":"没读到输入：这一轮 kb 节点拿到的 query 是空的，不是知识库没召回","query":"","loaded":0}
 PASS 10 被拒的一轮不出客户回复（400 且说明是白名单拦的） :: {"error":"请求不合法：编排有节点被工具白名单拒绝（读会话），这一轮不能出回复"}
 PASS 10 被拒不落对话事实（账本上没有「客户问过、AI 答过」） :: {"before":0,"after":0}
 PASS 10 编排写回原样后闸回到原状态（这一段不留脏数据） :: {"put":200,"gate":{"key":"agent-tools","label":"工具白名单","ok":true,"detail":"4 个，无越权"},"was":{"key":"agent-tools","label":"工具白名单","ok":true,"detail":"4 个，无越权"}}
 PASS 11 验证页是验收台（不再堆机器自检） :: "验证 3/5 已验 · 通过 2这一步不是看报告，是人自己上手跑一遍：照着清单操作、判过不过，不过就提 bug。机器自检"
+PASS 12 页面标题不再含「v2.3」「三类」（#21） :: "i3 构建工作台 · 交付治理"
+PASS 12 通知副标题不再宣称企微降级，改说「外部 IM 未接、只到站内」（#22） :: "待确认 / 构建结果 / 部署结果 · 全部来自账本事实 · 外部 IM 通道未接，通知只到站内tag.created端到端验收单元 · 打了 tag v1.0.02026-11-27T03:33:01Zdeploy.succeeded端到"
+PASS 12 DA 看「发布新版本」是禁用的（发布是 SA 的职责，#25） :: {"disabled":true,"title":"发布新版本是 SA 的职责"}
+PASS 12 禁用的发布按钮带 title 说明原因（#25） :: {"disabled":true,"title":"发布新版本是 SA 的职责"}
+PASS 12 SA 看「发布新版本」可点（权限判断精确到角色，#25） :: {"disabled":false}
+PASS 12 配置页「登记连接器」禁用且带 title（功能未接，#24） :: {"disabled":true,"title":"连接器登记还没接"}
+PASS 12 项目页不再有「从 BRD 拆解」死按钮（#24） :: ["打开 BRD","编辑 / 查看版本线","新建单元","收费缴费 1.0.1","催缴策略 1.0.1","验收单元325033 1.0.1","执行侧验收单元 1.0.1","写路径验收单元 1.0.2","端到端验收单元 1.0.1","交付质检 Agent 1.0.1"]
+PASS 12 计划页没有「提交为 …」这类死按钮（#24） :: ["发起变更","保存草稿","加一条原型批注"]
 PASS 页面无 JS 异常（除脚本自造的对话 400 外） :: []
 PASS 无 HTTP 错误（除脚本自造的对话 400 外） :: []
-SUMMARY 45/45 passed
+PASS 12 拼错的 /api 路由回 404 + JSON，不再 200 + 首页（#20） :: {"code":404,"ct":"application/json; charset=utf-8","isHtml":false,"body":"{\"error\":\"不存在：接口 /api/definitely-not-a-route 没有对应路由\"}\n"}
+SUMMARY 60/60 passed

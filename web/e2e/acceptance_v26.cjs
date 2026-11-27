@@ -479,8 +479,84 @@ function check(name, ok, detail) {
   check('11 验证页是验收台（不再堆机器自检）',
     /已验/.test(verifyPage.text) && !/合并门禁/.test(verifyPage.text), verifyPage.text.slice(0, 60));
 
-  // 第 10 段故意打了一条会被白名单拒掉的对话：那一条 400 是脚本自造的，
-  // 浏览器会同时记一条 console 错误。除此之外不该有任何异常。
+  // ---- 12. 标题 / 通知副标题 / 死按钮 / 发布按钮权限（#21 #22 #24 #25） ----
+  // 这几条都属于「界面上写的和账本/后端一致吗」：标题别停在旧版本、副标题别编不存在的通道、
+  // 按钮别递到人手里却按了没反应、越权动作前端先拦一道。
+  // 注意：这一页没有挂 window.S，切页一律点真实控件（rolebtn / 侧栏行），不要 page.evaluate 改 S。
+  const title = await page.title();
+  check('12 页面标题不再含「v2.3」「三类」（#21）',
+    !/v2\.3/.test(title) && !/三类/.test(title) && /工作台/.test(title), title);
+
+  // 通知中心副标题：全仓没有企微发送实现，不该写「企微失败降级站内」。
+  await page.click('.sidebar .trow:has-text("通知中心")');
+  await page.waitForTimeout(400);
+  const notifySub = await page.evaluate(() => {
+    const h = document.querySelector('.stage') || document.body;
+    const m = (h.textContent || '').match(/待确认[^\n]*账本事实[^\n]*/);
+    return m ? m[0].trim() : (h.textContent || '').slice(0, 200);
+  });
+  check('12 通知副标题不再宣称企微降级，改说「外部 IM 未接、只到站内」（#22）',
+    /只到站内|未接/.test(notifySub) && !/降级/.test(notifySub), notifySub.slice(0, 120));
+
+  // #25：DA 打开 Agent 详情，「发布新版本」应是禁用（前端先拦，SA 才亮）。
+  await page.click('.rolebtn:has-text("DA")');
+  await page.waitForTimeout(500);
+  await page.click('.rolebtn.x');
+  await page.waitForTimeout(600);
+  await page.locator('.agent-row:has-text("质检 Agent")').click();
+  await page.waitForTimeout(700);
+  const daPublish = await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.ph button')).find((x) => /发布新版本/.test(x.textContent));
+    return b ? { disabled: b.disabled, title: b.getAttribute('title') } : null;
+  });
+  check('12 DA 看「发布新版本」是禁用的（发布是 SA 的职责，#25）',
+    !!daPublish && daPublish.disabled === true, daPublish);
+  check('12 禁用的发布按钮带 title 说明原因（#25）',
+    !!daPublish && /SA/.test(daPublish.title || ''), daPublish);
+
+  // SA 打开同一个 Agent，按钮应是可点的（禁用的是角色，不是功能坏了）。
+  await page.click('.rolebtn:has-text("SA")');
+  await page.waitForTimeout(600);
+  const saPublish = await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.ph button')).find((x) => /发布新版本/.test(x.textContent));
+    return b ? { disabled: b.disabled } : null;
+  });
+  check('12 SA 看「发布新版本」可点（权限判断精确到角色，#25）',
+    !!saPublish && saPublish.disabled === false, saPublish);
+
+  // #24：配置页「登记连接器」任何角色都禁用、且带 title —— 功能没接，别递一个没反应的按钮。
+  await page.click('.sidebar .trow:has-text("配置")');
+  await page.waitForTimeout(400);
+  const connectorBtn = await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('button')).find((x) => /登记连接器/.test(x.textContent));
+    return b ? { disabled: b.disabled, title: b.getAttribute('title') } : null;
+  });
+  check('12 配置页「登记连接器」禁用且带 title（功能未接，#24）',
+    !!connectorBtn && connectorBtn.disabled === true && /还没接/.test(connectorBtn.title || ''), connectorBtn);
+
+  // #24：「从 BRD 拆解」这个以前亮着却没反应的按钮已从代码里去掉。进项目页，
+  // 断言它渲染出来的按钮里不再有这一颗——它本来就是个空壳，不该在界面上占位。
+  await page.click('.sidebar .trow.sub:has-text("收费与工单数字化")');
+  await page.waitForTimeout(600);
+  const projBtns = await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('.stage button')).map((x) => x.textContent.trim());
+    return { btns };
+  });
+  check('12 项目页不再有「从 BRD 拆解」死按钮（#24）',
+    !projBtns.btns.some((t) => /从 BRD 拆解/.test(t)), projBtns.btns.slice(0, 10));
+
+  // #24：计划页的「提交」不再是可点按钮（提交只能由 workflow 做）。
+  await page.click('.sidebar .trow.sub:has-text("收费缴费")');
+  await page.waitForTimeout(700);
+  const planCommit = await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('.stage button')).map((x) => x.textContent.trim());
+    return { btns };
+  });
+  check('12 计划页没有「提交为 …」这类死按钮（#24）',
+    !planCommit.btns.some((t) => /^提交为/.test(t)), planCommit.btns.slice(0, 12));
+
+  // 先结清「全run无异常」：到这里为止浏览器只该有第 10 段那条自造的对话 400。
+  // 之后的 #20 会故意打一条 404，所以把它排在错误结算之后，免得自己的 404 污染这两条。
   const ownErrors = (e) => /status of 400/.test(e) && expectedChat400;
   const unexpected = httpErrors.filter(
     (e) => !e.endsWith('/favicon.ico') && !(expectedChat400 && e === '400 ' + BASE + '/api/units/qa/chat'),
@@ -488,6 +564,18 @@ function check(name, ok, detail) {
   const unexpectedPageErrors = pageErrors.filter((e) => !ownErrors(e));
   check('页面无 JS 异常（除脚本自造的对话 400 外）', unexpectedPageErrors.length === 0, unexpectedPageErrors.slice(0, 3));
   check('无 HTTP 错误（除脚本自造的对话 400 外）', unexpected.length === 0, unexpected.slice(0, 5));
+
+  // #20：拼错 / 用错方法的接口必须 404/405 + JSON，而不是 200 + 首页。
+  // 用 curl 的等价物（页面内 fetch）验，避免依赖外部工具。这条请求本身就是造一个 404，
+  // 所以放在上面的错误结算之后才跑。
+  const api404 = await page.evaluate(async (base) => {
+    const r = await fetch(base + '/api/definitely-not-a-route');
+    const ct = r.headers.get('content-type') || '';
+    const body = await r.text();
+    return { code: r.status, ct, isHtml: /<!DOCTYPE/i.test(body), body: body.slice(0, 80) };
+  }, BASE);
+  check('12 拼错的 /api 路由回 404 + JSON，不再 200 + 首页（#20）',
+    api404.code === 404 && /json/.test(api404.ct) && !api404.isHtml, api404);
 
   await browser.close();
   } finally {
