@@ -633,6 +633,52 @@ function check(name, ok, detail) {
   check('12 计划页没有「提交为 …」这类死按钮（#24）',
     !planCommit.btns.some((t) => /^提交为/.test(t)), planCommit.btns.slice(0, 12));
 
+  // #76：失败 Task 使用旧账本投影夹具，普通 Task 和 Story 从真实种子账本读取。
+  const taskContext = await browser.newContext();
+  const taskPage = await taskContext.newPage();
+  await taskPage.route('**/api/inbox', async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    json.items = json.items.map((it) =>
+      it.pbc === 'fee' && it.id === 'T-012' ? { ...it, run: 'failed', st: 'done' } : it);
+    await route.fulfill({ response, json });
+  });
+  await taskPage.request.post(BASE + '/api/role', { data: { role: 'DA' } });
+  await taskPage.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+  const showBacklog = async () => {
+    await taskPage.locator('.sidebar [data-unit="fee"]').click();
+    await taskPage.locator('.sidebar .trow.sub2').filter({ hasText: '构建' }).click();
+    await taskPage.locator('.ptab').filter({ hasText: 'Backlog' }).click();
+  };
+  const taskRow = (id) => taskPage.locator('.backlog-tb').getByRole('row')
+    .filter({ has: taskPage.getByRole('cell', { name: id, exact: true }) });
+  const openTask = (id) => taskRow(id).getByRole('button', { name: '查看' }).click();
+  const actions = taskPage.getByRole('button', { name: /发起直通|重新发起/ });
+
+  await showBacklog();
+  const completeTask = await taskRow('T-011').locator('.tag').innerText();
+  check('12 历史 verified 的 Task 保持已完成（#76）', completeTask === '已完成', completeTask);
+  const failedBacklog = await taskRow('T-012').locator('.tag').innerText();
+  check('12 历史失败 Task 在 Backlog 显示失败（#76）', failedBacklog === '失败', failedBacklog);
+  await openTask('T-012');
+  const failedDetail = await taskPage.locator('.stage .cr-state').innerText();
+  check('12 历史失败 Task 详情显示失败且不给重试（#76）',
+    failedDetail === '失败' && await actions.count() === 0, failedDetail);
+
+  await showBacklog();
+  await openTask('T-022');
+  const deniedRun = await taskPage.request.post(BASE + '/api/items/T-022/run?pbc=fee');
+  check('12 非执行 Task 没有发起按钮，后端返回不可执行（#76）',
+    await taskPage.getByRole('heading', { name: '这类项不跑代码链路' }).isVisible() &&
+    await actions.count() === 0 && deniedRun.status() === 400 &&
+    (await deniedRun.json()).error.includes('不是可执行的工作项'), deniedRun.status());
+
+  await showBacklog();
+  await openTask('US-02');
+  check('12 DA 仍可发起具有执行步骤的 Story（#76）',
+    await taskPage.getByRole('button', { name: '发起直通' }).isEnabled());
+  await taskContext.close();
+
   // 先结清「全run无异常」：到这里为止浏览器只该有第 10 段那条自造的对话 400。
   // 之后的 #20 会故意打一条 404，所以把它排在错误结算之后，免得自己的 404 污染这两条。
   const ownErrors = (e) => /status of 400/.test(e) && expectedChat400;
