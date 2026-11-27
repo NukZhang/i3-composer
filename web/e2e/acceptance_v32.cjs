@@ -7,6 +7,9 @@
 //   - 回滚：release.batch.rolledback，且部署进程真的停了
 //
 // 用法：BASE=http://127.0.0.1:8080 RUN_TAG=v32 node acceptance_v32.cjs
+//
+// 断言数：53。依赖顺序：必须第一棒——第 2 段断言项目下只有 4 个种子单元，
+// 别的套件建过单元之后再跑必红（不是产品缺陷，是这条脚本的前提）。
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');

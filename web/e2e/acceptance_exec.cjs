@@ -10,6 +10,8 @@
 //   - pubsub 收到的事件落了 event.received 事实
 //
 // 用法：BASE=http://127.0.0.1:8080 node acceptance_exec.cjs
+//
+// 断言数：26。依赖顺序：在 v32 之后跑；自己带 RUN_TAG 建单元，可与 v26 / plan 任意顺序。
 const { chromium } = require('playwright');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const BASE = process.env.BASE || 'http://127.0.0.1:8080';

@@ -10,6 +10,9 @@
 //   - pubsub 收到的事件落了 event.received 事实
 //
 // 用法：BASE=http://127.0.0.1:8093 node acceptance_full.cjs
+//
+// 断言数：18。依赖顺序：放最后跑——它自己建单元并真部署进程，先跑会让别的套件的
+// 「项目下只有种子单元」类断言看到多余单元。
 const { chromium } = require('playwright');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const BASE = process.env.BASE || 'http://127.0.0.1:8093';

@@ -4,9 +4,9 @@
 # 产品里的 Build 是 internal/pipeline 的真编译（产物进内容寻址仓库），
 # 这两件事不是一回事，别混着说 —— 这一条以前在文档里被含糊带过。
 #
-# 全套 Playwright 验收不在 CI 里跑：那四套要 Dapr sidecar（placement /
-# scheduler / redis）与真实进程部署，在 CI 上要么跑不动、要么只能跑成假绿。
-# 它们在本地跑，怎么跑见 docs/EXECUTION.md 第三节。
+# 全套 Playwright 验收不在 CI 里跑：`web/e2e/` 下六套（v32 / exec / flow / v26 / full / plan）
+# 里前五套要 Dapr sidecar（placement / scheduler / redis）与真实进程部署，在 CI 上要么跑不动、
+# 要么只能跑成假绿。套件清单、断言数与依赖顺序见 docs/EXECUTION.md 第三节的套件表。
 name: ci
 
 on:

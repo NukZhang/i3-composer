@@ -122,14 +122,31 @@ docker compose up -d
 go build -o /tmp/i3-composer-bin ./cmd/i3-composer
 /tmp/i3-composer-bin
 
-# 3. 五套验收（v32 要先跑：它断言项目下只有 4 个种子单元）
+# 3. 六套验收（v32 第一棒、full 最后；见下面的套件表）
 cd web/e2e
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs   # v3.2：四阶段 / 打 tag / 批次发布 / 整批回滚
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs  # 执行侧：真测试 / 真构建 / 批次部署 / 真收发
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs  # 写路径：建单元 → 发起 → 越权 → 打 tag
-BASE=http://127.0.0.1:8080 node acceptance_v26.cjs               # v2.6 界面：编排工作台 / 质量报告 / 验收台
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs  # 从零：建单元 → 建任务 → 真跑五步 → 打 tag → 批次
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs   # 53 项：四阶段 / 打 tag / 批次发布 / 整批回滚
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs  # 26 项：真测试 / 真构建 / 批次部署 / 真收发
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs  # 35 项：建单元 → 发起 → 越权 → 打 tag → 作废
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v26.cjs   # 68 项：编排工作台 / 质量报告 / 验收台
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs  # 18 项：从零建单元 → 真跑五步 → 打 tag → 批次
+BASE=http://127.0.0.1:8080 node acceptance_plan.cjs              # 12 项：方案页三页签的布局宽度
 ```
+
+### 套件表（唯一口径）
+
+| 脚本 | 覆盖 | 断言 | 依赖顺序 | 进 CI |
+|---|---|---|---|---|
+| `acceptance_v32.cjs` | 四阶段、打 tag 进池、项目级批次发布与整批回滚 | 53 | **必须第一棒**：第 2 段断言项目下只有 4 个种子单元 | 否 |
+| `acceptance_exec.cjs` | 执行侧证据：真测试条数、内容摘要 digest、真进程与 `/healthz`、pub/sub 真收发 | 26 | v32 之后；自带 `RUN_TAG` 建单元 | 否 |
+| `acceptance_flow.cjs` | 写路径：建单元 → 建任务 → 发起 → 越权被拒 → 打 tag → 作废与重建 | 35 | v32 之后；自带 `RUN_TAG` | 否 |
+| `acceptance_v26.cjs` | v2.6 界面与 Agent 编排：digest 闸、试跑与装配、质量报告、验收台、对话拦截 | 68 | v32 之后 | 否 |
+| `acceptance_full.cjs` | 从空账本跑完整链路：建单元 → 建任务 → 五步真跑 → 打 tag → 批次 | 18 | **放最后**：会新建单元并真起进程 | 否 |
+| `acceptance_plan.cjs` | 方案页（PRD / AD / AT）预览与编辑区的布局宽度（2 个视口） | 12 | 无：只读，不写账本 | 否 |
+| `shots_v26.cjs` | 不出断言，只截图 | — | 任意 | 否 |
+
+前五套是「五套验收」（合计 200 项）；第六套 `acceptance_plan.cjs` 只测布局，不依赖 Dapr、不写账本，
+以前没人跑也没有文档——现在与其它套件同口径（`SUMMARY n/n passed`），并在这张表里列明。
+断言数字以本表为准：改断言时，这里、`README.md` 的验收段、脚本开头注释三处一起改。
 
 **为什么要先编译再跑、而不是 `go run`：** `go run` 把 SIGTERM 送给 `go`
 命令本身，编译出来的子进程未必收到。你以为重启了，8080 上还是上一次那个
@@ -143,8 +160,8 @@ digest 是不是内容摘要、部署地址是不是真的活着；还要**在�
 那些证据得是人看得见的，不是只躺在 Redis 里。
 
 `acceptance_full.cjs` 从空账本开始（它自己建交付单元），所以**放最后跑**：
-它会在账上留下一个新单元，先跑它会让 `acceptance_v26.cjs` 里
-「种子单元只剩三个」那条断言看到四个单元。
+它会在账上留下一个新单元，先跑它会让 `acceptance_v32.cjs` 里
+「项目下只有 4 个种子单元」那条断言看到多余单元。
 
 Go 侧还有一条进程内的：
 
@@ -169,8 +186,12 @@ go test ./internal/wf/ -run TestDeliveryChainReallyBuildsTestsAndDeploys -v
 这四处都是**换实现，不改结构**：编排、账本、闸门、页面都已经是真的了。
 
 仓库自己的验证已经接到 CI（`.github/workflows/ci.yml`，每个 PR 都跑）。
-四套 Playwright 验收不在 CI 里：它们要 Dapr sidecar 与真实进程部署，
-在 CI 上只能跑成假绿，所以在本地跑。
+上面表里的六套 Playwright 验收都不在 CI 里（表里「进 CI」一列全是「否」）：它们要 Dapr sidecar
+与真实进程部署，在 CI 上只能跑成假绿，所以在本地跑。
+
+**顺序是硬约束，但不是自动强制的**：`acceptance_v32.cjs` 的前置是干净账本（4 个种子单元），
+在跑过别的套件之后跑它，会看到多余单元并红 3 条——那是前提没满足，不是产品缺陷。
+想复现「顺序反了会怎样」，在一本跑过 `full` 的账上直接跑 v32 即可。
 
 ---
 

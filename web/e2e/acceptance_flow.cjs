@@ -3,6 +3,8 @@
 //
 // 权限边界不变：发起是 DA 的活，打 tag 是 SA 的活；
 // 越权时账本不能有任何变化（不做乐观更新）。
+//
+// 断言数：35。依赖顺序：在 v32 之后跑；自己带 RUN_TAG 建单元，可与 v26 / plan / exec 任意顺序。
 const { chromium } = require('playwright');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const RUN = process.env.RUN_TAG || String(Date.now()).slice(-6);

@@ -4,7 +4,7 @@
 
 一份 BRD → 拆成若干交付单元（PBC / Agent）→ 每个单元走完「方案 · 原型 · 构建 · 验证」并打 tag → 项目级发布编排按批次上环境、按批次回滚。整个过程写在一条只追加、可回放的事实账本里。
 
-`Go` · `Dapr` · `Redis` · `Vue 3.5` · `Vite 6` · 五套自动化验收 **133/133** · [MIT](./LICENSE)
+`Go` · `Dapr` · `Redis` · `Vue 3.5` · `Vite 6` · 五套自动化验收 **200/200**、方案页布局 12/12 · [MIT](./LICENSE)
 
 ---
 
@@ -168,14 +168,19 @@ cd web && npm run build
 
 # 行为验收（先用干净账本；v32 必须第一棒）
 cd web/e2e
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs    # 37 项
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs   # 25 项
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs   # 19 项
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs    # 53 项
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs   # 26 项
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs   # 35 项
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v26.cjs    # 68 项
 BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs   # 18 项
-BASE=http://127.0.0.1:8080 node acceptance_v26.cjs                # 34 项
+BASE=http://127.0.0.1:8080 node acceptance_plan.cjs               # 12 项（只读布局，不写账本）
 ```
 
-合计 **133/133**。断言查的是账本事实，不是页面文案。
+合计 **212/212**。断言查的是账本事实，不是页面文案。
+
+「五套」指前五条（各自 `SUMMARY n/n passed` 收尾、都走 `check()`）；`acceptance_plan.cjs` 是同目录的第 6 套，
+测方案页布局，按同一套 SUMMARY 口径跑，但既不需要 Dapr 也不写账本。六个脚本各自的开头注释写了
+「断言数 / 依赖顺序」，`docs/EXECUTION.md` 第三节有一张同样口径的表——数字以那张表为准，改断言时两处一起改。
 
 ### 发布编排：就绪 / 阻塞一眼可见
 
@@ -206,7 +211,7 @@ internal/
 └── seed/                 演示起点（actor=seed，可识别）
 web/
 ├── src/                  Vue 3.5：views / components / store.js / api.js
-└── e2e/                  Playwright 五套验收
+└── e2e/                  Playwright 五套验收 + 方案页布局（acceptance_plan）
 specs/                    spec-kit 规格（spec / plan / tasks）
 docs/                     白皮书、执行说明、前端接线、自测报告
 ```
@@ -239,7 +244,7 @@ docs/                     白皮书、执行说明、前端接线、自测报告
 | [白皮书](docs/whitepaper.md) | 为什么做、怎么建模、架构、边界与路线图 |
 | [执行链说明](docs/EXECUTION.md) | 哪些是真的、哪些没接、怎么核对 |
 | [前端接线](docs/SPEC-frontend-wiring.md) / [FRONTEND](docs/FRONTEND.md) | 前后端契约与排障 |
-| [v3.2 自测报告](docs/selftest-v32/自测报告.md) | 133/133、截图、问题清单 |
+| [v3.2 自测报告](docs/selftest-v32/自测报告.md) | 各套断言数、截图、问题清单 |
 | [规格](specs/001-v32-core-chain/spec.md) | v3.2 的需求、方案与任务 |
 
 ---
@@ -256,7 +261,7 @@ docs/                     白皮书、执行说明、前端接线、自测报告
 ## 贡献
 
 - 开发约定见 [AGENTS.md](AGENTS.md)。在 Codex 对话中用 `$speckit-specify` 开始规格，再依次调用 `$speckit-plan`、`$speckit-tasks` 和 `$speckit-implement`。Claude Code 使用对应的 `/speckit-…` 命令。
-- 提交前跑通：`go vet` / `go test` / `npm run build` / 五套 e2e；
+- 提交前跑通：`go vet` / `go test` / `npm run build` / 五套 e2e（外加 `acceptance_plan.cjs`）；
 - 改门禁、部署或账本语义时，同一轮更新自测报告与截图；
 - 提交信息用中文，说明「改了什么、为什么」。
 

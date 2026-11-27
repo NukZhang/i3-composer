@@ -1,5 +1,8 @@
 // v2.6 验收：Vue 前端 + 真实 Dapr 后端（端口由 BASE 决定）。
 // 断言「所见即账本」：编排改 digest、验收判定落事实、bug 进 backlog。
+//
+// 断言数：68。依赖顺序：在 v32 之后跑；可与 exec / flow / plan 任意顺序。
+// 试跑类断言按面板上的 data-run（runId）找回自己那一轮，多实例并行也能自证（#61）。
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');

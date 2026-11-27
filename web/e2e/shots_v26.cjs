@@ -1,5 +1,6 @@
 // 截图：v2.6 的关键页面（编排工作台 / 质量报告 / 验收台 / 原型屏）。
 // 用法：node shots_v26.cjs [BASE] [OUTDIR]
+// 不是验收：只出截图，不做断言。
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');

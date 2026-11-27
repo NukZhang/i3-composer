@@ -1,4 +1,6 @@
 // 方案页的三个页签共用编辑器，预览与编辑区都应随容器宽度展开。
+// 断言数：12（3 个页签 × 2 个宽度 × 预览/编辑区）。依赖顺序：无——只读方案页布局，不写账本。
+// 与其它套件一样以 SUMMARY 收尾（以前只靠 assert 抛栈，跑挂了看不出「几过几挂」）。
 const assert = require('node:assert/strict');
 const { mkdirSync } = require('node:fs');
 const { join } = require('node:path');
@@ -6,6 +8,9 @@ const { chromium } = require('playwright');
 
 const base = process.env.BASE || 'http://127.0.0.1:8080';
 const shots = process.env.SHOTS;
+
+let passed = 0;
+let total = 0;
 
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH });
@@ -31,10 +36,12 @@ const shots = process.env.SHOTS;
         }));
         if (shots) await page.screenshot({ path: join(shots, artifact + '-' + width + '.png') });
         for (const panel of ['preview', 'editor']) {
+          total += 1;
           assert.ok(
             Math.abs(widths.shell - widths[panel]) <= 2,
             artifact + ' @ ' + width + ' 的 ' + panel + ' 宽度 ' + widths[panel] + 'px，应填满 ' + widths.shell + 'px 的文档容器',
           );
+          passed += 1;
         }
         console.log('PASS ' + artifact + ' @ ' + width + 'px，预览和编辑区使用完整容器宽度');
       }
@@ -42,7 +49,10 @@ const shots = process.env.SHOTS;
   } finally {
     await browser.close();
   }
+  console.log('SUMMARY ' + passed + '/' + total + ' passed');
+  if (passed !== total) process.exitCode = 1;
 })().catch((error) => {
-  console.error(error);
+  console.error('FAIL ' + error.message);
+  console.log('SUMMARY ' + passed + '/' + total + ' passed');
   process.exitCode = 1;
 });
