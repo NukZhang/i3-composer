@@ -1,4 +1,4 @@
-PASS 0 建写路径验收单元 :: {"id":"flow620769","kind":"pbc","proj":"p1"}
+PASS 0 建写路径验收单元 :: {"id":"flow356958","kind":"pbc","proj":"p1"}
 PASS 1 BA 建任务走真实接口 :: "US-06"
 PASS 1 新项 run=idea 且六步链路齐全 :: "idea"
 PASS 1 刷新后仍在（事实日志而非前端内存）
@@ -7,24 +7,24 @@ PASS 2b 建一条只有标题的工作项 :: "US-07"
 PASS 2b 准入不过的发起被 400 拒绝，并点名缺什么、找谁 :: "请求不合法：US-07 入口准入没过\n目标可断言：这条工作项没写验收口径，单元里也没有人写下的验收标准（生成的模板不算）；找 BA 业务；在这条工作项上补一句验收口径：当……则……（或 Given/When/Then），能被真跑一遍的那种\n数据与权限：没说要碰哪些库表 / 字段；找 SA 系统；在这条工作项上补数据范围（如 fee.bill.amount），SA 按它开权限\n责任人：缺 验收人 / 合规背责人；找 验收人找 BA 业务；合规背责人找 SA 系统；在这条工作项上填验收人（acceptBy）与合规背责人（complyBy），写人名或岗位名都行"
 PASS 2b 被拒的发起不落 item.run.started，只留 item.admit.rejected :: ["item.admit.rejected"]
 PASS 2c 被拒的工作项仍在需求池里（说明进过账本） :: "US-07"
-PASS 2c 被拒的工作项页面点名缺什么、找谁、补哪 :: "入口准入没过 · 2026-11-26T17:20:26Z 由 DA 判补输入目标可断言：这条工作项没写验收口径，单元里也没有人写下的验收标准（生成的模板不算）；找 BA 业务；在这条工作项上补一句验收口径：当……则……（或 Given/When/Then），能被真跑一遍的那种数据与权限：没说要碰哪些库表 / 字段；找"
+PASS 2c 被拒的工作项页面点名缺什么、找谁、补哪 :: "入口准入没过 · 2026-11-27T03:32:42Z 由 DA 判补输入目标可断言：这条工作项没写验收口径，单元里也没有人写下的验收标准（生成的模板不算）；找 BA 业务；在这条工作项上补一句验收口径：当……则……（或 Given/When/Then），能被真跑一遍的那种数据与权限：没说要碰哪些库表 / 字段；找"
 PASS 2c BA 有「补输入」入口（DA 只读，按钮不给）
 PASS 2c 补的四项落成事实 item.admit.inputs :: ["item.admit.inputs"]
-PASS 2c 硬项补齐后 DA 发起 202（不再被准入挡） :: {"code":202,"body":{"id":"US-07","instance":"v39_flow620769_US-07"}}
-PASS 2c 放行带两条 waiver（软项没补，但不挡发起） :: {"st":"admitted","waivers":["范围边界：没拆到 task，涉及哪几个单元、要不要跨系统没落到账上","上下文齐备：没有关联的 AD / 外部契约 / 历史工单"],"by":"DA","at":"2026-11-26T17:20:32Z"}
+PASS 2c 硬项补齐后 DA 发起 202（不再被准入挡） :: {"code":202,"body":{"id":"US-07","instance":"v50_flow356958_US-07"}}
+PASS 2c 放行带两条 waiver（软项没补，但不挡发起） :: {"st":"admitted","waivers":["范围边界：没拆到 task，涉及哪几个单元、要不要跨系统没落到账上","上下文齐备：没有关联的 AD / 外部契约 / 历史工单"],"by":"DA","at":"2026-11-27T03:32:48Z"}
 PASS 2c 页面黄条列出 waived 的两项 :: " 准入放行，但这两项还没补齐（waiver） 范围边界：没拆到 task，涉及哪几个单元、要不要跨系统没落到账上上下文齐备：没有关联的 AD / 外部契约 / 历史工单放行不等于判过：这些是软项，不挡发起，但会一直挂在账本上，直到补上。"
 PASS 3 角色切换写入服务端会话 :: "DA"
-PASS 3 DA 发起返回 202（实例号绑定工作项） :: {"code":202,"body":{"id":"US-06","instance":"v39_flow620769_US-06"}}
+PASS 3 DA 发起返回 202（实例号绑定工作项） :: {"code":202,"body":{"id":"US-06","instance":"v50_flow356958_US-06"}}
 PASS 3 运行中重复发起被 400 拒绝（Dapr 实例锁） :: {"code":400,"body":{"error":"请求不合法：US-06 已在执行中（run=running）"}}
 PASS 3 页面自动推进到 run=verified（SSE 驱动，无需手动刷新） :: {"run":"verified","step":5}
 PASS 3 第六步是人工闸且未执行 :: {"k":"tag","n":"打 tag 进池","d":"验收全过才打得动；tag 是发布编排唯一认的东西","st":"todo","human":true}
 PASS 3 前五步全部完成 :: ["done","done","done","done","done","todo"]
 PASS 4 DA 打 tag 被 403 拒绝 :: {"code":403,"body":{"error":"权限不足"}}
 PASS 4 越权后账本状态没变（无 tag） :: {}
-PASS 5 SA 打 tag 返回 201 :: {"commit":"1.0.2","digest":"sha256:c5bc2fa8232155dd2f701c0b4c3594d6ee2159d119432f51ff728afd3867e15b","pooled":true,"tag":"v1.0.0","unit":"flow620769"}
+PASS 5 SA 打 tag 返回 201 :: {"commit":"1.0.2","digest":"sha256:65810194bc667437bb50f41c51b5a7802807946c06ef87cf955a38045e0f45d9","pooled":true,"tag":"v1.0.0","unit":"flow356958"}
 PASS 5 单元 HEAD 上有 tag（进池） :: {"head":"1.0.2","headTag":"v1.0.0"}
 PASS 5 账本里有 tag.created 与 item.verified :: ["tag.created","item.verified","item.verified"]
-PASS 6 通知中心出现该单元的 tag 事件 :: [{"at":"2026-11-26T17:20:38Z","type":"tag.created","text":"写路径验收单元 · 打了 tag v1.0.0","unit":"flow620769"},{"at":"2026-11-26T17:20:19Z","type":"tag.created","text":"执行侧验收单元 · 打了 tag v1.0.0","unit":"exec610113"}]
+PASS 6 通知中心出现该单元的 tag 事件 :: [{"at":"2026-11-27T03:32:55Z","type":"tag.created","text":"写路径验收单元 · 打了 tag v1.0.0","unit":"flow356958"},{"at":"2026-11-27T03:32:36Z","type":"deploy.succeeded","text":"执行侧验收单元 · 部署 v1.0.0 成功","unit":"exec348426"}]
 PASS 页面无 JS 异常 :: []
 PASS 除脚本自造的 403/400 外无 HTTP 错误 :: []
 SUMMARY 29/29 passed

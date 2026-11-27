@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { icon } from '../icons.js';
 import { evCur, evBase, evPct, evRate, nodeType, flowStats, toolWiring } from '../derive.js';
 
+const can = (a) => (S.acts || []).includes(a);
 const STAGES = ['方案', '原型', '构建', '验证', '发布'];
 const TABS = ['方案 · Agent 定义', '原型 · 用真实任务试跑', '构建 · 编排摘要', '验证 · 评测集', '发布 · 版本线'];
 
@@ -57,7 +58,9 @@ function stageColor(s) {
       </div>
       <div class="spacer" />
       <button class="btn small" @click="toast('试跑要接执行器（DSH），本服务只接收结果', 'warn')"><span v-html="icon('play', 11)" /> 试跑</button>
-      <button class="btn small primary" @click="publish"><span v-html="icon('cloud', 11)" /> 发布新版本</button>
+      <!-- 发布是 SA 的职责（服务端 ActTag 兜底）。前端先拦一道，是告诉别人「这不是你的活」，
+           而不是把按钮递到人手里再吃 403（宪法 V：越权不画绿）。其余角色可见但禁用、带 title 说明原因。 -->
+      <button class="btn small primary" :disabled="!can('tag')" :title="can('tag') ? '' : '发布新版本是 SA 的职责'" @click="publish"><span v-html="icon('cloud', 11)" /> 发布新版本</button>
     </div>
 
     <div class="ptabs">

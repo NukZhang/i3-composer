@@ -14,7 +14,9 @@ function go(n) {
 </script>
 
 <template>
-  <PageHeader title="通知中心" sub="待确认 / 构建结果 / 部署结果 · 企微失败降级站内 · 全部来自账本事实" />
+  <!-- 说实际情形：外部 IM 通道没接，不存在「先发企微、发不出去才落站内」这条降级路径。
+       以前写「企微失败降级站内」等于编了一个不存在的架构（宪法 II），与 TechView 的「未接」列表也矛盾。 -->
+  <PageHeader title="通知中心" sub="待确认 / 构建结果 / 部署结果 · 全部来自账本事实 · 外部 IM 通道未接，通知只到站内" />
   <div v-if="!S.notifications.length" class="card"><div class="empty">暂无通知</div></div>
   <div v-else class="card">
     <div v-for="(n, i) in S.notifications" :key="i" class="row" style="padding: 8px 0; border-bottom: 1px solid var(--line-e); cursor: pointer" @click="go(n)">

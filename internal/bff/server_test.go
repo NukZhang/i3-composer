@@ -525,3 +525,26 @@ func TestFactAppendNotifiesSSESubscribers(t *testing.T) {
 		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
 	next("event: change")
 }
+
+// 拼错的 /api 路由与用错方法的接口都要如实拒绝——不能回 200 + 首页。
+// 回 HTML 会让客户端 if (resp.ok) 进成功分支再解析失败，错误离真正原因很远（#20）。
+func TestUnmatchedAPIReturns404NotIndex(t *testing.T) {
+	h := newHarness(t)
+
+	resp, out := h.do(t, http.MethodGet, "/api/definitely-not-a-route", nil, RoleBA)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("拼错的 /api 路由应 404，实际 %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("应是 JSON 错误而不是 HTML，实际 Content-Type=%q", ct)
+	}
+	if msg, _ := out["error"].(string); !strings.Contains(msg, "没有对应路由") {
+		t.Fatalf("错误信息要说明「接口不存在」，实际 %v", out["error"])
+	}
+
+	// 错误方法也不许落到 SPA 兜底：GET /api/health 存在，DELETE 不存在。
+	resp2, _ := h.do(t, http.MethodDelete, "/api/health", nil, RoleBA)
+	if resp2.StatusCode == http.StatusOK {
+		t.Fatalf("DELETE /api/health 不该回 200（方法不匹配应被拒），实际 %d", resp2.StatusCode)
+	}
+}

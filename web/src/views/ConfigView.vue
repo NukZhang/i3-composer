@@ -17,7 +17,9 @@ const LANGS = ['Go（当前）', 'Python', 'Java', 'TypeScript'];
     title="配置 · 企业适配底座"
     sub="SA 的职责：多语言运行时、外部系统连接器、架构与资源管理。"
   >
-    <button class="btn small" :disabled="!can('config')"><span v-html="icon('plus', 12)" /> 登记连接器</button>
+    <!-- 连接器登记还没接，SA 也不该点到一个没反应的按钮。一律禁用 + 说明原因（#24），
+         与全站「判不了/没实现就写明」一致（宪法 II）。 -->
+    <button class="btn small" disabled title="连接器登记还没接"><span v-html="icon('plus', 12)" /> 登记连接器</button>
   </PageHeader>
 
   <div v-if="!can('config')" class="perm-note">

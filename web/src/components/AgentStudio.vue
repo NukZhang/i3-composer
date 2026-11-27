@@ -365,8 +365,10 @@ const curAssembly = computed(() => {
                   </span>
                 </div>
               </div>
+              <!-- 一篇没载入时按服务端算出的 note 归因，别写死「没召回」：
+                   query 为空是「没读到输入」，读了没命中才是「没召回」，两种修法不同。 -->
               <div v-else class="small" style="color: var(--warn); margin-top: 4px">
-                这一轮一篇都没载入——该进的没进，属于「没召回」，不是「答歪」。
+                {{ curAssembly.note || '这一轮一篇都没载入' }}
               </div>
               <div class="small muted" style="margin-top: 4px">
                 预算占用 {{ (curAssembly.budget.used * 100).toFixed(1) }}%（{{ Math.round(curAssembly.budget.used * 4000) }}/4000 字符）

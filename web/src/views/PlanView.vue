@@ -157,9 +157,11 @@ async function addAnnotationRound() {
         仍指向 {{ s.on.map((d) => d.t.toUpperCase() + ' ' + d.v).join('、') }}，与最新不同步
       </div>
       <div class="row" style="margin-top: 9px">
-        <button class="btn primary small" :disabled="!!stale.length || !ws.length">提交为 {{ nextCommitNo(commits) }}</button>
+        <!-- 提交只能由 workflow 做，这里不该是可点的按钮。降级成状态文本：
+             一个亮着却按了没反应的按钮比一句说明更让人困惑（#24）。 -->
         <span v-if="stale.length" class="small" style="color: var(--warn)">有 {{ stale.length }} 个制品过期，提交已锁定</span>
         <span v-else-if="!ws.length" class="small muted">工作区无变更</span>
+        <span v-else class="small" style="color: var(--accent-tx2)">待 workflow 提交为 {{ nextCommitNo(commits) }}</span>
         <span class="small muted">提交由 workflow 完成（DA 发起交付后自动跑）</span>
       </div>
     </template>

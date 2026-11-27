@@ -204,12 +204,21 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // 为什么需要回落：页面路由（/plan、/verify 等）在服务端没有对应文件，
 // 直接 404 会让刷新页面变成白屏。判据是「路径里有扩展名」——
 // 有扩展名的是静态资源，没有的是前端路由。
+//
+// 例外是 /api/ 前缀：那是接口，不是前端路由。拼错的路由、用错方法的接口
+// 必须如实回 404 / 405，而不是回 200 + 首页——否则客户端 if (resp.ok) 会进成功
+// 分支再解析 HTML 失败，错误信息离真正的「接口不存在」很远（宪法 II：拒绝要说得清）。
 func spa(root http.FileSystem) http.Handler {
 	files := http.FileServer(root)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		if p == "/" || p == "/index.html" || strings.Contains(path.Ext(p), ".") {
 			files.ServeHTTP(w, r)
+			return
+		}
+		// 接口路由到这里说明没匹配上：是「不存在」，不是前端页面。
+		if p == "/api" || strings.HasPrefix(p, "/api/") {
+			writeJSON(w, http.StatusNotFound, map[string]any{"error": "不存在：接口 " + p + " 没有对应路由"})
 			return
 		}
 		idx, err := root.Open("index.html")
