@@ -164,7 +164,7 @@ function factDetail(f) {
   const p = f.payload || {};
   switch (f.type) {
     case 'test.run':
-      return `${p.pass}/${p.total} 通过` + (p.failures && p.failures.length ? `（${p.failures.join('、')}）` : '');
+      return `${p.pass}/${p.total} ${p.scope === 'scaffold' ? '脚手架检查通过，业务未验证' : '通过'}` + (p.failures && p.failures.length ? `（${p.failures.join('、')}）` : '');
     case 'build.succeeded':
       return p.digest ? String(p.digest).slice(0, 19) + '…' : '';
     case 'deploy.succeeded':
@@ -302,7 +302,7 @@ function factDetail(f) {
       <div class="row wrap" style="gap: 6px">
         <span v-if="testResult" class="achip" :style="'border-color:' + (testResult.pass === testResult.total ? 'var(--line-ok)' : 'var(--line-err)')">
           <b :style="{ color: testResult.pass === testResult.total ? 'var(--ok)' : 'var(--err)' }">{{ testResult.pass }}/{{ testResult.total }}</b>
-          测试通过
+          {{ testResult.scope === 'scaffold' ? '脚手架检查通过，业务未验证' : '测试通过' }}
         </span>
         <span v-if="buildDigest" class="achip"><b>{{ buildDigest.slice(0, 19) }}…</b> 构建产物摘要</span>
         <span v-if="deployURL" class="achip"><b style="color: var(--info)">{{ deployURL }}</b> 部署地址</span>

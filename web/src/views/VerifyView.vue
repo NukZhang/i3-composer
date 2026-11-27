@@ -58,6 +58,10 @@ const testsOK = computed(() => {
   const t = state.value?.test;
   return !!(t && head.value && t.commit === head.value.no && t.pass === t.total);
 });
+const scaffold = computed(() => {
+  const test = state.value?.test;
+  return test?.scope === 'scaffold' && test.commit === head.value?.no;
+});
 const gatesOK = computed(() => {
   const gs = state.value?.gates?.all || [];
   return gs.length > 0 && gs.every((g) => g.ok || g.unknown);
@@ -211,6 +215,10 @@ function pushDefect(d) {
     当前单元未接入可操作的业务制品。请按验收清单核对实际操作和结果。
   </div>
 
+  <div v-if="scaffold" class="card small muted">
+    当前提交仅通过脚手架检查，业务未验证。
+  </div>
+
   <div v-if="!checks.length" class="card">
     <div v-if="kind !== 'agent'" class="empty">请提交有明确验收项的人工 AT。每项使用 AT-01 或 AC-01 等编号，写齐 Given、When、Then。BA 按当前提交逐条验收后方可打 tag。</div>
     <div v-else class="empty">本单元尚无人工验收清单，交付检查按 Agent 评测闸执行。</div>
@@ -342,7 +350,7 @@ function pushDefect(d) {
           </button>
         </div>
         <div class="small muted" style="margin-top: 5px">
-          这一刻 HEAD 是 {{ replay.commit }}，测试 {{ replay.test ? (replay.test.pass + '/' + replay.test.total) : '没有记录' }}；
+          这一刻 HEAD 是 {{ replay.commit }}，{{ replay.test?.scope === 'scaffold' ? '脚手架检查' : '测试' }} {{ replay.test ? (replay.test.pass + '/' + replay.test.total) : '没有记录' }}；
           验收 {{ replay.checks.length ? (replay.checks.filter((c) => c.st === 'pass').length + '/' + replay.checks.length + ' 通过') : '无清单' }}。
         </div>
         <div v-if="replay.gatesNote" class="small" style="margin-top: 6px; color: var(--warn)">{{ replay.gatesNote }}</div>

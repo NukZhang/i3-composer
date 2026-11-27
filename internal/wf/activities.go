@@ -49,9 +49,9 @@ type Pub interface {
 // 单测可以塞一个假的进来，但生产路径上它必须是真干活的那个。
 type Executor interface {
 	// Doc 产出文档类制品的内容。
-	Doc(ctx context.Context, u UnitInfo, title, change string, t domain.Artifact) (string, error)
+	Doc(ctx context.Context, in GenerationInput, t domain.Artifact) (string, error)
 	// Code 产出代码类制品的文件。
-	Code(ctx context.Context, u UnitInfo, title, change string) (map[string]string, error)
+	Code(ctx context.Context, in GenerationInput) (map[string]string, error)
 	// Test 真跑测试。
 	Test(ctx context.Context, pbc, commit string, files map[string]string) (TestOut, error)
 	// Build 真构建，产出内容寻址的 digest。
@@ -249,7 +249,7 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 	for _, t := range domain.Order {
 		have[t] = latest(t) != ""
 	}
-	unit := a.unitOf(ctx, in.Input)
+	input := generationInput(a.unitOf(ctx, in.Input), in.Input, v.Items[in.ItemID])
 
 	n := 0
 	seq := v.Seq
@@ -280,13 +280,13 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 		// 内容：文档给 markdown，代码给文件。
 		if a.D.Exec != nil {
 			if t == domain.Code {
-				files, err := a.D.Exec.Code(ctx, unit, in.Title, in.Type)
+				files, err := a.D.Exec.Code(ctx, input)
 				if err != nil {
 					return StepResult{}, fmt.Errorf("生成代码制品失败：%w", err)
 				}
 				ver.Files = files
 			} else {
-				md, err := a.D.Exec.Doc(ctx, unit, in.Title, in.Type, t)
+				md, err := a.D.Exec.Doc(ctx, input, t)
 				if err != nil {
 					return StepResult{}, fmt.Errorf("生成 %s 失败：%w", t, err)
 				}
@@ -308,14 +308,22 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Detail: fmt.Sprintf("%d 个制品草稿", n)})
 }
 
+func generationInput(unit UnitInfo, in Input, item *store.Item) GenerationInput {
+	input := GenerationInput{Unit: unit, Title: in.Title, Change: in.Type}
+	if item != nil {
+		input.Accept = item.Accept
+	}
+	return input
+}
+
 // 人工方案由负责角色编辑。流水线收敛时只重接这些制品的引用。
 func manualPlan(v domain.Version) bool {
 	return v.Source == domain.SourceManual && (v.T == domain.PRD || v.T == domain.AD || v.T == domain.AT)
 }
 
-// 这轮交付应提交已经保存的人工草稿，否则重新跑测试就会测到重新生成的内容。
+// 人工代码提交后仍由人维护，生成器只更新引用，避免脚手架覆盖已有实现。
 func keepManualContent(v domain.Version) bool {
-	return manualPlan(v) || (v.Source == domain.SourceManual && v.St == domain.StDraft)
+	return manualPlan(v) || (v.Source == domain.SourceManual && (v.St == domain.StDraft || v.T == domain.Code))
 }
 
 // unitOf 读这个工作项所属交付单元的登记信息。
@@ -379,6 +387,7 @@ func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, er
 		if err != nil {
 			return StepResult{}, err
 		}
+		input := generationInput(unit, in.Input, v.Items[in.ItemID])
 		stale := domain.Stale(v.Versions)
 		if len(stale) == 0 {
 			return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Detail: "工作区已收敛"})
@@ -402,13 +411,13 @@ func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, er
 				ver.Note = "保留人工制品内容，按上游最新版本更新引用"
 			} else if a.D.Exec != nil {
 				if s.T == domain.Code {
-					files, err := a.D.Exec.Code(ctx, unit, in.Title, in.Type)
+					files, err := a.D.Exec.Code(ctx, input)
 					if err != nil {
 						return StepResult{}, fmt.Errorf("重算代码制品失败：%w", err)
 					}
 					ver.Files = files
 				} else {
-					md, err := a.D.Exec.Doc(ctx, unit, in.Title, in.Type, s.T)
+					md, err := a.D.Exec.Doc(ctx, input, s.T)
 					if err != nil {
 						return StepResult{}, fmt.Errorf("重算 %s 失败：%w", s.T, err)
 					}
@@ -546,15 +555,21 @@ func (a *Activities) Test(ctx context.Context, in StepInput) (StepResult, error)
 		"id": in.ItemID, "commit": head.No, "pass": res.Pass, "total": res.Total,
 		"failures": res.Failures, "by": "x-qa",
 	}
+	if res.Scope != "" {
+		p["scope"] = res.Scope
+	}
 	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/test", store.FactTestRun, "x-qa", p); err != nil {
 		return StepResult{}, err
 	}
 	a.publish(ctx, TopicItemChanged, map[string]any{
 		"pbc": in.PBC, "item": in.ItemID, "kind": "test",
-		"pass": res.Pass, "total": res.Total,
+		"pass": res.Pass, "total": res.Total, "scope": res.Scope,
 	})
-	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Pass: res.Pass, Total: res.Total,
-		Detail: fmt.Sprintf("%d/%d 通过", res.Pass, res.Total)})
+	detail := fmt.Sprintf("%d/%d 通过", res.Pass, res.Total)
+	if res.Scope == domain.TestScopeScaffold {
+		detail += " · 脚手架检查，业务未验证"
+	}
+	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Pass: res.Pass, Total: res.Total, Detail: detail})
 }
 
 // codeFiles 取一个提交里代码制品的文件。

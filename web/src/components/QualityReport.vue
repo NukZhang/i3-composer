@@ -29,6 +29,7 @@ const canRelease = computed(() => all.value.length > 0 && all.value.every((g) =>
 
 // 测试与产物放在一起时必须来自同一次提交。
 const digest = computed(() => props.builds[props.test?.commit] || '');
+const scaffold = computed(() => props.test?.scope === 'scaffold');
 </script>
 
 <template>
@@ -42,14 +43,17 @@ const digest = computed(() => props.builds[props.test?.commit] || '');
       <div class="row wrap" style="gap: 6px">
         <span class="achip" :style="'border-color:' + (test.pass === test.total ? 'var(--line-ok)' : 'var(--line-err)')">
           <b :style="{ color: test.pass === test.total ? 'var(--ok)' : 'var(--err)' }">{{ test.pass }}/{{ test.total }}</b>
-          测试通过
+          {{ scaffold ? '脚手架检查通过' : '测试通过' }}
         </span>
         <span v-if="digest" class="achip"><b>{{ digest.slice(0, 19) }}…</b> 构建产物摘要</span>
         <span v-if="test.failures && test.failures.length" class="achip" style="border-color: var(--line-err)">
           <b style="color: var(--err)">{{ test.failures.join('、') }}</b> 失败用例
         </span>
       </div>
-      <div class="small muted" style="margin-top: 8px; line-height: 1.7">
+      <div v-if="scaffold" class="small muted" style="margin-top: 8px; line-height: 1.7">
+        业务未验证。请查看人工验收清单和业务测试证据。
+      </div>
+      <div v-else class="small muted" style="margin-top: 8px; line-height: 1.7">
         测试条数是 <code>go test</code> 的真实输出，摘要是编译产物的字节 sha256——
         两者都不是编出来的：构建不过、测试不过，这一页就会红。
       </div>

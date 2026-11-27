@@ -24,6 +24,14 @@ type UnitInfo struct {
 	Profile string `json:"profile,omitempty"`
 }
 
+// GenerationInput 是生成制品时从工作项账本读取的业务输入。
+type GenerationInput struct {
+	Unit   UnitInfo
+	Title  string
+	Change string
+	Accept []string
+}
+
 // Input 是一个工作项进入 workflow 时的全部输入。
 type Input struct {
 	ItemID string `json:"itemId"`
@@ -79,6 +87,7 @@ type TestOut struct {
 	Pass     int      `json:"pass"`
 	Total    int      `json:"total"`
 	Failures []string `json:"failures,omitempty"`
+	Scope    string   `json:"scope,omitempty"`
 	Output   string   `json:"output,omitempty"`
 }
 

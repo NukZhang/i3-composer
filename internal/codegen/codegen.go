@@ -6,7 +6,7 @@
 //
 //   - 文档类（PRD / AD / AT / Backlog）：markdown 正文，可读可编辑。
 //   - 代码类（code）：一个能 `go build`、能 `go test` 的 Go 模块，
-//     它的行为由验收标准（AT）决定，所以测试跑的是真实现。
+//     没有对应领域实现时只生成标明范围的脚手架。
 //
 // 生成是确定性的：同样的输入永远得到同样的字节，所以 digest 可复算。
 //
@@ -25,13 +25,15 @@ import (
 
 // Spec 是一次生成所需的全部输入。
 type Spec struct {
-	UnitID   string // 交付单元 id
-	UnitName string // 交付单元名
-	Kind     string // pbc | agent | hybrid
-	Profile  string // 业务 PBC 的制品类型，空表示通用示例
-	Title    string // 工作项标题
-	Change   string // new | feature | defect | backlog | doc
-	At       string // 时间戳
+	UnitID      string   // 交付单元 id
+	UnitName    string   // 交付单元名
+	Kind        string   // pbc | agent | hybrid
+	Profile     string   // 业务 PBC 的制品类型，空表示无领域模板
+	DemoBilling bool     // 保留显式演示数据的缴费模板
+	Accept      []string // 账本中由业务人员填写的工作项口径
+	Title       string   // 工作项标题
+	Change      string   // new | feature | defect | backlog | doc
+	At          string   // 时间戳
 }
 
 // Plural 是资源集合名（URL 路径用）。
@@ -60,13 +62,14 @@ type Acceptance struct {
 	Then  string
 }
 
-// Acceptance 是本单元的验收标准清单。
-//
-// 文档（AT）与代码（单元测试）共用同一份清单：文档里写「Then 什么」，
-// 测试里就断言什么。这样「文档说一套、代码做另一套」不会发生。
+// Acceptance 返回已知领域的标准，或从工作项口径整理的待确认草案。
 func (s Spec) Acceptance() []Acceptance {
 	if s.Profile == domain.ProfileMaterialInbound {
 		return materialAcceptance
+	}
+	if !s.DemoBilling {
+		criteria, _ := s.scaffoldCriteria()
+		return criteria
 	}
 	return []Acceptance{
 		{ID: "AC-1", Name: "健康检查可用", Given: "服务已启动", When: "请求 /healthz", Then: "返回 200 且带单元标识"},
@@ -79,15 +82,18 @@ func (s Spec) Acceptance() []Acceptance {
 
 // render 做占位符替换。{{KEY}} 会被替换成对应值。
 func render(tmpl string, subs map[string]string) string {
-	out := tmpl
+	pairs := make([]string, 0, len(subs)*2)
 	for k, v := range subs {
-		out = strings.ReplaceAll(out, "{{"+k+"}}", v)
+		pairs = append(pairs, "{{"+k+"}}", v)
 	}
-	return out
+	return strings.NewReplacer(pairs...).Replace(tmpl)
 }
 
 // Docs 生成文档类制品的 markdown 正文。
 func Docs(s Spec) map[domain.Artifact]string {
+	if !s.DemoBilling && s.Profile != domain.ProfileMaterialInbound {
+		return s.scaffoldDocs()
+	}
 	out := map[domain.Artifact]string{}
 	out[domain.PRD] = s.prd()
 	out[domain.Proto] = s.proto()
@@ -160,13 +166,13 @@ func (s Spec) backlog() string {
 	return b.String()
 }
 
-// Code 生成代码类制品：一个能编译、能测试的 Go 模块。
-//
-// 关键点：它实现的正是 AT 里写的那些口径（幂等、滞纳金封顶、统计一致），
-// 所以 `go test` 跑的是真实现，而不是对着空壳编出来的条数。
+// Code 生成可编译、可测试的 Go 模块。
 func Code(s Spec) map[string]string {
 	if s.Profile == domain.ProfileMaterialInbound {
 		return materialCode(s)
+	}
+	if !s.DemoBilling {
+		return s.scaffoldCode()
 	}
 	p := s.Plural()
 	mod := "i3/" + s.UnitID

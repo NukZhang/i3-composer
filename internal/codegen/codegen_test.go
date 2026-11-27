@@ -17,7 +17,7 @@ func TestGeneratedCodeCompilesAndTestsPass(t *testing.T) {
 		t.Skip("环境里没有 go，跳过")
 	}
 	for _, spec := range []Spec{
-		{UnitID: "fee", UnitName: "收费缴费", Kind: "pbc", Title: "批量生成缴费单", Change: "feature", At: "11-24 10:00"},
+		{UnitID: "fee", UnitName: "收费缴费", Kind: "pbc", Title: "批量生成缴费单", Change: "feature", At: "11-24 10:00", DemoBilling: true},
 		{UnitID: "inbound-regression", UnitName: "材料入库", Kind: "pbc", Profile: domain.ProfileMaterialInbound},
 	} {
 		t.Run(spec.UnitID, func(t *testing.T) { assertGeneratedCode(t, spec) })
@@ -57,7 +57,7 @@ func assertGeneratedCode(t *testing.T, spec Spec) {
 
 // 文档与代码说的是同一套口径：AT 里的每条 AC 都得在测试里出现。
 func TestAcceptanceIsSharedBetweenDocAndTests(t *testing.T) {
-	spec := Spec{UnitID: "fee", UnitName: "收费缴费", Kind: "pbc", Title: "t", At: "now"}
+	spec := Spec{UnitID: "fee", UnitName: "收费缴费", Kind: "pbc", Title: "t", At: "now", DemoBilling: true}
 	acs := spec.Acceptance()
 	if len(acs) != 5 {
 		t.Fatalf("应有 5 条验收标准，实际 %d", len(acs))

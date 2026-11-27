@@ -42,6 +42,7 @@ type Result struct {
 
 // TestResult 是一次测试的真实结果。
 type TestResult struct {
+	Passed   []string `json:"-"`
 	Pass     int      `json:"pass"`
 	Total    int      `json:"total"`
 	Failures []string `json:"failures,omitempty"`
@@ -133,6 +134,7 @@ func parseTestOutput(out string) TestResult {
 		}
 		switch m[1] {
 		case "PASS":
+			res.Passed = append(res.Passed, m[2])
 			res.Pass++
 			res.Total++
 		case "FAIL":
