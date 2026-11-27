@@ -211,6 +211,7 @@ function grayModule(name) {
               class="trow sub"
               :class="{ on: S.pbcId === u.id && S.view !== 'orch' }"
               :title="'v' + (u.head || '—')"
+              :data-unit="u.id"
               @click="openUnit(u.id)"
             >
               <span v-html="icon(u.kind === 'agent' ? 'robot' : 'layers', 12)" /> {{ u.name }}
