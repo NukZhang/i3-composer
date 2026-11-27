@@ -486,3 +486,33 @@ func TestFactsEndpointHonoursLimit(t *testing.T) {
 		t.Fatalf("不带 limit 应回全量（两条 work item），实际 %d", n)
 	}
 }
+
+// 被白名单拦掉的那一轮 kb 节点拿到空 query：/api/facts 要能直接看出来，
+// 否则 0 篇这件事与「没召回」在账本上长得一模一样（#33）。
+func TestFactsExposeTrialQueries(t *testing.T) {
+	h := newHarness(t)
+	loaded := domain.Trial{In: "a", Source: "executor", Assemblies: []domain.ContextAssembly{
+		{Node: "kb", Query: "票据打印", Loaded: []domain.LoadedChunk{{Lib: "l", Doc: "d", Score: 3, Class: "可选参考"}}},
+	}}
+	blocked := domain.Trial{In: "b", Source: "executor", Assemblies: []domain.ContextAssembly{
+		{Node: "kb", Note: "没读到输入：上游 query 是空"},
+	}}
+	for _, tr := range []domain.Trial{loaded, blocked} {
+		if _, err := h.st.Append(t.Context(), "fee", store.FactAgentTrial, "DA",
+			map[string]any{"agentId": "x-fe", "trial": tr, "at": "01:00", "by": "DA"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, out := h.do(t, http.MethodGet, "/api/facts?pbc=fee&limit=1", nil, RoleBA)
+	top := out["facts"].([]any)[0].(map[string]any)
+	qs, _ := top["queries"].([]any)
+	if len(qs) != 1 || qs[0] != "kb: (空)" {
+		t.Fatalf("被拦那轮应标出空 query，实际 %v", top["queries"])
+	}
+	_, out = h.do(t, http.MethodGet, "/api/facts?pbc=fee&limit=2", nil, RoleBA)
+	prev := out["facts"].([]any)[1].(map[string]any)
+	qs, _ = prev["queries"].([]any)
+	if len(qs) != 1 || qs[0] != "kb: 票据打印" {
+		t.Fatalf("召回那轮应带真 query，实际 %v", prev["queries"])
+	}
+}

@@ -712,7 +712,20 @@ func (s *Server) facts(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	}
 	out := make([]map[string]any, 0, len(facts))
 	for _, f := range facts {
-		out = append(out, map[string]any{"seq": f.Seq, "at": f.At, "type": f.Type, "actor": f.Actor})
+		m := map[string]any{"seq": f.Seq, "at": f.At, "type": f.Type, "actor": f.Actor}
+		// 试跑事实带上「kb 节点这轮拿到了什么 query」，0 篇时靠它分清
+		// 「没读到输入」和「没召回」——只给类型名，失败详情还得去翻别处（#33）。
+		if f.Type == store.FactAgentTrial {
+			var p struct {
+				Trial domain.Trial `json:"trial"`
+			}
+			if json.Unmarshal(f.Payload, &p) == nil {
+				if q := trialQueries(p.Trial); len(q) > 0 {
+					m["queries"] = q
+				}
+			}
+		}
+		out = append(out, m)
 	}
 	// 新的在前：和运行时日志的阅读顺序一致。
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
@@ -723,6 +736,20 @@ func (s *Server) facts(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"pbc": c.PBC, "facts": out})
 	return nil
+}
+
+// trialQueries 把一轮试跑里每个 kb 节点拿到的 query 收成「节点: query」或「节点: (空)」。
+// 被拦掉的节点在事实里看起来也是「什么都没载入」，得靠这个字段分开（#33）。
+func trialQueries(t domain.Trial) []string {
+	out := make([]string, 0, len(t.Assemblies))
+	for _, a := range t.Assemblies {
+		q := a.Query
+		if q == "" {
+			q = "(空)"
+		}
+		out = append(out, a.Node+": "+q)
+	}
+	return out
 }
 
 // ---------- 制品草稿 ----------

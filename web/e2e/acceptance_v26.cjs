@@ -177,11 +177,20 @@ function check(name, ok, detail) {
     // 后面 10 段核对「最近一次检索」仍旧钉在这一轮上（#47）。
     return { assemblies: t.assemblies || [], lastAtExact: t.atExact || '', trialAtExact: (a.trialRun || {}).atExact || '' };
   }, BASE);
+  // #33：以前只读 assemblies[0]，而同一本账上更早那轮「被白名单拦下、载入 0 篇」的试跑也在这份
+  // 清单里，读到空轮就把原因写成「没召回」。现在挑「真的拿到 query 的那一轮」，并断言空轮的
+  // 归因是「没读到输入」——两种 0 篇要分得开，否则失败详情会把人引到错的排查方向。
   const asm0 = (trialAsm.assemblies || []).find((a) => a.query && a.loaded && a.loaded.length > 0);
+  const asmSummary = (trialAsm.assemblies || []).map((a) => ({
+    node: a.node, query: a.query || '', note: a.note || '', loaded: (a.loaded || []).length,
+  }));
   check('4b 试跑结果带当轮装配（载入清单 + 省略 + 预算）',
     !!asm0 && Array.isArray(asm0.loaded) && asm0.loaded.length > 0
       && asm0.omitted && typeof asm0.omitted.count === 'number' && asm0.budget && asm0.budget.total === 1,
-    asm0 && { node: asm0.node, loaded: asm0.loaded.length, omitted: asm0.omitted, budget: asm0.budget });
+    { assemblies: asmSummary, picked: asm0 ? asm0.node : null });
+  check('4b 拿到 query 的那一轮有载入，空 query 的那一轮写明「没读到输入」',
+    (trialAsm.assemblies || []).filter((a) => !a.query).every((a) => /^没读到输入/.test(a.note || '')),
+    asmSummary);
   check('4b 载入项带 doc / ver / score 与四类边界',
     !!asm0 && asm0.loaded.every((c) => c.doc && typeof c.score === 'number' && c.score > 0 && c.class),
     asm0 && asm0.loaded.slice(0, 2));
