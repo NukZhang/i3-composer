@@ -159,8 +159,9 @@ func run() error {
 	// 这样「页面自动推进」不依赖某个 handler 是否记得调 publish。
 	log.Notify = srv.NotifyChange
 	hs := &http.Server{
-		Addr:              addr,
-		Handler:           withCORS(srv.Handler()),
+		Addr: addr,
+		// CORS 只对 CORS_ORIGINS 里显式列出的来源放行；默认空 = 不发 CORS 头（#42）。
+		Handler:           bff.NewCORS(srv.Handler(), bff.ParseOrigins(env("CORS_ORIGINS", ""))),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
@@ -188,24 +189,4 @@ type publisher struct {
 
 func (p publisher) Publish(ctx context.Context, topic string, data any) error {
 	return p.dc.Publish(ctx, p.pubsub, topic, data)
-}
-
-// withCORS 允许原型页（file:// 或另一端口）直接调这套 API。
-// 只放行 GET/POST + JSON，不带凭据通配——会话靠同源 cookie，跨源时前端改用 /api/role 拿角色。
-func withCORS(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin != "" {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-		}
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		h.ServeHTTP(w, r)
-	})
 }
