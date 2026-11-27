@@ -1,0 +1,26 @@
+独立 Compose 项目 i3-issue-79-verified，账本前缀 issue79verified/，RUN_TAG=issue79verified
+被测产品及用例补丁 SHA-256 3c8a007e81ab40a6daefb6997c26821a01f3c5a8e09fd8297b29ea997e27b363
+
+/api/health
+{"ok":true,"pubsub":{"checked":true,"detail":"sidecar 的 app-port=8080，与本实例一致","localPort":8080,"ok":true,"sidecarAddress":"127.0.0.2","sidecarAppPort":8080},"time":"2026-11-27T15:46:17Z"}
+
+访客通行凭证专项
+PASS 制品使用访客口径，明确标注占位 {"unit":"visitor-issue79verif","item":"US-12","commit":"1.0.1","tree":{"ad":"1.0.3","at":"1.0.4","backlog":"1.0.5","code":"1.0.6","prd":"1.0.1","proto":"1.0.2"}}
+PASS 同一提交的真实测试和构建证据 {"testSeq":30,"test":{"by":"x-qa","commit":"1.0.1","failures":null,"id":"US-12","pass":1,"scope":"scaffold","total":1},"buildSeq":32,"digest":"sha256:3f9a9d6ada2e5a96b7acd5679a3832bd81e6e078b9b73f1d4539ddbaf9d87781"}
+PASS 生成草案没有成为人工清单，SA 打 tag 被拒绝
+PASS 质量报告和验证页都明确显示业务未验证
+SUMMARY 4/4
+
+工程验证
+go vet ./... 通过
+go test -count=1 ./... 通过
+npm --prefix web ci 与 npm --prefix web run build 通过
+早期工程验证中 TestReleaseRuntimeIgnoresOutOfOrderBatchRecords 一次等待监听地址超时，专项复跑 5/5，最终完整工程验证通过。
+
+Playwright 回归与材料入库专项
+acceptance_v32 SUMMARY 70/70 passed
+acceptance_exec SUMMARY 35/35 passed
+acceptance_flow SUMMARY 33/33 passed
+acceptance_full SUMMARY 20/20 passed
+acceptance_v26 SUMMARY 75/75 passed
+acceptance_material37 SUMMARY 5/5 业务验收通过

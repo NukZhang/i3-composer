@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/zhangkun/i3-composer/internal/artifacts"
 	"github.com/zhangkun/i3-composer/internal/codegen"
+	"github.com/zhangkun/i3-composer/internal/wf"
 )
 
 // newTestStore 造一个落在临时目录里的产物仓库。
@@ -175,4 +177,68 @@ func TestBrokenCodeFailsTheTest(t *testing.T) {
 	if _, err := p.Test(ctx, "broken", "1.0.1", files); err == nil {
 		t.Fatal("编译不过的代码必须让测试失败")
 	}
+}
+
+func TestScaffoldScopeFollowsExecutedTestsAndRuntime(t *testing.T) {
+	ctx := t.Context()
+	pipe := newTestPipeline(t)
+	spec := wf.GenerationInput{Unit: wf.UnitInfo{ID: "visitor", Kind: "pbc"}, Title: "访客通行凭证"}
+	files, err := pipe.Code(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("删说明不能把健康检查变成业务测试", func(t *testing.T) {
+		withoutReadme := maps.Clone(files)
+		delete(withoutReadme, "README.scaffold.md")
+		result, err := pipe.Test(ctx, "visitor", "1.0.1", withoutReadme)
+		if err != nil || result.Total != 1 || result.Scope != "scaffold" {
+			t.Fatalf("应标为脚手架：%+v, %v", result, err)
+		}
+	})
+	t.Run("加技术检查仍只有脚手架", func(t *testing.T) {
+		extra := maps.Clone(files)
+		extra["main.go"] = strings.Replace(extra["main.go"], `"ok": true`, `"ok": true, "ready": true`, 1)
+		extra["manual_test.go"] = `package main
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+func TestManualHealth(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	var response map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || response["ready"] != true {
+		t.Fatalf("健康检查应返回 ready，实际 %s", rec.Body)
+	}
+}
+`
+		result, err := pipe.Test(ctx, "visitor", "1.0.2", extra)
+		if err != nil || result.Total != 2 || result.Scope != "scaffold" {
+			t.Fatalf("应标为脚手架：%+v, %v", result, err)
+		}
+	})
+	t.Run("人工实现和业务测试不受遗留说明影响", func(t *testing.T) {
+		withBusiness := maps.Clone(files)
+		withBusiness["main.go"] = strings.Replace(withBusiness["main.go"], `i3ScaffoldHealthScope = "scaffold"`, `i3ScaffoldHealthScope = "business"`, 1)
+		withBusiness["main.go"] = strings.Replace(withBusiness["main.go"], "\treturn mux", `	mux.HandleFunc("/visitor/pass", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode("valid")
+	})
+	return mux`, 1)
+		withBusiness["main_test.go"] = strings.Replace(withBusiness["main_test.go"], `body["scope"] != "scaffold"`, `body["scope"] != "business"`, 1) + `
+func TestVisitorPass(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/visitor/pass", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("访客凭证接口应返回 200，实际 %d", rec.Code)
+	}
+}
+`
+		result, err := pipe.Test(ctx, "visitor", "1.0.3", withBusiness)
+		if err != nil || result.Total != 2 || result.Scope == "scaffold" {
+			t.Fatalf("技术和业务测试同时通过：%+v, %v", result, err)
+		}
+	})
 }

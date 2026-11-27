@@ -74,7 +74,8 @@ func New(log *store.Store, work string) (*Pipeline, error) {
 }
 
 // specOf 拼出生成器需要的输入。
-func (p *Pipeline) specOf(ctx context.Context, u wf.UnitInfo, title, change string) codegen.Spec {
+func specOf(in wf.GenerationInput) codegen.Spec {
+	u := in.Unit
 	name := u.Name
 	if name == "" {
 		name = u.ID
@@ -84,15 +85,16 @@ func (p *Pipeline) specOf(ctx context.Context, u wf.UnitInfo, title, change stri
 		UnitName: name,
 		Kind:     u.Kind,
 		Profile:  u.Profile,
-		Title:    title,
-		Change:   change,
+		Title:    in.Title,
+		Change:   in.Change,
+		Accept:   in.Accept,
 		At:       stamp(),
 	}
 }
 
 // Doc 产出文档类制品的内容。
-func (p *Pipeline) Doc(ctx context.Context, u wf.UnitInfo, title, change string, t domain.Artifact) (string, error) {
-	docs := codegen.Docs(p.specOf(ctx, u, title, change))
+func (p *Pipeline) Doc(_ context.Context, in wf.GenerationInput, t domain.Artifact) (string, error) {
+	docs := codegen.Docs(specOf(in))
 	md, ok := docs[t]
 	if !ok {
 		return "", fmt.Errorf("制品 %s 没有可生成的文档", t)
@@ -104,9 +106,9 @@ func (p *Pipeline) Doc(ctx context.Context, u wf.UnitInfo, title, change string,
 //
 // PBC 与组合单元产出可编译的 Go 服务；Agent 单元产出的是编排定义本身
 // （它的产物是「一份编排 + 一个 digest」，不是一个进程）。
-func (p *Pipeline) Code(ctx context.Context, u wf.UnitInfo, title, change string) (map[string]string, error) {
-	spec := p.specOf(ctx, u, title, change)
-	if u.Kind == "agent" {
+func (p *Pipeline) Code(_ context.Context, in wf.GenerationInput) (map[string]string, error) {
+	spec := specOf(in)
+	if spec.Kind == "agent" {
 		return agentFiles(spec), nil
 	}
 	out := map[string]string{}
@@ -162,10 +164,11 @@ func (p *Pipeline) Test(ctx context.Context, pbc, commit string, files map[strin
 		}
 		res, err := builder.Test(ctx, dir)
 		out := wf.TestOut{Pass: res.Pass, Total: res.Total, Failures: res.Failures, Output: res.Output}
-		if err != nil {
-			return out, err
+		onlyHealthTest := res.Total == 1 && len(res.Passed) == 1 && res.Passed[0] == codegen.ScaffoldHealthTest
+		if onlyHealthTest || codegen.IsScaffoldRuntime(files["main.go"]) {
+			out.Scope = domain.TestScopeScaffold
 		}
-		return out, nil
+		return out, err
 	}
 	// Agent 单元：结构校验。
 	checks, failures := validateAgentFiles(files)

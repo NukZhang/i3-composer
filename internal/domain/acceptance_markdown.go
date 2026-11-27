@@ -5,6 +5,9 @@ import (
 	"strings"
 )
 
+// TestScopeScaffold 表示测试的证据范围仅限技术脚手架。
+const TestScopeScaffold = "scaffold"
+
 var (
 	checkHeader = regexp.MustCompile(`^(?:(?:#{1,6}|[-*+])[ \t]+)?((?:AT|AC)-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)(?:[ \t：:]+|$)(.*)$`)
 	checkParts  = regexp.MustCompile(`(?i)^(.*?)\bGiven\b[ :：]*(.*?)\bWhen\b[ :：]*(.*?)\bThen\b[ :：]*(.*)$`)

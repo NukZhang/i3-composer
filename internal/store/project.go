@@ -86,6 +86,7 @@ type TestResult struct {
 	Pass     int      `json:"pass"`
 	Total    int      `json:"total"`
 	Failures []string `json:"failures,omitempty"`
+	Scope    string   `json:"scope,omitempty"`
 	At       string   `json:"at"`
 	By       string   `json:"by"`
 }
@@ -652,6 +653,7 @@ func apply(v *View, f Fact) error {
 			Pass     int      `json:"pass"`
 			Total    int      `json:"total"`
 			Failures []string `json:"failures"`
+			Scope    string   `json:"scope"`
 			By       string   `json:"by"`
 		}
 		if err := dec(&p); err != nil {
@@ -659,7 +661,7 @@ func apply(v *View, f Fact) error {
 		}
 		v.Test = &TestResult{
 			ItemID: p.ID, Commit: p.Commit, Pass: p.Pass, Total: p.Total,
-			Failures: p.Failures, At: f.At, By: p.By,
+			Failures: p.Failures, Scope: p.Scope, At: f.At, By: p.By,
 		}
 
 	case FactBRDSaved:

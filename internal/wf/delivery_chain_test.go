@@ -317,3 +317,127 @@ func TestActivitiesWriteToTheLedgerTheWorkItemCarries(t *testing.T) {
 		t.Logf("两本账各 %d 条事实（键前缀不同）", len(fa))
 	}
 }
+
+func TestDeliveryKeepsVisitorCriteriaSeparateFromScaffoldChecks(t *testing.T) {
+	ds := httptest.NewServer(newFakeState())
+	defer ds.Close()
+	ctx := t.Context()
+	log := store.New(dapr.New(ds.URL), "fake")
+	pipe, err := pipeline.New(log, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const unit = "bvn1"
+	const title = "当访客预约到访则应生成一次性通行凭证"
+	const criterion = "当访客预约到访，则应生成一次性通行凭证并在过期后失效"
+	in := wf.Input{ItemID: "US-01", PBC: unit, Title: title, Type: "new", Env: "test", Mode: "fast",
+		Unit: &wf.UnitInfo{ID: unit, Name: "访客通行凭证", Kind: "pbc"}}
+	item := store.Item{ID: in.ItemID, PBC: unit, Title: title, Accept: []string{criterion}}
+	if _, err := log.Append(ctx, unit, store.FactItemCreated, "BA", item); err != nil {
+		t.Fatal(err)
+	}
+	acts := &wf.Activities{D: wf.Deps{Log: log, Exec: pipe}}
+	for i, step := range []func(context.Context, wf.StepInput) (wf.StepResult, error){
+		acts.GenArtifacts, acts.Converge, acts.Commit, acts.Test,
+	} {
+		result, err := step(ctx, wf.StepInput{Input: in, Step: i, OpID: fmt.Sprintf("visitor/%d", i)})
+		if err != nil || !result.OK {
+			t.Fatalf("第 %d 步失败：%+v, %v", i, result, err)
+		}
+	}
+	facts, err := log.Load(ctx, unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := store.Project(unit, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := view.Commits[0]
+	for _, kind := range []domain.Artifact{domain.PRD, domain.Proto, domain.AD, domain.AT, domain.Backlog, domain.Code} {
+		version, _ := domain.Find(view.Versions, kind, head.Tree[kind])
+		body := version.MD
+		if kind == domain.Code {
+			for _, file := range version.Files {
+				body += "\n" + file
+			}
+		}
+		if !strings.Contains(body, "模板占位，非本单元口径") {
+			t.Errorf("%s 缺少模板占位标识", kind)
+		}
+		for _, billing := range []string{"lateFee", "滞纳金", "账期", "批量生成幂等"} {
+			if strings.Contains(body, billing) {
+				t.Errorf("%s 不应包含缴费模板片段 %q", kind, billing)
+			}
+		}
+		if kind == domain.PRD || kind == domain.AT || kind == domain.Backlog || kind == domain.Code {
+			if !strings.Contains(body, "过期后失效") {
+				t.Errorf("%s 没有保留账本里的验收口径", kind)
+			}
+		}
+		if kind == domain.AT {
+			checks := domain.ChecksFromAT(body)
+			if len(checks) != 1 || checks[0].W != "访客预约到访" || checks[0].T != "应生成一次性通行凭证并在过期后失效" {
+				t.Errorf("AT 未按原口径拆分：%+v", checks)
+			}
+		}
+	}
+	if len(view.Checks) != 0 {
+		t.Errorf("机器生成的 AT 不能成为已确认的人工清单：%+v", view.Checks)
+	}
+	var evidence map[string]any
+	for _, fact := range facts {
+		if fact.Type == store.FactTestRun {
+			if err := json.Unmarshal(fact.Payload, &evidence); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if evidence["id"] != in.ItemID || evidence["commit"] != head.No ||
+		evidence["scope"] != "scaffold" || evidence["pass"] != float64(1) || evidence["total"] != float64(1) {
+		t.Errorf("机器测试应只记本提交的脚手架检查：%+v", evidence)
+	}
+}
+
+func TestGenerationKeepsCommittedManualCode(t *testing.T) {
+	ds := httptest.NewServer(newFakeState())
+	defer ds.Close()
+	ctx := t.Context()
+	log := store.New(dapr.New(ds.URL), "fake")
+	pipe, err := pipeline.New(log, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const unit = "manual-visitor"
+	manual := domain.Version{
+		T: domain.Code, V: "1.0.1", Source: domain.SourceManual, St: domain.StDraft,
+		Files: map[string]string{"main.go": "package main\nfunc main() {} // 人工保留"},
+	}
+	if _, err := log.Append(ctx, unit, store.FactArtifactDrafted, "DA", manual); err != nil {
+		t.Fatal(err)
+	}
+	commit := store.CommitCreated{Commit: domain.Commit{No: "1.0.1", Tree: domain.Tree{domain.Code: manual.V}}}
+	if _, err := log.Append(ctx, unit, store.FactCommitCreated, "i3-pipeline", commit); err != nil {
+		t.Fatal(err)
+	}
+	acts := &wf.Activities{D: wf.Deps{Log: log, Exec: pipe}}
+	in := wf.Input{ItemID: "US-02", PBC: unit, Title: "补访客凭证规则", Type: "feature", Mode: "fast"}
+	for i, step := range []func(context.Context, wf.StepInput) (wf.StepResult, error){acts.GenArtifacts, acts.Converge, acts.Commit} {
+		result, err := step(ctx, wf.StepInput{Input: in, Step: i, OpID: fmt.Sprintf("manual/%d", i)})
+		if err != nil || !result.OK {
+			t.Fatalf("第 %d 步失败：%+v, %v", i, result, err)
+		}
+	}
+	facts, err := log.Load(ctx, unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := store.Project(unit, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _ := domain.Find(view.Versions, domain.Code, view.Commits[0].Tree[domain.Code])
+	if code.Source != domain.SourceManual || len(code.Files) != 1 || code.Files["main.go"] != manual.Files["main.go"] {
+		t.Fatalf("当前提交应保留人工业务代码：版本=%s 来源=%s 文件数=%d", code.V, code.Source, len(code.Files))
+	}
+}

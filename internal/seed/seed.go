@@ -203,7 +203,7 @@ func writeContentVersion(ctx context.Context, log *store.Store, u Unit, spec pbc
 	const at = "11-24 12:00"
 	cspec := codegen.Spec{
 		UnitID: u.ID, UnitName: u.Name, Kind: u.Kind,
-		Title: spec.title, Change: "feature", At: at,
+		Title: spec.title, Change: "feature", At: at, DemoBilling: u.Kind == "pbc",
 	}
 	docs := codegen.Docs(cspec)
 	code := map[string]string{}
@@ -659,12 +659,13 @@ func seedProjects(ctx context.Context, log *store.Store) error {
 func seedBaseline(ctx context.Context, log *store.Store, pbc, name string, spec pbcSpec, opts Options) error {
 	const at = "11-20 17:20"
 	cspec := codegen.Spec{
-		UnitID:   pbc,
-		UnitName: name,
-		Kind:     spec.kind,
-		Title:    spec.title,
-		Change:   "new",
-		At:       at,
+		UnitID:      pbc,
+		UnitName:    name,
+		Kind:        spec.kind,
+		Title:       spec.title,
+		Change:      "new",
+		At:          at,
+		DemoBilling: spec.kind == "pbc",
 	}
 	docs := codegen.Docs(cspec)
 	code := map[string]string{}

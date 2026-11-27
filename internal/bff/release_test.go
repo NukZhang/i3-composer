@@ -131,7 +131,7 @@ func TestReleaseRuntimeIgnoresOutOfOrderBatchRecords(t *testing.T) {
 
 	ctx := t.Context()
 	const unitID, env, commit = "dun", "SIT", "1.0.1"
-	files, err := pipe.Code(ctx, wf.UnitInfo{ID: unitID, Kind: "pbc"}, "批次核对", "new")
+	files, err := pipe.Code(ctx, wf.GenerationInput{Unit: wf.UnitInfo{ID: unitID, Kind: "pbc"}, Title: "批次核对", Change: "new"})
 	if err != nil {
 		t.Fatal(err)
 	}
