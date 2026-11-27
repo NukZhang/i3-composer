@@ -1,251 +1,169 @@
 package bff
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zhangkun/i3-composer/internal/dapr"
+	"github.com/zhangkun/i3-composer/internal/domain"
 	"github.com/zhangkun/i3-composer/internal/store"
 )
 
-// 真链路端到端：从空账本走到发布。
-//
-// 这条测试要真的连 Dapr：真的跑 workflow、真的编译代码、真的起进程、
-// 真的做健康检查。所以它要一套指向真实 Dapr 的环境变量：
-//
-//	E2E_BASE=http://127.0.0.1:8093   跑着的隔离实例（账本前缀 e2e/、workflow i3-delivery-e2e）
-//	DAPR_HTTP_ENDPOINT=http://127.0.0.1:3500
-//	LEDGER_PREFIX=e2e/               与那个实例同一个账本前缀
-//
-// 缺任何一个就跳过——它不是「没有 Dapr 也能跑」的单元测试。
+// TestRealChainEndToEnd 需要真实 Dapr 和独立账本。测试进程须和应用共享网络，
+// 才能直接核对发布批次启动的进程。E2E_BASE、DAPR_HTTP_ENDPOINT 和
+// LEDGER_PREFIX 要指向同一个隔离实例。
 func TestRealChainEndToEnd(t *testing.T) {
 	base := strings.TrimRight(os.Getenv("E2E_BASE"), "/")
-	httpEP := os.Getenv("DAPR_HTTP_ENDPOINT")
+	endpoint := os.Getenv("DAPR_HTTP_ENDPOINT")
 	prefix := os.Getenv("LEDGER_PREFIX")
-	if base == "" || httpEP == "" || prefix == "" {
-		t.Skip("需要真实 Dapr 与一个隔离实例：设置 E2E_BASE / DAPR_HTTP_ENDPOINT / LEDGER_PREFIX")
+	if base == "" || endpoint == "" || prefix == "" {
+		t.Skip("需要隔离实例：设置 E2E_BASE / DAPR_HTTP_ENDPOINT / LEDGER_PREFIX")
 	}
 
-	// 直接读账本：事实里的 payload 是断言的来源（真实测试条数、真实 digest、真实地址）。
-	log := store.New(dapr.New(httpEP), "statestore", prefix)
-
-	post := func(path string, payload any, r Role) (int, map[string]any) {
+	ctx := t.Context()
+	log := store.New(dapr.New(endpoint), "statestore", prefix)
+	client := &http.Client{Timeout: 15 * time.Second}
+	roles := make(map[Role][]*http.Cookie)
+	post := func(path string, payload any, role Role, want int) map[string]any {
 		t.Helper()
-		b, _ := json.Marshal(payload)
-		req, _ := http.NewRequest(http.MethodPost, base+path, strings.NewReader(string(b)))
+		if _, ok := roles[role]; !ok {
+			body, err := json.Marshal(map[string]Role{"role": role})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := client.Post(base+"/api/role", "application/json", bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			roles[role] = resp.Cookies()
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK || len(roles[role]) == 0 {
+				t.Fatalf("切换 %s 角色返回 HTTP %d", role, resp.StatusCode)
+			}
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
 		req.Header.Set("Content-Type", "application/json")
-		for _, c := range testCookies(r) {
-			req.AddCookie(c)
+		for _, cookie := range roles[role] {
+			req.AddCookie(cookie)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
 		var out map[string]any
-		_ = json.Unmarshal(raw, &out)
-		return resp.StatusCode, out
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("%s 返回 HTTP %d，响应解析失败：%v", path, resp.StatusCode, err)
+		}
+		if resp.StatusCode != want {
+			t.Fatalf("%s 返回 HTTP %d，预期 %d：%v", path, resp.StatusCode, want, out)
+		}
+		return out
 	}
-	get := func(path string, r Role) (int, map[string]any) {
+	load := func(unit string) (*store.View, []store.Fact) {
 		t.Helper()
-		req, _ := http.NewRequest(http.MethodGet, base+path, nil)
-		for _, c := range testCookies(r) {
-			req.AddCookie(c)
-		}
-		resp, err := http.DefaultClient.Do(req)
+		facts, err := log.Load(ctx, unit)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(resp.Body)
-		var out map[string]any
-		_ = json.Unmarshal(raw, &out)
-		return resp.StatusCode, out
-	}
-
-	// ---- 1. 建单元 ----
-	unitID := "e2e" + fmt.Sprint(time.Now().UnixNano()%100000)
-	code, out := post("/api/units", map[string]any{
-		"id": unitID, "name": "端到端验收单元", "code": "PBC-E2E", "kind": "pbc",
-	}, RolePA)
-	if code != http.StatusCreated {
-		t.Fatalf("建单元应 201，实际 %d %v", code, out)
-	}
-
-	// ---- 2. 建任务 ----
-	title := "端到端验收-" + fmt.Sprint(time.Now().UnixNano())
-	code, out = post("/api/tasks?pbc="+unitID, map[string]any{
-		"title": title, "type": "feature", "env": "test", "mode": "fast",
-	}, RoleBA)
-	if code != http.StatusCreated {
-		t.Fatalf("建任务应 201，实际 %d %v", code, out)
-	}
-	itemID, _ := out["id"].(string)
-	if itemID == "" {
-		t.Fatalf("任务应有编号：%v", out)
-	}
-
-	// ---- 3. DA 发起（真实 workflow） ----
-	code, out = post("/api/items/"+itemID+"/run?pbc="+unitID, nil, RoleDA)
-	if code != http.StatusAccepted {
-		t.Fatalf("发起应 202，实际 %d %v", code, out)
-	}
-
-	// ---- 4. 等它走到发布闸 ----
-	var waiting map[string]any
-	deadline := time.Now().Add(4 * time.Minute)
-	for time.Now().Before(deadline) {
-		_, st := get("/api/state?pbc="+unitID, RoleBA)
-		if items, ok := st["items"].(map[string]any); ok {
-			if it, ok := items[itemID].(map[string]any); ok && it["run"] == "waiting" {
-				waiting = it
-				break
-			}
+		view, err := store.Project(unit, facts)
+		if err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(2 * time.Second)
+		return view, facts
 	}
-	if waiting == nil {
-		t.Fatal("workflow 没走到发布闸")
-	}
-	t.Logf("走到发布闸：run=%v step=%v", waiting["run"], waiting["step"])
 
-	// ---- 5. 制品里有真内容（能编译） ----
-	_, st := get("/api/state?pbc="+unitID, RoleBA)
-	vers, _ := st["versions"].(map[string]any)
-	codeVers, _ := vers["code"].([]any)
-	if len(codeVers) == 0 {
-		t.Fatal("没有代码制品")
-	}
-	last := codeVers[len(codeVers)-1].(map[string]any)
-	files, _ := last["files"].(map[string]any)
-	for _, need := range []string{"go.mod", "main.go", "main_test.go"} {
-		if _, ok := files[need]; !ok {
-			t.Fatalf("代码制品缺 %s，实际有 %v", need, keysOf(files))
+	proj, _ := post("/api/projects", map[string]string{"name": "端到端验收"}, RolePA, http.StatusCreated)["id"].(string)
+	unit := "e2e" + fmt.Sprint(time.Now().UnixNano())
+	post("/api/units", map[string]string{"id": unit, "name": "端到端验收单元", "kind": "pbc", "proj": proj}, RolePA, http.StatusCreated)
+	query := "?pbc=" + unit
+	post("/api/artifacts"+query, map[string]string{
+		"artifact": "at",
+		"text":     "- AT-01 构建质量。Given 交付已完成，When 查看质量报告，Then 测试全通过且构建提供摘要",
+	}, RoleBA, http.StatusCreated)
+	item, _ := post("/api/tasks"+query, map[string]any{
+		"title": "核对端到端交付", "type": "new", "env": "test", "mode": "fast",
+		"accept": []string{"当交付完成时，应能核对已通过的测试和构建摘要"},
+		"data":   []string{"fee.bill.amount"}, "acceptBy": "BA 业务", "complyBy": "SA 系统",
+	}, RoleBA, http.StatusCreated)["id"].(string)
+	itemPath := "/api/items/" + item
+	post(itemPath+"/run"+query, nil, RoleDA, http.StatusAccepted)
+
+	var view *store.View
+	var facts []store.Fact
+	for deadline := time.Now().Add(4 * time.Minute); time.Now().Before(deadline); time.Sleep(time.Second) {
+		view, facts = load(unit)
+		if it := view.Items[item]; it != nil && (it.Run == "blocked" || it.Run == "verified") {
+			break
 		}
 	}
+	if it := view.Items[item]; it == nil || it.Run != "verified" || it.Step != 5 || len(view.Commits) == 0 {
+		t.Fatalf("工作项应完成五步并待打 tag：%+v", it)
+	}
+	head := view.Commits[0]
+	code, _ := domain.Find(view.Versions, domain.Code, head.Tree[domain.Code])
+	for _, name := range []string{"go.mod", "main.go", "main_test.go"} {
+		if len(code.Files[name]) == 0 {
+			t.Errorf("源码制品缺少 %s", name)
+		}
+	}
+	if v := view.Test; v == nil || v.Commit != head.No || v.Total < 1 || v.Pass != v.Total {
+		t.Fatalf("当前提交需要真实的测试结果：%+v", v)
+	}
+	if !strings.HasPrefix(head.Digest, "sha256:") || len(head.Digest) != len("sha256:")+64 {
+		t.Fatalf("当前提交需要编译产物摘要，实际 %q", head.Digest)
+	}
+	for _, f := range facts {
+		switch f.Type {
+		case store.FactItemWaiting, store.FactPublishDecided, store.FactItemPublished, store.FactDeploySucceeded:
+			t.Fatalf("五步结束后尚未进入项目发布，出现 %s", f.Type)
+		}
+	}
+	t.Logf("工作项 %s 完成五步，提交 %s，测试 %d/%d，摘要 %s", item, head.No, view.Test.Pass, view.Test.Total, head.Digest)
 
-	// ---- 6. 测试结论是真跑出来的 ----
-	facts := loadFacts(t, log, unitID)
-	testFact := findFact(facts, store.FactTestRun)
-	if testFact == nil {
-		t.Fatal("账本里没有 test.run 事实")
+	post(itemPath+"/answer"+query, map[string]bool{"approve": true}, RoleSA, http.StatusNotFound)
+	if after, _ := load(unit); after.Seq != view.Seq {
+		t.Fatalf("退役入口不得写账本：%d → %d", view.Seq, after.Seq)
 	}
-	tr := struct {
-		Pass  int `json:"pass"`
-		Total int `json:"total"`
-	}{}
-	b, _ := json.Marshal(testFact.Payload)
-	_ = json.Unmarshal(b, &tr)
-	if tr.Total == 0 {
-		t.Fatalf("测试结果应有条数：%v", tr)
-	}
-	t.Logf("真实测试结果：%d/%d 通过", tr.Pass, tr.Total)
+	t.Logf("退役入口返回 HTTP 404，账本仍停在 seq %d", view.Seq)
 
-	// ---- 7. digest 是构建产物的内容摘要 ----
-	buildFact := findFact(facts, store.FactBuildSucceeded)
-	if buildFact == nil {
-		t.Fatal("账本里没有 build.succeeded 事实")
+	post("/api/checks/AT-01/decide"+query, map[string]string{"commit": head.No, "st": "pass"}, RoleBA, http.StatusCreated)
+	tag := post("/api/units/"+unit+"/tag", nil, RoleSA, http.StatusCreated)
+	if tag["commit"] != head.No || tag["digest"] != head.Digest {
+		t.Fatalf("tag 必须固化当前提交和摘要：%v", tag)
 	}
-	digest := payloadString(t, buildFact.Payload, "digest")
-	if !strings.HasPrefix(digest, "sha256:") || len(digest) != len("sha256:")+64 {
-		t.Fatalf("digest 应是内容摘要，实际 %q", digest)
+	batch := post("/api/projects/"+proj+"/orch/release", map[string]any{
+		"env": "SIT", "mode": "full", "units": []string{unit},
+	}, RoleSA, http.StatusCreated)
+	deployed, _ := load(unit)
+	if len(deployed.Deploys) != 1 || deployed.Deploys[0].Tag != tag["tag"] || deployed.Deploys[0].Commit != head.No {
+		t.Fatalf("部署事实应能追溯批次锁定的 tag 和提交：%+v", deployed.Deploys)
 	}
-	t.Logf("构建 digest：%s", digest)
-
-	// ---- 8. 部署地址真的活着 ----
-	deployFact := findFact(facts, store.FactDeploySucceeded)
-	if deployFact == nil {
-		t.Fatal("账本里没有 deploy.succeeded 事实")
-	}
-	url := payloadString(t, deployFact.Payload, "url")
+	url := deployed.Deploys[0].URL
 	if !strings.HasPrefix(url, "http://127.0.0.1:") {
-		t.Fatalf("部署地址应是本机进程：%q", url)
+		t.Fatalf("部署地址应指向本机测试进程：%q", url)
 	}
-	resp, err := http.Get(url + "/healthz")
-	if err != nil {
-		t.Fatalf("部署地址应可访问：%v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("健康检查应 200，实际 %d", resp.StatusCode)
-	}
-	t.Logf("部署地址 %s 健康检查 200", url)
-
-	// ---- 9. 发布 ----
-	code, out = post("/api/items/"+itemID+"/answer?pbc="+unitID,
-		map[string]any{"approve": true}, RoleSA)
-	if code != http.StatusAccepted {
-		t.Fatalf("拍板应 202，实际 %d %v", code, out)
-	}
-	published := false
-	deadline = time.Now().Add(90 * time.Second)
-	for time.Now().Before(deadline) {
-		_, st := get("/api/state?pbc="+unitID, RoleBA)
-		if items, ok := st["items"].(map[string]any); ok {
-			if it, ok := items[itemID].(map[string]any); ok && it["run"] == "published" {
-				published = true
-				break
-			}
-		}
-		time.Sleep(time.Second)
-	}
-	if !published {
-		t.Fatal("发布未完成")
-	}
-	t.Log("发布完成")
-}
-
-func keysOf(m map[string]any) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
-// testCookies 造一个角色会话的 cookie。
-func testCookies(r Role) []*http.Cookie {
-	rec := httptest.NewRecorder()
-	NewSessions([]byte("test-key")).Issue(rec, r)
-	return rec.Result().Cookies()
-}
-
-// loadFacts 从账本读原始事实。
-func loadFacts(t *testing.T, log *store.Store, pbc string) []store.Fact {
-	t.Helper()
-	facts, err := log.Load(context.Background(), pbc)
+	resp, err := client.Get(url + "/healthz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return facts
-}
-
-// findFact 找第一条某类型的事实。
-func findFact(facts []store.Fact, typ string) *store.Fact {
-	for i := range facts {
-		if facts[i].Type == typ {
-			return &facts[i]
-		}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("健康检查返回 HTTP %d", resp.StatusCode)
 	}
-	return nil
-}
-
-// payloadString 从事实的 payload 里取一个字符串字段。
-func payloadString(t *testing.T, raw json.RawMessage, key string) string {
-	t.Helper()
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("payload 解析失败：%v", err)
-	}
-	s, _ := m[key].(string)
-	return s
+	t.Logf("项目批次 %v 锁定 %v，部署事实与 /healthz HTTP 200 一致", batch["id"], tag["tag"])
+	post("/api/projects/"+proj+"/orch/rollback", map[string]any{"id": batch["id"]}, RoleSA, http.StatusOK)
 }

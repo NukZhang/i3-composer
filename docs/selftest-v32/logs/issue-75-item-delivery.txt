@@ -1,0 +1,21 @@
+RUN_TAG=issue75verified
+PASS 1 workflow 五步跑完，停在「打 tag」 :: {"run":"verified","step":5}
+PASS 5 单元交付不部署：账本里没有 deploy.succeeded :: 0
+PASS 5 已构建工作项引导到验证，工作项结果未显示部署地址 :: {"unit":"execissue75verified","item":"US-07","run":"verified","step":5}
+PASS 5 前往验证打开当前单元的验收清单和交付物
+PASS 5 方案页的当前提交指向验证页打 tag
+PASS 5 工作台与侧栏使用同一待办计数 :: {"tabs":["我的待办","我发起的"],"badge":"0"}
+PASS 8 SA 打 tag 进池 :: {"commit":"1.0.1","digest":"sha256:c2fc8f330cada53b427a7b0e53b6c0e5376cc28a457c2bd176b9ac08e6b8de74","pooled":true,"tag":"v1.0.0","unit":"execissue75verified"}
+PASS 8 批次发布返回 201 :: "REL-20261127-02"
+PASS 8 批次锁住该单元的 tag 与 digest :: {"tag":"v1.0.0","digest":"sha256:c2fc8f330cada53b427a7b0e53b6c0e5376cc28a457c2bd176b9ac08e6b8de74"}
+PASS 8 部署地址能访问且 /healthz 返回 200 :: {"code":200,"body":"{\"name\":\"执行侧验收单元\",\"ok\":true,\"unit\":\"execissue75verified\"}\n"}
+    e2e_real_test.go:135: 工作项 US-12 完成五步，提交 1.0.1，测试 5/5，摘要 sha256:4393944890fccd604f373d1e4f9c4aea341c899225397b58c6777d990b5494f3
+    e2e_real_test.go:141: 退役入口返回 HTTP 404，账本仍停在 seq 33
+    e2e_real_test.go:167: 项目批次 REL-20261127-01 锁定 v1.0.0，部署事实与 /healthz HTTP 200 一致
+--- PASS: TestRealChainEndToEnd (1.21s)
+{"unit":"issue75-shot","id":"US-13","run":"verified","step":5,"facts":[{"actor":"x-qa","at":"2026-11-27T14:40:45Z","payload":{"by":"x-qa","commit":"1.0.1","failures":null,"id":"US-13","pass":5,"total":5},"seq":29,"type":"test.run"},{"actor":"x-ops","at":"2026-11-27T14:40:45Z","payload":{"binary":true,"commit":"1.0.1","digest":"sha256:a557ca4fe2fbded91a7cf7ed3cd98a79886ad0826eaaf7f8e282d91ffd52736c","id":"US-13","treeSha":"sha256:c8439d9f4b89"},"seq":31,"type":"build.succeeded"},{"actor":"i3-pipeline","at":"2026-11-27T14:40:45Z","payload":{"id":"US-13","version":"1.0.1"},"seq":33,"type":"item.verified"}]}
+acceptance_v32 SUMMARY 70/70 passed
+acceptance_exec SUMMARY 35/35 passed
+acceptance_flow SUMMARY 33/33 passed
+acceptance_full SUMMARY 20/20 passed
+acceptance_v26 SUMMARY 75/75 passed

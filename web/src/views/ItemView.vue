@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
-import { S, refresh, toast } from '../store.js';
+import { S, refresh, toast, unitById } from '../store.js';
 import { api } from '../api.js';
 import { icon } from '../icons.js';
 
@@ -24,25 +24,17 @@ watch(
   { immediate: true },
 );
 
-const facts = computed(() => (detail.value && detail.value.facts) || []);
+const facts = computed(() => detail.value?.item?.id === item.value?.id ? (detail.value?.facts || []) : []);
 const canBacklog = computed(() => (S.acts || []).includes('backlog'));
 const canBuild = computed(() => (S.acts || []).includes('build'));
-const canTag = computed(() => (S.acts || []).includes('tag'));
 const hasWorkflow = computed(() => item.value?.kind === 'Story' && !!item.value.steps?.length);
+const deliveryUnit = computed(() => unitById(item.value?.pbc));
 
-// 这一轮真跑出来的结论：测试条数、构建摘要、部署地址。
-const testResult = computed(() => (S.state && S.state.test) || null);
-const buildDigest = computed(() => {
-  const st = S.state || {};
-  const head = (st.commits || [])[0];
-  return head ? (st.builds || {})[head.no] || '' : '';
-});
-const deployURL = computed(() => {
-  const ds = (S.state && S.state.deploys) || [];
-  return ds.length ? ds[ds.length - 1].url : '';
-});
+// 工作项只能引用自己的执行事实，项目批次的部署地址由发布编排展示。
+const testResult = computed(() => facts.value.findLast((f) => f.type === 'test.run')?.payload);
+const buildDigest = computed(() => facts.value.findLast((f) => f.type === 'build.succeeded')?.payload?.digest);
+const deployURL = computed(() => facts.value.findLast((f) => f.type === 'deploy.succeeded')?.payload?.url);
 
-const note = ref('');
 const busy = ref(false);
 
 // 入口准入的结论挂在工作项上（admit 字段，来自 item.admitted / item.admit.rejected）。
@@ -94,24 +86,20 @@ async function submitFix() {
   await refresh();
 }
 
-async function decide(approve) {
-  busy.value = true;
-  try {
-    await api.answer(item.value.id, item.value.pbc, approve, note.value);
-    toast(approve ? item.value.id + ' 已提交发布决定' : '发布已拒绝', approve ? 'ok' : 'warn');
-  } catch (e) {
-    toast(e.message, 'err');
-  }
-  busy.value = false;
-  await refresh();
+function openVerification() {
+  const unit = deliveryUnit.value;
+  if (!unit) return;
+  S.projId = unit.proj;
+  S.pbcId = unit.id;
+  S.view = 'verify';
 }
 
 function runText(run) {
   if (run === 'verified' && item.value.kind !== 'Story') return '已完成';
-  return { idea: '未发起', draft: '未发起', running: '执行中', waiting: '待发布', verified: '待打 tag', paused: '已介入', blocked: '受阻', failed: '失败', published: '已发布' }[run] || run || '—';
+  return { idea: '未发起', draft: '未发起', running: '执行中', waiting: '历史待发布', verified: '待打 tag', paused: '已介入', blocked: '受阻', failed: '失败', published: '已发布' }[run] || run || '—';
 }
 function runCls(run) {
-  return 'cr-state ' + (['published', 'running', 'waiting', 'verified', 'paused', 'blocked', 'failed'].includes(run) ? run : 'draft');
+  return 'cr-state ' + (['published', 'running', 'verified', 'paused', 'blocked', 'failed'].includes(run) ? run : 'draft');
 }
 function stepCls(st) {
   return st === 'done' ? 'done' : st === 'doing' ? 'doing' : st === 'blocked' ? 'blocked' : st.human ? 'human' : '';
@@ -128,7 +116,7 @@ function factText(f) {
     'item.admit.inputs': '补准入输入',
     'item.run.started': '发起交付（workflow 已启动）',
     'item.step.done': '一步完成',
-    'item.waiting': '到发布闸，等待拍板',
+    'item.waiting': '历史发布流程等待记录',
     'publish.decided': '人的发布决定',
     'item.published': '已发布（打 tag）',
     'item.blocked': '受阻',
@@ -162,7 +150,7 @@ function factDetail(f) {
     case 'publish.decided':
       return p.approve ? '同意发布' : '不同意发布';
     case 'item.waiting':
-      return p.reason || '等 SA 拍板';
+      return p.reason || '';
     default:
       return '';
   }
@@ -172,7 +160,7 @@ function factDetail(f) {
 <template>
   <PageHeader
     :title="item ? item.id + ' · ' + item.t : '工作项'"
-    :sub="item ? item.kind + ' · 类型 ' + item.type + ' · 模式 ' + (item.mode === 'fast' ? '直通（人只在发布前拍板）' : '介入（可随时改）') + ' · 目标 ' + item.env : '未选择'"
+    :sub="item ? item.kind + ' · 类型 ' + item.type + ' · 模式 ' + (item.mode === 'fast' ? '直通' : '介入') : '未选择'"
   >
     <button class="btn small" @click="S.view = 'projects'"><span v-html="icon('list', 12)" /> 回到需求池</button>
   </PageHeader>
@@ -187,7 +175,6 @@ function factDetail(f) {
         <span class="small muted">
           <template v-if="item.run === 'published'">已发布 {{ item.version || '' }}{{ item.tag ? ' · tag ' + item.tag : '' }}</template>
           <template v-else-if="item.run === 'blocked'">卡在 {{ ((item.steps || [])[item.step] || {}).n || '' }}：{{ item.blocked || '' }}</template>
-          <template v-else-if="hasWorkflow && item.run === 'waiting'">全链已跑通，就差你一句「发不发」</template>
           <template v-else-if="hasWorkflow && item.run === 'running'">正在跑，可以随时介入</template>
         </span>
         <span class="spacer" style="flex: 1" />
@@ -263,25 +250,17 @@ function factDetail(f) {
         <span v-html="icon('play', 12)" /> {{ item.run === 'idea' ? '发起直通' : '重新发起' }}
       </button>
       <span class="small muted">
-        {{ canBuild ? '会自动跑完制品→提交→测试→镜像→' + item.env + '，停在发布前由 SA 拍板' : '当前角色没有 build 权限（DA 专属）' }}
+        {{ canBuild ? '生成制品、收敛、提交、测试并构建。机器完成后进入验证。' : '当前角色没有 build 权限（DA 专属）' }}
       </span>
     </div>
 
-    <div v-if="hasWorkflow && item.run === 'waiting'" class="gate">
-      <span v-html="icon('alert')" />
-      <b>就差这一步：是否发布生产？</b>
-      <span class="small muted">其余全部跑通（制品/提交/测试/镜像/{{ item.env }}）。</span>
-      <input v-model="note" placeholder="备注（可选）" style="width: 180px; padding: 4px 8px; font-size: 11px" />
-      <span class="spacer" style="flex: 1" />
-      <button class="btn small" :disabled="!canTag || busy" @click="decide(false)">退回修改</button>
-      <button class="btn primary small" :disabled="!canTag || busy" @click="decide(true)"><span v-html="icon('check', 12)" /> 发布生产</button>
-    </div>
-    <div v-if="hasWorkflow && !canTag && item.run === 'waiting'" class="perm-note">
-      <span v-html="icon('lock', 12)" /> 发布拍板是 <b>SA</b> 的权限；当前角色点下去会被 403 拒绝，界面不会假装成功。
+    <div v-if="hasWorkflow && item.run === 'verified' && deliveryUnit" class="row wrap" style="gap: 8px; margin-bottom: 9px">
+      <button class="btn small primary" @click="openVerification">前往验证</button>
+      <span class="small muted">在验证页验收并打 tag。打 tag 后可从项目的发布编排发起批次。</span>
     </div>
 
     <div v-if="item.run === 'published'" class="ws clean" style="margin-top: 4px">
-      <div class="ws-h"><span v-html="icon('check')" /> 已发布生产 · {{ item.version || '' }}<span v-if="item.url" style="color: var(--info)"> · {{ item.url }}</span></div>
+      <div class="ws-h"><span v-html="icon('check')" /> 历史发布记录 · {{ item.version || '' }}<span v-if="item.url" style="color: var(--info)"> · {{ item.url }}</span></div>
     </div>
 
     <div v-if="testResult || buildDigest || deployURL" class="card">

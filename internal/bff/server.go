@@ -103,7 +103,6 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/items/{id}/run", s.wrap(s.runItem))
 	// 准入被拒后补输入：补的是验收口径 / 数据范围 / 责任人，发起时重判。
 	m.HandleFunc("POST /api/items/{id}/inputs", s.wrap(s.admitInputs))
-	m.HandleFunc("POST /api/items/{id}/answer", s.wrap(s.answer))
 	m.HandleFunc("POST /api/role", s.wrap(s.setRole))
 	m.HandleFunc("GET /api/timeline/stream", s.stream)
 
@@ -297,7 +296,7 @@ func (s *Server) NotifyChange(pbc string) {
 	s.publish(pbc, "fact.appended", nil)
 }
 
-// overview 是工作台首页：待办 / 待确认 / 我发起的 + 项目进度。
+// overview 返回当前单元的工作项、会话权限与交付进度。
 func (s *Server) overview(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	v, err := s.load(r, c.PBC)
 	if err != nil {
@@ -327,10 +326,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request, c reqCtx) erro
 	return nil
 }
 
-// tasks 是「我的待办 / 待我确认 / 我发起的」三个过滤视图。
-//
-// 过滤口径与原型一致：待确认 = 到了发布闸（run=waiting），谁看见谁拍；
-// 但真正能不能拍，看的是 /answer 里的权限判定，这里只是展示。
+// tasks 为旧的只读客户端保留 tab=review，以便查询历史等待记录。
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	tab := r.URL.Query().Get("tab")
 	v, err := s.load(r, c.PBC)
@@ -599,48 +595,6 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	}
 	s.publish(c.PBC, "item.run.started", map[string]any{"id": it.ID})
 	writeJSON(w, http.StatusAccepted, map[string]any{"id": it.ID, "instance": inst})
-	return nil
-}
-
-// answer 是人类拍板的唯一入口：同意 / 拒绝发布。
-//
-// 权限判定只在这里做，且只看会话角色——请求体里的 role / canApprove 一律不读。
-// 决定本身只是一个事件，送给挂起的 workflow；它不直接改任何状态。
-func (s *Server) answer(w http.ResponseWriter, r *http.Request, c reqCtx) error {
-	if err := Require(c.Role, ActTag); err != nil {
-		return err
-	}
-	var in struct {
-		Approve bool   `json:"approve"`
-		Note    string `json:"note"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
-		return fmt.Errorf("%w：%v", errBadRequest, err)
-	}
-	v, err := s.load(r, c.PBC)
-	if err != nil {
-		return err
-	}
-	it, ok := v.Items[c.ItemID]
-	if !ok {
-		return fmt.Errorf("%w：%s", errNotFound, c.ItemID)
-	}
-	if it.Run != "waiting" {
-		return fmt.Errorf("%w：%s 不在发布闸（run=%s）", errBadRequest, c.ItemID, it.Run)
-	}
-
-	// 把决定记成事实（先落账，再唤醒），再作为外部事件送给 workflow。
-	// 顺序不能反：先唤醒后落账，若落账失败，人看到「已发布」但账本里没有。
-	payload := map[string]any{"id": it.ID, "approve": in.Approve, "by": string(c.Role), "note": in.Note}
-	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactPublishDecided, string(c.Role), payload); err != nil {
-		return err
-	}
-	ans := wf.Answer{Approve: in.Approve, By: string(c.Role), Note: in.Note}
-	if err := s.Dapr.RaiseEvent(r.Context(), s.Comp, s.instanceID(c.PBC+"_"+it.ID), wf.EventPublish, ans); err != nil {
-		return err
-	}
-	s.publish(c.PBC, "publish.decided", map[string]any{"id": it.ID, "approve": in.Approve})
-	writeJSON(w, http.StatusAccepted, map[string]any{"id": it.ID, "approve": in.Approve})
 	return nil
 }
 

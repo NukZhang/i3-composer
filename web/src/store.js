@@ -4,7 +4,7 @@
 // 引入一个状态库的收益抵不过「多一层间接」的成本。这里只用 Vue 的
 // reactive + 一个 refresh 串行器，语义和 v2.1 的 adapter 完全一致。
 
-import { reactive } from 'vue';
+import { computed, reactive } from 'vue';
 import { api } from './api.js';
 
 export const S = reactive({
@@ -212,6 +212,12 @@ export function connect() {
   // SSE 是按账本推的；空项目也要能收到「项目/BRD 变了」的通知。
   return api.stream(S.pbcId || 'units', refresh);
 }
+
+// 侧栏计数和工作台使用同一份待办，账本中的历史等待记录只供查看。
+export const myTodo = computed(() => S.inbox.filter(
+  (item) => item.owner === S.role && item.st !== 'done'
+    && !['waiting', 'verified', 'tagged', 'published'].includes(item.run),
+));
 
 // 便捷读：当前单元与它的 Agent。
 export function currentUnit() {

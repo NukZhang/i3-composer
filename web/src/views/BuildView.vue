@@ -38,7 +38,7 @@ const tab = computed(() => {
 const runningBadge = { text: '执行中', tone: 't-warn' };
 const workflowBadges = {
   running: runningBadge,
-  waiting: { text: '待发布', tone: 't-warn' },
+  waiting: { text: '历史待发布', tone: 't-gray' },
   verified: { text: '待打 tag', tone: 't-ok' },
   published: { text: '已发布', tone: 't-ok' },
   paused: { text: '已介入', tone: 't-warn' },

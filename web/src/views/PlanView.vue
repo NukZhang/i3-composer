@@ -256,7 +256,7 @@ async function addAnnotationRound() {
               <span class="tag" :class="gates.all.length && gates.all.every((g) => g.ok || g.unknown) ? 't-ok' : 't-warn'">
                 {{ gates.all.filter((g) => g.ok && !g.unknown).length }}/{{ gates.all.length }} 闸通过<template v-if="gates.all.some((g) => g.unknown)"> · {{ gates.all.filter((g) => g.unknown).length }} 判不了</template>
               </span>
-              <span class="small muted">打 tag 由 SA 在发布页完成（审批 = 那条 publish.decided 事实）</span>
+              <span v-if="isHead(selCommit)" class="small muted">验收通过后，SA 在验证页打 tag。</span>
             </template>
           </div>
         </div>
