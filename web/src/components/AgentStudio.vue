@@ -23,20 +23,22 @@ const sel = ref(null);
 const dirty = ref(false);
 const promptDraft = ref('');
 
+const nodes = computed(() => (flow.value && flow.value.nodes) || []);
+const edges = computed(() => (flow.value && flow.value.edges) || []);
+const cur = computed(() => nodes.value.find((n) => n.id === sel.value) || null);
+
 watch(
   () => props.agent,
-  (a) => {
-    flow.value = a && a.flow ? JSON.parse(JSON.stringify(a.flow)) : null;
-    sel.value = flow.value && flow.value.nodes.length ? flow.value.nodes[0].id : null;
+  (agent, previousAgent) => {
+    flow.value = agent?.flow ? JSON.parse(JSON.stringify(agent.flow)) : null;
+    const preserveSelection = agent && previousAgent && agent.id === previousAgent.id &&
+      nodes.value.some((node) => node.id === sel.value);
+    select(preserveSelection ? sel.value : (nodes.value[0]?.id ?? null));
     dirty.value = false;
-    promptDraft.value = '';
   },
   { immediate: true },
 );
 
-const nodes = computed(() => (flow.value && flow.value.nodes) || []);
-const edges = computed(() => (flow.value && flow.value.edges) || []);
-const cur = computed(() => nodes.value.find((n) => n.id === sel.value) || null);
 const stats = computed(() => flowStats(flow.value));
 const wiring = computed(() => toolWiring(props.agent));
 // 编排越界的工具在页面上也要点名：只在后端红一条闸，写 Agent 的人看不到是哪一步。
