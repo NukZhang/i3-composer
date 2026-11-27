@@ -146,6 +146,27 @@ func pbcGates(v *store.View) []domain.Gate {
 //
 // 注意：这不是另一份真相——它就是 Project(facts) 的输出，和 /overview 同源。
 func (s *Server) state(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	// 不带 pbc 不许回落某个默认单元（#43）：那是「拿另一个单元的完整答案冒充这个问题的答案」。
+	// 前端在 S.pbcId 为空时根本不发这个请求，套件全部显式带参——去掉默认不影响谁。
+	if strings.TrimSpace(r.URL.Query().Get("pbc")) == "" {
+		return fmt.Errorf("%w：/api/state 需要 ?pbc=<单元 id>", errBadRequest)
+	}
+	// 注册表里没有的 id 是 404，和 /api/replay 一致；只有「在注册表里、日志还空」才回 200 空投影——
+	// 那才是「刚建好还没事实」，和「id 写错了」必须分得开。
+	uv, err := s.loadUnits(r.Context())
+	if err != nil {
+		return err
+	}
+	known := false
+	for _, u := range uv.Units {
+		if u.ID == c.PBC {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return fmt.Errorf("%w：单元 %s 不存在", errNotFound, c.PBC)
+	}
 	v, err := s.load(r, c.PBC)
 	if err != nil {
 		return err

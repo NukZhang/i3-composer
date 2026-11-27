@@ -114,11 +114,12 @@ function check(name, ok, detail) {
     if (p) p.click();
   }, unit);
   await page.waitForTimeout(700);
-  await page.evaluate((name) => {
-    const rows = Array.from(document.querySelectorAll('.sidebar .trow'));
-    const p = rows.find((x) => x.textContent.trim().startsWith(name));
-    if (p) p.click();
-  }, '执行侧验收单元');
+  // 按单元 code 精确点：同一账本上跑过多轮时侧栏会有多个同名单元，
+  // 按名字找会点进别人的账，digest 自然对不上（质量报告那段 #43 复跑时遇过）。
+  await page.evaluate((id) => {
+    const el = document.querySelector('.sidebar [data-unit="' + id + '"]');
+    if (el) el.click();
+  }, unit);
   await page.waitForTimeout(700);
   await page.evaluate(() => {
     const s = Array.from(document.querySelectorAll('.sidebar .trow.sub2')).find((x) => x.textContent.trim().startsWith('构建'));

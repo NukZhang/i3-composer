@@ -102,6 +102,20 @@ func newHarness(t *testing.T) *harness {
 	return &harness{srv: s, fake: f, st: st}
 }
 
+// registerUnit 在 units 注册表里登记一个单元：/api/state 只对登记过的 id 出投影（#43）。
+func registerUnit(t *testing.T, st *store.Store, id string) {
+	t.Helper()
+	ctx := t.Context()
+	if err := st.Ensure(ctx, "units"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Append(ctx, "units", store.FactUnitCreated, "PA", map[string]any{
+		"id": id, "name": id, "kind": "pbc",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (h *harness) do(t *testing.T, method, path string, body any, role Role) (*http.Response, map[string]any) {
 	t.Helper()
 	var rd *bytes.Reader
@@ -421,6 +435,8 @@ func TestRunRejectsPublishedItem(t *testing.T) {
 
 func TestStateReturnsFullProjection(t *testing.T) {
 	h := newHarness(t)
+	// #43 起 /api/state 只认注册表里的单元：夹具得先登记 fee，否则 404 是对的。
+	registerUnit(t, h.st, "fee")
 	seedItem(t, h.st, store.Item{ID: "US-01", Title: "t", Kind: "Story", PBC: "fee",
 		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
 	resp, out := h.do(t, http.MethodGet, "/api/state?pbc=fee", nil, RoleBA)
@@ -442,6 +458,7 @@ func TestStateReturnsFullProjection(t *testing.T) {
 func TestStateIsNotASecondTruth(t *testing.T) {
 	// /api/state 与 /api/overview 必须同源：同一个工作项在两处给出的 run/st/t 完全一致。
 	h := newHarness(t)
+	registerUnit(t, h.st, "fee")
 	seedItem(t, h.st, store.Item{ID: "US-01", Title: "t", Kind: "Story", PBC: "fee",
 		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
 

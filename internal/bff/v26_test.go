@@ -97,9 +97,7 @@ func TestAgentFlowSaveRejectsBrokenFlow(t *testing.T) {
 func TestAcceptanceDecideCreatesDefectAndBacklogItem(t *testing.T) {
 	h := newHarness(t)
 	ctx := t.Context()
-	if err := h.st.Ensure(ctx, "fee"); err != nil {
-		t.Fatal(err)
-	}
+	registerUnit(t, h.st, "fee") // #43：/api/state 只认登记过的单元
 	if _, err := h.st.Append(ctx, "fee", store.FactCheckDefined, "BA", map[string]any{
 		"items": []domain.Check{
 			{ID: "AC-1", N: "账期按自然月生成", G: "14 个项目", W: "点生成", T: "生成 14 份"},
