@@ -106,10 +106,10 @@ async function decide(approve) {
 }
 
 function runText(run) {
-  return { idea: '未发起', draft: '未发起', running: '执行中', waiting: '待发布', paused: '已介入', blocked: '受阻', published: '已发布' }[run] || run || '—';
+  return { idea: '未发起', draft: '未发起', running: '执行中', waiting: '待发布', verified: '待打 tag', paused: '已介入', blocked: '受阻', published: '已发布' }[run] || run || '—';
 }
 function runCls(run) {
-  return 'cr-state ' + (['published', 'running', 'waiting', 'paused', 'blocked'].includes(run) ? run : 'draft');
+  return 'cr-state ' + (['published', 'running', 'waiting', 'verified', 'paused', 'blocked'].includes(run) ? run : 'draft');
 }
 function stepCls(st) {
   return st === 'done' ? 'done' : st === 'doing' ? 'doing' : st === 'blocked' ? 'blocked' : st.human ? 'human' : '';
@@ -238,7 +238,10 @@ function factDetail(f) {
     </div>
 
     <div class="card">
-      <div class="ch"><span v-html="icon('git')" /><h3>执行链路</h3><span class="spacer" /><span class="small muted">七步，只有 publish 是人工闸</span></div>
+      <div class="ch">
+        <span v-html="icon('git')" /><h3>执行链路</h3><span class="spacer" />
+        <span v-if="item.steps?.length" class="small muted">{{ item.steps.length }} 步</span>
+      </div>
       <div class="tl">
         <div v-for="(st, i) in item.steps || []" :key="i" class="tl-item" :class="stepCls(st)">
           <div class="tl-dot">{{ stepMark(st) }}</div>

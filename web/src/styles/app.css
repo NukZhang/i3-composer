@@ -374,7 +374,7 @@ table.tb tr:hover td{background:var(--bg-hover6)}
 .cr-state{font-size:10.5px;padding:2px 8px;border-radius:11px;white-space:nowrap}
 .cr-state.waiting{background:var(--bg-warn-soft);color:var(--warn);border:1px solid var(--line-warn)}
 .cr-state.running{background:var(--bg-info-soft);color:var(--info);border:1px solid var(--line-info)}
-.cr-state.published{background:var(--bg-ok-soft3);color:var(--ok);border:1px solid var(--line-ok3)}
+.cr-state.verified,.cr-state.published{background:var(--bg-ok-soft3);color:var(--ok);border:1px solid var(--line-ok3)}
 .cr-state.draft{background:var(--bg-gray);color:var(--tx-6);border:1px solid var(--line-g)}
 .cr-state.paused{background:var(--bg-purple-soft);color:var(--purple);border:1px solid var(--line-purple)}
 .cr-state.blocked{background:var(--bg-err-soft3);color:var(--err);border:1px solid var(--line-err3)}
