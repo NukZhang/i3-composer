@@ -8,6 +8,7 @@
 //
 // 用法：BASE=http://127.0.0.1:8080 RUN_TAG=v32 node acceptance_v32.cjs
 const { chromium } = require('playwright');
+const { requirePubsub } = require('./require_pubsub.cjs');
 const fs = require('fs');
 const path = require('path');
 
@@ -51,6 +52,7 @@ async function requireSeedLedger() {
 }
 
 (async () => {
+  await requirePubsub(BASE);
   await requireSeedLedger();
   fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch({ executablePath: CHROME });

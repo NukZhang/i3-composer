@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -494,6 +496,24 @@ func TestHandlerServesStaticWithoutShadowingAPI(t *testing.T) {
 	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Fatalf("测试目录下 web/ 不存在，静态兜底应 404，实际 %d", resp2.StatusCode)
+	}
+}
+
+func TestHandlerServesConfiguredWebDir(t *testing.T) {
+	dir := t.TempDir()
+	const index = "<!doctype html><title>配置的前端入口</title>"
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(index), 0644); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(nil, nil, NewSessions([]byte("test-key")), "dapr")
+	server.WebDir = dir
+	handler := server.Handler()
+	for _, path := range []string{"/", "/project/example"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusOK || recorder.Body.String() != index {
+			t.Errorf("%s 应返回配置的前端入口，实际 %d %q", path, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 

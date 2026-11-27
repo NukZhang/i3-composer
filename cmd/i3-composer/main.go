@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -50,6 +51,46 @@ func main() {
 	}
 }
 
+func resolveWebDir() (string, error) {
+	dir, err := filepath.Abs(env("WEB_DIR", "web/dist"))
+	if err != nil {
+		return "", fmt.Errorf("解析 WEB_DIR 失败：%w", err)
+	}
+	indexPath := filepath.Join(dir, "index.html")
+	info, err := os.Stat(indexPath)
+	if err != nil {
+		return "", fmt.Errorf("无法读取前端入口 %q，请先构建前端或设置 WEB_DIR：%w", indexPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("前端入口 %q 不是普通文件", indexPath)
+	}
+	index, err := os.Open(indexPath)
+	if err != nil {
+		return "", fmt.Errorf("无法打开前端入口 %q：%w", indexPath, err)
+	}
+	defer index.Close()
+	return dir, nil
+}
+
+func waitForPubsubWiring(ctx context.Context, srv *bff.Server) (map[string]any, error) {
+	for {
+		wiring := srv.CheckPubsubWiring(ctx)
+		if wiring["checked"] == true && wiring["ok"] == true {
+			return wiring, nil
+		}
+		if wiring["checked"] == true || srv.LocalPort == 0 {
+			return nil, fmt.Errorf("REQUIRE_PUBSUB=1：%v", wiring["detail"])
+		}
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("REQUIRE_PUBSUB=1：%v（%w）", wiring["detail"], ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
 func run() error {
 	var (
 		httpEnd  = env("DAPR_HTTP_ENDPOINT", "http://127.0.0.1:3500")
@@ -66,8 +107,27 @@ func run() error {
 		wfName   = env("WORKFLOW_NAME", wf.NameDelivery) // workflow 名：不同名 = 不同 actor 类型
 	)
 
+	webDir, err := resolveWebDir()
+	if err != nil {
+		return err
+	}
 	dc := dapr.New(httpEnd)
 	log := store.New(dc, stateSt, ledger)
+
+	srv := bff.NewServer(log, dc, bff.NewSessions([]byte(sessKey)), wfComp)
+	srv.WebDir = webDir
+	srv.WfName = wfName
+	srv.LocalPort = bff.PortOfAddr(addr)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if env("REQUIRE_PUBSUB", "0") == "1" {
+		wiringCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		srv.Pubsub, err = waitForPubsubWiring(wiringCtx, srv)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
 
 	// logFor 按前缀给出一本账。
 	//
@@ -89,10 +149,6 @@ func run() error {
 		return fmt.Errorf("连接 sidecar gRPC %s 失败：%w", grpcEnd, err)
 	}
 	defer conn.Close()
-
-	// 信号要在自检之前就有：自检期间 Ctrl-C 也能干净退出，不能被当成「自检失败」。
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	wfc := workflow.NewClient(conn)
 	// 启动自检直接用底层 client：探针要「发起 + 等结束 + 看终态」三步，
@@ -159,15 +215,14 @@ func run() error {
 			slog.Warn("种子数据写入失败", "err", err)
 		}
 	}
-	srv := bff.NewServer(log, dc, bff.NewSessions([]byte(sessKey)), wfComp)
-	srv.WfName = wfName
 	// 发布批次的部署与回滚都用执行侧同一套东西：构建产物在哪、进程归谁收，
 	// 不能有两份实现。
 	srv.Pipe = exec
-	srv.LocalPort = bff.PortOfAddr(addr)
 	// 启动就把 pubsub 投递地址核对一遍：sidecar 只往它的 app-port 投事件，
 	// 本实例监听别的端口时工作流照跑、事件一条也收不到，验收里极难看出原因。
-	srv.Pubsub = srv.CheckPubsubWiring(context.Background())
+	if srv.Pubsub == nil {
+		srv.Pubsub = srv.CheckPubsubWiring(ctx)
+	}
 	if w, ok := srv.Pubsub["ok"].(bool); ok && !w {
 		slog.Warn("pubsub 投递地址不一致", "detail", srv.Pubsub["detail"])
 	} else if d, ok := srv.Pubsub["detail"].(string); ok {

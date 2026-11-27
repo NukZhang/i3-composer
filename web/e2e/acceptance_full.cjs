@@ -11,6 +11,7 @@
 //
 // 用法：BASE=http://127.0.0.1:8093 node acceptance_full.cjs
 const { chromium } = require('playwright');
+const { requirePubsub } = require('./require_pubsub.cjs');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const BASE = process.env.BASE || 'http://127.0.0.1:8093';
 
@@ -30,6 +31,7 @@ async function waitFor(fn, ms, step) {
 }
 
 (async () => {
+  await requirePubsub(BASE);
   const browser = await chromium.launch({ executablePath: CHROME });
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -159,7 +161,7 @@ async function waitFor(fn, ms, step) {
   // ---- 11. pubsub 收到了事件 ----
   // 投递地址先核对：sidecar 只往 app-port 投事件，本实例端口不一致就一条也收不到。
   const wiring = (await api('/api/health')).body.pubsub || {};
-  check('11 pubsub 投递地址与本实例端口一致', wiring.ok === true, wiring);
+  check('11 pubsub 投递地址与本实例端口一致', wiring.checked === true && wiring.ok === true, wiring);
   const evs = await api('/api/events');
   const list = (evs.body && evs.body.events) || [];
   check('11 pubsub 收到的事件落了 event.received 事实', list.length > 0, list.slice(0, 2).map((e) => e.payload && e.payload.topic));

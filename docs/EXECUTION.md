@@ -131,9 +131,9 @@ sha256sum .i3-artifacts/blobs/sha256/<hex>   # 与事实里的 digest 一致
 docker compose up -d
 (cd web && npm ci && npm run build)
 
-# 2. 起服务（仓库根，因为静态根是相对路径 web/dist）
+# 2. 起服务（从其他目录启动时，通过 WEB_DIR 指定前端产物的绝对路径）
 go build -o /tmp/i3-composer-bin ./cmd/i3-composer
-/tmp/i3-composer-bin
+WEB_DIR="$PWD/web/dist" REQUIRE_PUBSUB=1 /tmp/i3-composer-bin
 
 # 3. 五套验收（每轮使用新的干净演示账本，按顺序各跑一次）
 (
@@ -160,6 +160,7 @@ digest 是不是内容摘要、部署地址是不是真的活着；还要**在�
 那些证据得是人看得见的，不是只躺在 Redis 里。
 
 `acceptance_v32.cjs` 先检查项目 `p1` 的四个演示种子单元和发布历史，发现额外或缺失的单元、已有发布批次时会在浏览器启动前退出。
+五套脚本均先核对 `BASE` 的 `/api/health`，只有 `pubsub.checked` 和 `pubsub.ok` 同时为真才运行。容器中应保留 `web/e2e/` 的脚本布局和种子文件 `internal/seed/agents.json`。
 它和 `acceptance_full.cjs` 都会创建新单元，后者在本轮账本中新建自己的交付单元来验从零交付。
 下一轮须切换到新的账本，而不只是换 `RUN_TAG`。
 
