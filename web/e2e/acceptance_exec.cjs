@@ -37,6 +37,15 @@ function check(name, ok, detail) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: r }),
   });
 
+  // 服务起没起先说清楚：连不上时 goto 会抛一句「navigating to …」，
+  // 看不出是哪个接口、什么状态。前置不通就只报这一条，后面无从谈起（#56）。
+  const up = await fetch(BASE + '/api/health').then((r) => r.ok).catch(() => false);
+  if (!up) {
+    check('前置：BFF 可用（' + BASE + '）', false, { reason: '连不上，先起服务再跑' });
+    await browser.close();
+    console.log('SUMMARY 0/' + results.length + ' passed');
+    process.exit(1);
+  }
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1500);
 
@@ -116,11 +125,21 @@ function check(name, ok, detail) {
   await page.waitForTimeout(700);
   // 按单元 code 精确点：同一账本上跑过多轮时侧栏会有多个同名单元，
   // 按名字找会点进别人的账，digest 自然对不上（质量报告那段 #43 复跑时遇过）。
-  await page.evaluate((id) => {
+  // 点没点中要能当场看出来：选错账时 digest 对不上，但原因在「点在谁身上」，
+  // 把点击前后侧栏的选中行报出来，而不是只报一句 digest 不一致（#44）。
+  const picked = await page.evaluate(async (id) => {
+    const sel = () => {
+      const on = document.querySelector('.sidebar .trow.on[data-unit]');
+      return on ? on.getAttribute('data-unit') : null;
+    };
     const el = document.querySelector('.sidebar [data-unit="' + id + '"]');
+    const before = sel();
     if (el) el.click();
+    await new Promise((r) => setTimeout(r, 600));
+    return { found: !!el, before, after: sel() };
   }, unit);
-  await page.waitForTimeout(700);
+  check('5.1 侧栏点中本次单元（不是同名的上一轮）', picked.found && picked.after === unit, picked);
+  await page.waitForTimeout(300);
   await page.evaluate(() => {
     const s = Array.from(document.querySelectorAll('.sidebar .trow.sub2')).find((x) => x.textContent.trim().startsWith('构建'));
     if (s) s.click();
@@ -130,12 +149,24 @@ function check(name, ok, detail) {
     const t = Array.from(document.querySelectorAll('.ptab')).find((x) => x.textContent.includes('质量报告'));
     if (t) t.click();
   });
-  await page.waitForTimeout(900);
-  const pageText = await page.evaluate(() => (document.querySelector('#app') || {}).textContent || '');
+  // 切单元会触发一次重拉（App.vue 里 watch S.pbcId），质量报告要用新账本的
+  // test / builds 才出现。固定等 900ms 会读到上一个项目的旧报告，digest 对不上——
+  // 所以等到本单元的摘要出现为止，超时再断言并带上此刻页面里真实的摘要（#44）。
   const shortDigest = String(digest).slice(0, 19);
+  const pageText = await (async () => {
+    const end = Date.now() + 10000;
+    for (;;) {
+      const t = await page.evaluate(() => (document.querySelector('#app') || {}).textContent || '');
+      if (t.includes(shortDigest) || Date.now() > end) return t;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  })();
+  const shot = page
+    ? await page.evaluate(() => (document.querySelector('#app').textContent.match(/sha256:[0-9a-f]+/) || [''])[0]).catch(() => '')
+    : '';
   check('5 质量报告里看得到真证据（测试条数 / digest）',
     /\d+\/\d+ 通过/.test(pageText) && pageText.includes(shortDigest),
-    { digest: shortDigest, hasPass: /\d+\/\d+ 通过/.test(pageText) });
+    { digest: shortDigest, shown: shot, hasPass: /\d+\/\d+ 通过/.test(pageText), unit: picked.after });
 
   // ---- 6. 种子写的历史与真跑的事实分得开 ----
   // 种子事实查种子单元（fee）；真跑的事实查这次新建的单元。

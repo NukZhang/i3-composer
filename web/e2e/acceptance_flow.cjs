@@ -24,8 +24,18 @@ async function waitFor(fn, ms, step) {
 const api = (page, path, opts) =>
   page.evaluate(async ([p, o]) => {
     const r = await fetch(p, o || {});
-    return { code: r.status, body: await r.json().catch(() => null) };
+    const text = await r.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch { /* 非 JSON（空体 / HTML 错误页） */ }
+    return { code: r.status, body, text: text.slice(0, 300) };
   }, [path, opts]);
+// needCall 取一个必成功的接口：拿不到 2xx 就把「哪个接口、什么状态、返回了什么」
+// 记成一条 FAIL，然后返回 null——调用方据此停在这一段，不让整轮塌成 TypeError（#56）。
+const needCall = (res, what) => {
+  if (res.code >= 200 && res.code < 300 && res.body) return res;
+  check(what + '：接口可用', false, { code: res.code, body: res.text });
+  return null;
+};
 
 (async () => {
   const browser = await chromium.launch({ executablePath: CHROME });
@@ -38,6 +48,15 @@ const api = (page, path, opts) =>
   page.on('response', (r) => { if (r.status() >= 400) httpErrors.push(r.status() + ' ' + r.url()); });
 
   const BASE = process.env.BASE || 'http://127.0.0.1:8080';
+  // 本服务起没起：连不上时别让页面落到 origin 的 SPA 兜底（那里 /api/* 返回的是 HTML，
+  // 每种读都会被当成「接口可用」）。起不来就只报这一条，后面的 check 无从谈起（#56）。
+  const up = await fetch(BASE + '/api/health').then((r) => r.ok).catch(() => false);
+  if (!up) {
+    check('前置：BFF 可用（' + BASE + '）', false, { reason: '连不上，先起服务再跑' });
+    await browser.close();
+    console.log('SUMMARY 0/' + results.length + ' passed');
+    process.exit(1);
+  }
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1200);
 
@@ -81,7 +100,8 @@ const api = (page, path, opts) =>
   }, [unit, title]);
   // 建任务失败就如实停在这一步：以前这里 created 为 null，下面每条 check
   // 都是 TypeError，整轮塌成 FATAL，前因反倒看不见了（#52）。
-  const created = ((((await api(page, '/api/inbox')).body || {}).items) || []).find((x) => x.t === title);
+  const inbox = needCall(await api(page, '/api/inbox'), '读需求池');
+  const created = inbox && (((inbox.body || {}).items) || []).find((x) => x.t === title);
   check('1 BA 建任务走真实接口', !!created && /^US-/.test(created.id), created && created.id);
   check('1 新项 run=idea 且六步链路齐全', !!created && created.run === 'idea' && created.steps.length === 6, created && created.run);
   if (!created) {

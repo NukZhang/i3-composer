@@ -33,21 +33,39 @@ function check(name, ok, detail) {
   page.on('response', (r) => { if (r.status() >= 400) httpErrors.push(r.status() + ' ' + r.url()); });
 
   try {
+  // 服务起没起先说清楚：连不上时 goto 会抛一句「navigating to …」，
+  // 看不出是哪个接口、什么状态。前置不通就只报这一条，后面无从谈起（#56）。
+  const up = await fetch(BASE + '/api/health').then((r) => r.ok).catch(() => false);
+  if (!up) {
+    check('前置：BFF 可用（' + BASE + '）', false, { reason: '连不上，先起服务再跑' });
+    await browser.close();
+    console.log('SUMMARY 0/' + results.length + ' passed');
+    process.exit(1);
+  }
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1800);
 
   // ---- 1. 首屏：三个单元、七个 worker ----
+  // 接口不通时不能塌成 reading 'map'：把状态码和响应片段带回来，
+  // 让 check 报出「哪个接口、什么状态」（#56）。
   const boot = await page.evaluate(async (base) => {
-    const [units, agents] = await Promise.all([
-      fetch(base + '/api/units').then((r) => r.json()),
-      fetch(base + '/api/agents').then((r) => r.json()),
-    ]);
+    const get = async (p) => {
+      const r = await fetch(base + p);
+      const text = await r.text();
+      let body = null;
+      try { body = JSON.parse(text); } catch { /* 非 JSON：原样放进片段 */ }
+      return { code: r.status, body, text };
+    };
+    const [units, agents] = await Promise.all([get('/api/units'), get('/api/agents')]);
     return {
-      units: units.units.map((u) => u.id + ':' + u.kind + ':' + (u.agentId || '-')),
-      agents: agents.agents.map((a) => a.id),
+      units: ((units.body || {}).units || []).map((u) => u.id + ':' + u.kind + ':' + (u.agentId || '-')),
+      agents: ((agents.body || {}).agents || []).map((a) => a.id),
+      bad: [units, agents].filter((x) => x.code !== 200 || !x.body)
+        .map((x) => x.code + ' ' + x.text.slice(0, 120)),
       root: (document.querySelector('#app') || {}).textContent || '',
     };
   }, BASE);
+  check('1 /api/units 与 /api/agents 都返回 200 JSON（否则下面读到的是空表）', boot.bad.length === 0, boot.bad);
   check('1 首屏挂载 Vue', boot.root.includes('工作台'), boot.root.slice(0, 40));
   // 只数种子带来的那几个单元：别的验收脚本（acceptance_full）会在同一本账上
   // 建新单元，那是正常的，不该让这条断言误报。
@@ -168,7 +186,8 @@ function check(name, ok, detail) {
     return !!row;
   });
   check('4b 编排里有 kb 节点可选', kbAssembled);
-  await page.waitForTimeout(500);
+  // 等 kb 节点的配置面板真的渲染出来（节点刚被点选时面板还在上一次选择的内容上）。
+  await page.waitForFunction(() => /当轮装配/.test((document.querySelector('.as-cfg') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
   const kbPanel = await page.evaluate(() => {
     const el = document.querySelector('.as-cfg');
     return el ? el.textContent : '';
@@ -289,7 +308,12 @@ function check(name, ok, detail) {
   await page.click('.trow.sub2:has-text("构建")');
   await page.waitForTimeout(600);
   await page.click('.ptab:has-text("质量报告")');
-  await page.waitForTimeout(900);
+  // 切单元会触发重拉，质量报告要用新账本的 gates 才渲染。等四闸出现再读，
+  // 定长等待会读到上一个单元的空报告（#44 里 digest 对不上是同一个形状）。
+  await page.waitForFunction(
+    () => ((document.querySelector('.stage') || {}).textContent || '').includes('引用闭合'),
+    null, { timeout: 8000 },
+  ).catch(() => {});
   const dunQ = await page.evaluate(() => ({
     text: (document.querySelector('.stage') || {}).textContent || '',
   }));
@@ -529,6 +553,9 @@ function check(name, ok, detail) {
   // 切角色后只等 300ms：权限位必须跟着会话立刻更新，不该排在账本全量拉取后面（#46）。
   await page.click('.rolebtn:has-text("SA")');
   await page.waitForTimeout(300);
+  // 找不到按钮就再等它出现：null（页面上没有这个按钮）和 disabled=false（权限没解锁）
+  // 是两种故障，混在一个 null 里会把渲染慢当成权限没跟上。
+  await page.locator('.ph button:has-text("发布新版本")').waitFor({ timeout: 1000 }).catch(() => {});
   const saPublish = await page.evaluate(() => {
     const b = Array.from(document.querySelectorAll('.ph button')).find((x) => /发布新版本/.test(x.textContent));
     return b ? { disabled: b.disabled } : null;
@@ -621,8 +648,10 @@ function check(name, ok, detail) {
   await page.click('.rolebtn:has-text("PA")');
   await page.waitForTimeout(1200);
   await page.click('.sidebar .sb-add');
-  await page.waitForTimeout(600);
-  const paModal = await page.evaluate(() => {
+  // PA 有创建权：弹窗应切到「新建」。等按钮真出现再读——
+  // 固定 600ms 时还在「加入已有」页，读到的 createDisabled 是 null（把渲染慢读成功能坏了）。
+  const paBtn = await page.waitForSelector('#modal button:has-text("创建项目")', { timeout: 5000 }).catch(() => null);
+  const paModal = !paBtn ? null : await page.evaluate(() => {
     const m = document.querySelector('#modal');
     if (!m) return null;
     const b = Array.from(m.querySelectorAll('button')).find((x) => /^创建项目$/.test(x.textContent));
