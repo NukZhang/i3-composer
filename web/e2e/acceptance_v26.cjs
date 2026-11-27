@@ -152,6 +152,12 @@ function check(name, ok, detail) {
     const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
     return (a.cases || []).length;
   }, BASE);
+  const kbRow = page.locator('.as-li').filter({ hasText: '检索口径' });
+  check('4b 编排里有 kb 节点可选', await kbRow.count() === 1);
+  await kbRow.click();
+  const kbHeading = page.locator('.as-cfg > .row > span').first();
+  await kbHeading.filter({ hasText: '检索口径' }).waitFor();
+  const beforeTrial = await kbHeading.textContent();
   await page.click('.as-top button:has-text("试跑这一条")');
   await page.waitForTimeout(1200);
   const ran = await page.evaluate(() => ({
@@ -179,15 +185,8 @@ function check(name, ok, detail) {
   check('4b 载入项带 doc / ver / score 与四类边界',
     !!asm0 && asm0.loaded.every((c) => c.doc && typeof c.score === 'number' && c.score > 0 && c.class),
     asm0 && asm0.loaded.slice(0, 2));
-  // 页面：选中 kb 节点，就地展开载入清单与省略原因。
-  const kbAssembled = await page.evaluate(() => {
-    const row = Array.from(document.querySelectorAll('.as-li')).find((x) => /检索口径/.test(x.textContent));
-    if (row) row.click();
-    return !!row;
-  });
-  check('4b 编排里有 kb 节点可选', kbAssembled);
-  // 等 kb 节点的配置面板真的渲染出来（节点刚被点选时面板还在上一次选择的内容上）。
   await page.waitForFunction(() => /当轮装配/.test((document.querySelector('.as-cfg') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
+  const afterTrial = await kbHeading.textContent();
   const kbPanel = await page.evaluate(() => {
     const el = document.querySelector('.as-cfg');
     return el ? el.textContent : '';
@@ -195,6 +194,11 @@ function check(name, ok, detail) {
   check('4b kb 节点展开显示载入篇数、省略数与原因',
     /当轮装配/.test(kbPanel) && /载入 \d+ 篇/.test(kbPanel) && /省略 \d+ 篇/.test(kbPanel)
       && /没有省略|省略原因/.test(kbPanel) && /预算占用/.test(kbPanel), kbPanel.slice(0, 200));
+  await page.waitForTimeout(2000);
+  const settled = await kbHeading.textContent();
+  check('4b 试跑刷新后所选节点不回跳',
+    [beforeTrial, afterTrial, settled].every((heading) => heading === '检索口径'),
+    { beforeTrial, afterTrial, settled });
 
   await page.click('.as-dbg-r button:has-text("沉淀为评测用例")');
   await page.waitForTimeout(1200);
