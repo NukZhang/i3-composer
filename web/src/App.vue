@@ -56,6 +56,10 @@ async function setRole(id) {
   try {
     const j = await api.setRole(id);
     S.role = j.role;
+    // /api/role 的响应里已经带了新角色的 acts：当场写进去，别等 refresh() 拉完账本才解锁按钮（#46）。
+    // 否则账本一大，「我是谁」已经变了而「我能干什么」还要等近 1 秒。
+    S.roleName = j.name;
+    S.acts = j.acts || [];
     toast('已切换为 ' + j.name + ' · 只显示与你有关的待办与确认', 'ok');
   } catch (e) {
     toast(e.message, 'err');

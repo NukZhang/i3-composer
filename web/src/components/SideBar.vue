@@ -89,9 +89,12 @@ function orchColor(pid) {
   const st = orchState(pid);
   return st === 'ready' ? 'var(--ok)' : st === 'pending' ? 'var(--warn)' : 'var(--tx-9)';
 }
+// 「＋」弹窗里的写操作（建项目 / 建工作空间）都是 PA 的 ActPbc；「加入已有」谁都能做。
+const canAdd = computed(() => (S.acts || []).includes('pbc'));
 function add() {
   S.addOpen = true;
-  S.addTab = 'new';
+  // 没有 ActPbc 的人一打开就落在「加入已有」这页：那里才是他真能做的事（#36）。
+  S.addTab = canAdd.value ? 'new' : 'join';
   S.addKind = 'proj';
 }
 function grayModule(name) {
@@ -109,7 +112,13 @@ function grayModule(name) {
 
     <div class="sb-group">
       项目
-      <span class="sb-add" title="新建项目 / 工作空间，或加入已有" @click="add">+</span>
+      <!-- 新建 / 加入弹窗里能做的写操作（建项目、建工作空间）都是 PA 的 ActPbc。
+           没有它的人仍然能打开弹窗加入已有项目，所以入口不藏；但标题先说是谁的活（#36）。 -->
+      <span
+        class="sb-add"
+        :title="canAdd ? '新建项目 / 工作空间，或加入已有' : '新建项目 / 工作空间是 PA 的职责；这里仍可加入已有项目'"
+        @click="add"
+      >+</span>
     </div>
 
     <!-- 工作空间 → 项目 -->

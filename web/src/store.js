@@ -106,6 +106,14 @@ function nowHM() {
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
+// loadActs 只拿「当前会话是谁、能做什么」。写操作成功后的界面反馈不该等账本全量拉完。
+async function loadActs() {
+  const ib = await api.inbox();
+  S.role = ib.role;
+  S.roleName = ib.name;
+  S.acts = ib.acts || [];
+}
+
 // 单个 PBC 的投影 + 单元列表 + 通知，按需拉。
 async function loadPbc() {
   // 需求池是跨单元同表：/api/inbox 一直在，空项目也照样能拉。
@@ -173,6 +181,11 @@ export function refresh() {
   inflight = (async () => {
     S.loading = true;
     try {
+      // 「我是谁 / 能干什么」只依赖 /api/inbox 里跟着会话一起回来的 role/acts，跟账本大小无关。
+      // 以前它挂在 loadPbc() 里、排在 loadGlobal()（全量单元/Agent/项目/通知）之后，
+      // 账本一大切角色后按钮要等近 1 秒才解锁——界面已经说「我是 SA」，按钮还按 DA 的状态禁用（#46）。
+      // 所以先单独拉一次权限，再拉全量；loadPbc 之后仍会再拉一次 inbox（顺带刷新需求池），不冲突。
+      await loadActs();
       await loadGlobal();
       await loadPbc();
       S.facts = S.pbcId ? (await api.facts(S.pbcId)).facts || [] : [];

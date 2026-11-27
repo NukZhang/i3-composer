@@ -31,6 +31,9 @@ const catalogProjects = computed(() => S.catalog.projects || []);
 const catalogSpaces = computed(() => S.catalog.spaces || []);
 const joinedProjects = computed(() => new Set(S.projects.map((p) => p.id)));
 const joinedSpaces = computed(() => new Set(S.workspaces.map((w) => w.name)));
+// 建项目 / 建工作空间都要求 ActPbc（服务端 projects.go 的 Require(c.Role, ActPbc)），实际就是 PA。
+// 没有这个权限的人不该看到一个「看着能点、点了 403」的主操作（#36）。
+const canCreate = computed(() => (S.acts || []).includes('pbc'));
 
 function close() {
   S.addOpen = false;
@@ -108,7 +111,13 @@ async function joinW(id) {
       <h2>新建项目 / 工作空间</h2>
       <div class="msub">项目是承接容器（一份 BRD + 多个交付单元）；工作空间是文件夹，把多个项目放在一起。两者都能现建，也能加入已有的。</div>
       <div class="row" style="gap: 6px; margin: 12px 0 14px">
-        <button class="btn small" :class="{ primary: S.addTab === 'new' }" @click="tab('new')">
+        <button
+          class="btn small"
+          :class="{ primary: S.addTab === 'new' }"
+          :disabled="!canCreate"
+          :title="canCreate ? '' : '新建项目 / 工作空间是 PA 的职责'"
+          @click="tab('new')"
+        >
           <span v-html="icon('plus', 11)" /> 新建
         </button>
         <button class="btn small" :class="{ primary: S.addTab === 'join' }" @click="tab('join')">
@@ -141,9 +150,12 @@ async function joinW(id) {
               <option value="brd">先写 BRD（建完直接打开编辑器）</option>
             </select>
           </div>
+          <div class="msub" v-if="!canCreate" style="color: var(--warn); margin-top: 4px">
+            新建项目是 <b>PA</b> 的职责。换成 PA 再建，或到「加入已有」里把你现在需要的项目加进侧栏。
+          </div>
           <div class="mfoot">
             <button class="btn" @click="close">取消</button>
-            <button class="btn primary" :disabled="busy" @click="submitNew">创建项目</button>
+            <button class="btn primary" :disabled="busy || !canCreate" :title="canCreate ? '' : '新建项目是 PA 的职责'" @click="submitNew">创建项目</button>
           </div>
         </template>
 
@@ -157,9 +169,12 @@ async function joinW(id) {
             </select>
           </div>
           <div class="msub" style="margin-top: 0">工作空间只做归集，不产生制品：BRD 和交付单元永远挂在项目上。</div>
+          <div class="msub" v-if="!canCreate" style="color: var(--warn); margin-top: 4px">
+            新建工作空间是 <b>PA</b> 的职责。
+          </div>
           <div class="mfoot">
             <button class="btn" @click="close">取消</button>
-            <button class="btn primary" :disabled="busy" @click="submitNew">创建工作空间</button>
+            <button class="btn primary" :disabled="busy || !canCreate" :title="canCreate ? '' : '新建工作空间是 PA 的职责'" @click="submitNew">创建工作空间</button>
           </div>
         </template>
       </template>

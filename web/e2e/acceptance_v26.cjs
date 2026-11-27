@@ -147,13 +147,13 @@ function check(name, ok, detail) {
   // 光看「跑通」回答不了「是不是没召回」，所以装配要落事实、也要看得见。
   const trialAsm = await page.evaluate(async (base) => {
     const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
-    const t = a.trialRun || {};
+    // lastLoadedTrial 是「最近一次真的载入了知识」的那一轮（#33）：服务端已经把它和
+    // 被白名单拦掉的空轮分开，e2e 不再自己挑、也不写「找不到就退回第一轮」的兜底——
+    // 兜底会把这个字段缺失这件事掩盖成一个假绿。
+    const t = a.lastLoadedTrial || {};
     return { assemblies: t.assemblies || [] };
   }, BASE);
-  // 取「真读到输入、真召回」的那一轮来断言：若账本最后一条 trialRun 恰好是
-  // 第 10 段被白名单拦掉的那轮（query 空、loaded=0），不能拿它当 4b 的证据。
-  const allAsm = trialAsm.assemblies || [];
-  const asm0 = allAsm.find((a) => a.query && a.loaded && a.loaded.length > 0) || allAsm[0];
+  const asm0 = (trialAsm.assemblies || []).find((a) => a.query && a.loaded && a.loaded.length > 0);
   check('4b 试跑结果带当轮装配（载入清单 + 省略 + 预算）',
     !!asm0 && Array.isArray(asm0.loaded) && asm0.loaded.length > 0
       && asm0.omitted && typeof asm0.omitted.count === 'number' && asm0.budget && asm0.budget.total === 1,
@@ -415,11 +415,22 @@ function check(name, ok, detail) {
     const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
     const asms = (a.trialRun || {}).assemblies || [];
     const empty = asms.find((x) => !x.query && (!x.loaded || x.loaded.length === 0));
-    return empty ? { note: empty.note, query: empty.query, loaded: (empty.loaded || []).length } : null;
+    // #33：这一轮被拦了，但它不能污染「最近一次检索的结果」。上一段 4b 的试跑真载入过，
+    // 所以 lastLoadedTrial 必须停那一轮（query 非空、有载入），而不是跟着最新的空轮走。
+    const last = a.lastLoadedTrial || null;
+    const lastAsm = last ? ((last.assemblies || [])[0] || null) : null;
+    return {
+      note: empty && empty.note, query: empty && empty.query, loaded: empty ? (empty.loaded || []).length : null,
+      pinned: !!lastAsm && !!lastAsm.query && (lastAsm.loaded || []).length > 0,
+      lastAt: a.lastLoadedAt || '', trialAt: a.trialAt || '',
+    };
   }, BASE);
   check('10 没读到输入时装配归因写「没读到输入」而不是「没召回」',
     !!blockedAsm && /^没读到输入/.test(blockedAsm.note || '') && /query 是空/.test(blockedAsm.note || ''),
     blockedAsm);
+  check('10 被白名单拦掉的一轮不进 lastLoadedTrial（最近一次检索仍钉在真召回那轮）',
+    blockedAsm.pinned && blockedAsm.lastAt !== '' && blockedAsm.lastAt !== blockedAsm.trialAt,
+    { lastAt: blockedAsm.lastAt, trialAt: blockedAsm.trialAt, pinned: blockedAsm.pinned });
 
   // 对话验收不能拿一轮被拦下的执行拼回复：拒绝，且一条对话事实都不落。
   // 对话是 BA 的活（验收台），DA 点这个口子会被 403 拦住——先切回 BA。
@@ -515,13 +526,14 @@ function check(name, ok, detail) {
     !!daPublish && /SA/.test(daPublish.title || ''), daPublish);
 
   // SA 打开同一个 Agent，按钮应是可点的（禁用的是角色，不是功能坏了）。
+  // 切角色后只等 300ms：权限位必须跟着会话立刻更新，不该排在账本全量拉取后面（#46）。
   await page.click('.rolebtn:has-text("SA")');
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(300);
   const saPublish = await page.evaluate(() => {
     const b = Array.from(document.querySelectorAll('.ph button')).find((x) => /发布新版本/.test(x.textContent));
     return b ? { disabled: b.disabled } : null;
   });
-  check('12 SA 看「发布新版本」可点（权限判断精确到角色，#25）',
+  check('12 SA 切角色后 300ms 内「发布新版本」即解锁（权限不排在账本全量后面，#25 #46）',
     !!saPublish && saPublish.disabled === false, saPublish);
 
   // #24：配置页「登记连接器」任何角色都禁用、且带 title —— 功能没接，别递一个没反应的按钮。
@@ -576,6 +588,50 @@ function check(name, ok, detail) {
   }, BASE);
   check('12 拼错的 /api 路由回 404 + JSON，不再 200 + 首页（#20）',
     api404.code === 404 && /json/.test(api404.ct) && !api404.isHtml, api404);
+
+  // #36：新建项目 / 工作空间是 PA 的职责。BA 打开「＋」弹窗不该看到可点的主操作。
+  // 注意 BA 没有 ActPbc，侧栏也没有单元阶段，这块 DOM 要等 refresh 落定后再点。
+  await page.click('.rolebtn:has-text("BA")');
+  await page.waitForTimeout(1200);
+  await page.click('.sidebar .sb-add');
+  await page.waitForTimeout(600);
+  const baModal = await page.evaluate(() => {
+    const m = document.querySelector('#modal');
+    if (!m) return null;
+    const btns = Array.from(m.querySelectorAll('button')).map((b) => b.textContent.trim() + '|' + b.disabled);
+    const newTab = Array.from(m.querySelectorAll('button')).find((b) => /^\s*新建\s*$/.test(b.textContent));
+    return {
+      btns,
+      newTabDisabled: newTab ? newTab.disabled : null,
+      newTabTitle: newTab ? newTab.getAttribute('title') : null,
+      // 「加入已有」页：能加入已有的项目和空间，且没有任何「创建」按钮
+      joinTab: btns.filter((t) => /^加入\|/.test(t)).length,
+      createBtn: btns.filter((t) => /^创建/.test(t)).length,
+      hint: /PA/.test(m.textContent) && /职责/.test(m.textContent) || /新建项目 \/ 工作空间是 PA 的职责/.test(newTab ? (newTab.getAttribute('title') || '') : ''),
+    };
+  });
+  check('12 BA 打开新建弹窗：默认落在「加入已有」，没有可点的创建按钮（#36）',
+    !!baModal && baModal.newTabDisabled === true && baModal.joinTab >= 1 && baModal.createBtn === 0, baModal);
+  check('12 BA 打开新建弹窗：「新建」写明是 PA 的职责（#36）',
+    !!baModal && /PA/.test(baModal.newTabTitle || '') && baModal.hint, baModal);
+  await page.evaluate(() => { const m = document.querySelector('#modal'); if (m) m.click(); });
+  await page.waitForTimeout(400);
+
+  // PA 打开同一个弹窗：「创建项目」可点（禁用的是角色，不是功能坏了）。
+  await page.click('.rolebtn:has-text("PA")');
+  await page.waitForTimeout(1200);
+  await page.click('.sidebar .sb-add');
+  await page.waitForTimeout(600);
+  const paModal = await page.evaluate(() => {
+    const m = document.querySelector('#modal');
+    if (!m) return null;
+    const b = Array.from(m.querySelectorAll('button')).find((x) => /^创建项目$/.test(x.textContent));
+    return { createDisabled: b ? b.disabled : null, hint: /PA/.test(m.textContent) && /职责/.test(m.textContent) };
+  });
+  check('12 PA 打开新建弹窗：「创建项目」可点、无「不是你的活」提示（#36）',
+    !!paModal && paModal.createDisabled === false && paModal.hint === false, paModal);
+  await page.evaluate(() => { const m = document.querySelector('#modal'); if (m) m.click(); });
+  await page.waitForTimeout(300);
 
   await browser.close();
   } finally {

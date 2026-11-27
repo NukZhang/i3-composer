@@ -81,7 +81,9 @@ function check(name, ok, detail) {
     if (it && ['verified', 'blocked', 'waiting', 'published'].includes(it.run)) { item = it; break; }
     await new Promise((r) => setTimeout(r, 2000));
   }
-  check('1 workflow 五步跑完，停在「打 tag」', !!item && item.run === 'verified', item && { run: item.run, blocked: item.blocked, step: item.step });
+  // 没跑完就把卡在哪一步、哪句原因打出来：只报「null」等于把排查推给人。
+  check('1 workflow 五步跑完，停在「打 tag」', !!item && item.run === 'verified',
+    item ? { run: item.run, step: item.step, blocked: item.blocked } : { run: '(仍 running)', unit: unit });
 
   // ---- 2. 制品里有真内容（能编译） ----
   const st = (await api('/api/state?pbc=' + unit)).body;
