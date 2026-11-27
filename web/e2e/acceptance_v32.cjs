@@ -276,6 +276,35 @@ async function requireSeedLedger() {
   const hasEvidence = st.checkCommit === head.no && st.test?.commit === head.no
     && st.test.total > 0 && st.test.pass === st.test.total && /^sha256:[0-9a-f]{64}$/.test(head.digest);
   await role('BA');
+  const verifyStage = page.locator('.stage');
+  check('7 通用 PBC 显示当前验收项和可用操作说明，不显示缴费单演示',
+    await verifyStage.getByText('当前单元未接入可操作的业务制品', { exact: false }).isVisible()
+      && await verifyStage.locator('.ac-chip').filter({ hasText: 'AT-01' }).isVisible()
+      && await verifyStage.getByRole('button', { name: '批量生成缴费单' }).count() === 0);
+  const openBug = verifyStage.getByRole('button', { name: '不提过' });
+  await openBug.click();
+  const stepsField = verifyStage.locator('.bug-steps');
+  await stepsField.fill('尚未提交的操作记录');
+  await page.locator('.sidebar .trow.sub2').filter({ hasText: '方案' }).click();
+  await page.locator('.sidebar .trow.sub2').filter({ hasText: '验证' }).click();
+  await openBug.waitFor();
+  check('7 离开验收页后不会保留未提交的缺陷表单', await stepsField.count() === 0);
+  await openBug.click();
+  check('7 通用 PBC 缺陷表单的复现步骤由 BA 填写', await stepsField.inputValue() === '');
+  const steps = '打开当前提交的质量报告，检查测试结果与构建摘要';
+  const factsPath = `/api/facts?pbc=${unitID}`;
+  const previousSeq = (await api(factsPath)).body.facts[0].seq;
+  await stepsField.fill(steps);
+  const [bugResponse] = await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith(`/api/checks/AT-01/decide?pbc=${unitID}`) && r.request().method() === 'POST'),
+    verifyStage.getByRole('button', { name: '提交', exact: true }).click(),
+  ]);
+  const { defect } = await bugResponse.json();
+  const stateFacts = (await api(factsPath)).body.facts;
+  const reported = (await api(`/api/state?pbc=${unitID}`)).body.defects || [];
+  check('7 通用 PBC 缺陷事实只记录 BA 填写的真实复现步骤',
+    bugResponse.status() === 201 && reported.some((d) => d.id === defect?.id && d.ac === 'AT-01' && d.steps === steps)
+      && stateFacts.some((f) => f.seq > previousSeq && f.type === 'defect.created' && f.actor === 'BA'));
   const verdict = hasEvidence && await api(`/api/checks/AT-01/decide?pbc=${unitID}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ st: 'pass', commit: head.no }),

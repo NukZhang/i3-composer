@@ -138,10 +138,20 @@ async function checkHealth(page, path, commit, environment) {
     console.log('PASS 当前提交的人工 AT、入库机器测试与二进制摘要', commit, test.payload.pass + '/' + test.payload.total, digest);
 
     await role('BA');
-    const preview = await post('/api/units/' + unit + '/material-preview', [200, 201]);
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    const projectRow = page.locator('.sidebar .trow.sub').filter({ hasText: '收费与工单数字化' });
+    await projectRow.waitFor();
+    const unitRow = page.locator(`.sidebar [data-unit="${unit}"]`);
+    if (!await unitRow.isVisible()) await projectRow.click();
+    await unitRow.click();
+    await page.locator('.sidebar .trow.sub2').filter({ hasText: '验证' }).click();
+    const preview = await clickRequest(page, '启动材料入库验收', 'POST', '/api/units/' + unit + '/material-preview', [200, 201]);
     assert.equal(new URL(preview.url, base).href, new URL(testPath, base).href);
     assert.equal(preview.commit, commit);
     assert.equal(preview.digest, digest);
+    await page.frameLocator('iframe[title="材料入库业务验收"]').getByRole('heading', { name: '新建入库', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: '批量生成缴费单' }).count(), 0);
+    console.log('PASS 验证页启动并嵌入当前提交的材料入库制品', preview.commit, preview.url);
     const loaded = await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
     assert.equal(loaded.status(), 200);
     await page.getByRole('heading', { name: '新建入库', exact: true }).waitFor();
