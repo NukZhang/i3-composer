@@ -143,11 +143,21 @@ function stageColor(s) {
       <div class="card">
         <div class="ch"><span v-html="icon('tag')" /><h3>发布 · 版本线</h3></div>
         <div class="tree-box">
-          <div class="tree-line"><span class="k">v{{ a.ver }}</span><span class="v">当前 · 评测 {{ a.eval[0] }}/{{ a.eval[1] }} · {{ a.published ? '已注册 agent/' + a.id + ' · 流量 ' + a.rollout + '%' : '未发布' }}</span></div>
+          <div class="tree-line">
+            <span class="k">v{{ a.ver }}</span>
+            <span class="v">当前 · 评测 {{ a.eval[0] }}/{{ a.eval[1] }}</span>
+          </div>
+          <div class="tree-line">
+            <span class="k">注册状态</span>
+            <span class="v">
+              <template v-if="a.published">已注册 agent/{{ a.id }} · 灰度档位 {{ a.rollout }}%（未接流量分流）</template>
+              <template v-else>未发布</template>
+            </span>
+          </div>
           <div class="tree-line"><span class="k">v{{ (base && base.ver) || '—' }}</span><span class="v">上一版 · 回滚目标</span></div>
           <div v-if="a.rollbackTo" class="tree-line"><span class="k">回滚</span><span class="v">已回滚到 v{{ a.rollbackTo }}</span></div>
         </div>
-        <div class="small muted" style="margin-top: 9px">发布＝把 actor 类型指向新 digest，不是「改个提示词立即生效」。回滚同样是一条命令。</div>
+        <div class="small muted" style="margin-top: 9px">发布会在账本中登记版本与摘要。</div>
       </div>
     </template>
   </template>
