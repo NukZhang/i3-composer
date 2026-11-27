@@ -54,6 +54,42 @@ function check(name, ok, detail) {
   });
   check('0 建执行侧验收单元', cu.code === 201, cu.body);
 
+  const stage = page.locator('.stage');
+  const previewTab = stage.locator('.ptab').filter({ hasText: '启动预览' });
+  const selectBuild = async () => {
+    const project = page.locator('.sidebar .trow.sub').filter({ hasText: '收费与工单数字化' });
+    const row = page.locator(`.sidebar [data-unit="${unit}"]`);
+    await project.waitFor();
+    if (!await row.isVisible()) await project.click();
+    await row.click();
+    await page.locator('.sidebar .trow.sub2').filter({ hasText: '构建' }).click();
+    return page.locator('.sidebar .trow.on[data-unit]').getAttribute('data-unit');
+  };
+  const checkUnconfiguredPreview = async (label, built) => {
+    await previewTab.click();
+    await stage.locator('.ptab.on').filter({ hasText: '启动预览' }).waitFor();
+    const state = (await api('/api/state?pbc=' + unit)).body;
+    const head = state?.commits?.[0];
+    const { facts } = (await api('/api/facts?pbc=' + unit)).body;
+    const runtimeFacts = facts.filter(({ type }) => type === 'deploy.succeeded' || type === 'material.preview.started');
+    const status = await stage.getByText('通用示例未配置可操作的业务预览。', { exact: true }).isVisible();
+    const text = await stage.innerText();
+    const fakeStatus = /https?:\/\/|服务已启动|健康检查\s*200/.test(text);
+    const actions = await stage.getByRole('button', { name: /重启|启动.*验收/ }).count();
+    const links = await stage.locator('a[href], iframe').count();
+    const expectedBuild = built ? !!head?.digest : (state?.commits || []).length === 0;
+    check(label, expectedBuild && status && !fakeStatus && !actions && !links && runtimeFacts.length === 0,
+      { unit, commit: head?.no ?? null, digest: head?.digest ?? null, status, fakeStatus, actions, links, runtimeFacts: runtimeFacts.length });
+    if (process.env.SHOTS && status) {
+      mkdirSync(process.env.SHOTS, { recursive: true });
+      await page.screenshot({ path: join(process.env.SHOTS, built ? 'issue72-built.png' : 'issue72-empty.png') });
+    }
+  };
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await selectBuild();
+  await checkUnconfiguredPreview('0 未提交单元的启动预览不显示运行凭据（#72）', false);
+
   await role('BA');
   const at = await api('/api/artifacts?pbc=' + unit, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -118,38 +154,10 @@ function check(name, ok, detail) {
   check('5 单元交付不部署：账本里没有 deploy.succeeded', deploys.length === 0, deploys.length);
 
   // ---- 5.1 人能在页面上直接看到这些证据 ----
-  await page.evaluate((u) => {
-    const rows = Array.from(document.querySelectorAll('.sidebar .trow'));
-    const p = rows.find((x) => x.textContent.includes('收费与工单数字化'));
-    if (p) p.click();
-  }, unit);
-  await page.waitForTimeout(700);
-  // 按单元 code 精确点：同一账本上跑过多轮时侧栏会有多个同名单元，
-  // 按名字找会点进别人的账，digest 自然对不上（质量报告那段 #43 复跑时遇过）。
-  // 点没点中要能当场看出来：选错账时 digest 对不上，但原因在「点在谁身上」，
-  // 把点击前后侧栏的选中行报出来，而不是只报一句 digest 不一致（#44）。
-  const picked = await page.evaluate(async (id) => {
-    const sel = () => {
-      const on = document.querySelector('.sidebar .trow.on[data-unit]');
-      return on ? on.getAttribute('data-unit') : null;
-    };
-    const el = document.querySelector('.sidebar [data-unit="' + id + '"]');
-    const before = sel();
-    if (el) el.click();
-    await new Promise((r) => setTimeout(r, 600));
-    return { found: !!el, before, after: sel() };
-  }, unit);
-  check('5.1 侧栏点中本次单元（不是同名的上一轮）', picked.found && picked.after === unit, picked);
-  await page.waitForTimeout(300);
-  await page.evaluate(() => {
-    const s = Array.from(document.querySelectorAll('.sidebar .trow.sub2')).find((x) => x.textContent.trim().startsWith('构建'));
-    if (s) s.click();
-  });
-  await page.waitForTimeout(600);
-  await page.evaluate(() => {
-    const t = Array.from(document.querySelectorAll('.ptab')).find((x) => x.textContent.includes('质量报告'));
-    if (t) t.click();
-  });
+  // 侧栏用单元 ID 定位，避免同名运行的质量报告和摘要串账。
+  const picked = await selectBuild();
+  check('5.1 侧栏点中本次单元（不是同名的上一轮）', picked === unit, { expected: unit, picked });
+  await stage.locator('.ptab').filter({ hasText: '质量报告' }).click();
   // 切单元会触发一次重拉（App.vue 里 watch S.pbcId），质量报告要用新账本的
   // test / builds 才出现。固定等 900ms 会读到上一个项目的旧报告，digest 对不上——
   // 所以等到本单元的摘要出现为止，超时再断言并带上此刻页面里真实的摘要（#44）。
@@ -167,7 +175,7 @@ function check(name, ok, detail) {
     : '';
   check('5 质量报告里看得到真证据（测试条数 / digest）',
     /\d+\/\d+ 通过/.test(pageText) && pageText.includes(shortDigest),
-    { digest: shortDigest, shown: shot, hasPass: /\d+\/\d+ 通过/.test(pageText), unit: picked.after });
+    { digest: shortDigest, shown: shot, hasPass: /\d+\/\d+ 通过/.test(pageText), unit: picked });
 
   const gateCard = page.locator('.card').filter({ has: page.getByRole('heading', { name: /^交付四闸/ }) });
   const gateSummary = await gateCard.locator('.ch .tag').evaluate((tag) => ({
@@ -180,6 +188,9 @@ function check(name, ok, detail) {
     gates.length === 4 && unknown.length === 1 && unknown[0].key === 'visual' &&
     gateSummary.text === '3/4 通过 · 1 判不了' && gateSummary.warning && visualMark === '?',
     { summary: gateSummary, visualMark, unknown: unknown.map((gate) => gate.key) });
+
+  // 先等质量报告显示这次构建的摘要，再检查同一前端投影的预览。
+  await checkUnconfiguredPreview('5 已构建单元的启动预览仍以运行凭据为准（#72）', true);
 
   await page.locator('.ptab').filter({ hasText: 'Backlog' }).click();
   await page.getByRole('row').filter({ has: page.getByRole('cell', { name: id, exact: true }) })
@@ -196,7 +207,6 @@ function check(name, ok, detail) {
   check('5 执行链路标题按账本步骤计数，打 tag 是人工闸（#74）',
     rendered === item.steps.length && rendered === 6 && label === `${rendered} 步` &&
     human.length === 1 && human[0].includes('打 tag'), { label, rendered, human });
-  const stage = page.locator('.stage');
   const verify = stage.getByRole('button', { name: '前往验证', exact: true });
   const workItemResults = stage.locator('.card').filter({ has: page.getByRole('heading', { name: '这一轮真跑出来的结论' }) });
   await workItemResults.waitFor();

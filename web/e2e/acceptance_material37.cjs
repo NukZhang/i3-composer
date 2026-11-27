@@ -90,6 +90,41 @@ async function checkHealth(page, path, commit, environment) {
     await role('PA');
     await post('/api/units', 201, { id: unit, name: '材料入库验收 ' + unit, kind: 'pbc', proj: project, profile: 'material-inbound' });
     await role('BA');
+    const selectUnit = async () => {
+      await page.goto('/', { waitUntil: 'domcontentloaded' });
+      const projectRow = page.locator('.sidebar .trow.sub').filter({ hasText: '收费与工单数字化' });
+      const unitRow = page.locator(`.sidebar [data-unit="${unit}"]`);
+      await projectRow.waitFor();
+      if (!await unitRow.isVisible()) await projectRow.click();
+      await unitRow.click();
+    };
+    const openBuildPreview = async () => {
+      await page.locator('.sidebar .trow.sub2').filter({ hasText: '构建' }).click();
+      await page.locator('.stage .ptab').filter({ hasText: '启动预览' }).click();
+    };
+    const previewPath = '/api/units/' + unit + '/material-preview';
+    const statePath = '/api/state' + query;
+    const previewFacts = async () => (await get('/api/facts' + query)).facts.filter(({ type }) =>
+      type === 'material.preview.started');
+    const runtimeCard = page.locator('.stage section.card').filter({
+      has: page.getByRole('heading', { name: '材料入库 · 业务制品', exact: true }),
+    });
+    const startPreview = '启动材料入库验收';
+    const buildFrame = 'iframe[title="材料入库业务验收"]';
+
+    await selectUnit();
+    await openBuildPreview();
+    await runtimeCard.getByText('当前提交完成测试和构建后可启动业务页面。', { exact: true }).waitFor();
+    assert.ok(await runtimeCard.getByRole('button', { name: startPreview, exact: true }).isDisabled());
+    assert.equal(await runtimeCard.locator('a[href], iframe').count(), 0);
+    assert.doesNotMatch(await runtimeCard.innerText(), /服务已启动|健康检查\s*200|https?:\/\//);
+    assert.equal((await get(statePath)).commits?.length ?? 0, 0);
+    const deniedPreview = await post(previewPath, 400);
+    assert.match(deniedPreview.error, /还没有提交/);
+    assert.deepEqual(await previewFacts(), []);
+    await screenshot(page, 'issue72-before-build');
+    console.log('PASS #72 材料单元无提交时预览禁用，启动接口不留下预览事实', unit);
+
     const at = await post('/api/artifacts' + query, 201, { artifact: 'at', text: atText });
     const { id: item } = await post('/api/tasks' + query, 201, {
       title: '核对材料入库的真实交付', type: 'feature', env: 'test', mode: 'fast',
@@ -98,7 +133,6 @@ async function checkHealth(page, path, commit, environment) {
     });
     await role('DA');
     const itemPath = '/api/items/' + item;
-    const statePath = '/api/state' + query;
     const started = await post(itemPath + '/run' + query, 202);
     assert.ok(started.instance?.endsWith(item), '工作流实例应绑定工作项');
 
@@ -138,20 +172,33 @@ async function checkHealth(page, path, commit, environment) {
     console.log('PASS 当前提交的人工 AT、入库机器测试与二进制摘要', commit, test.payload.pass + '/' + test.payload.total, digest);
 
     await role('BA');
-    await page.goto('/', { waitUntil: 'domcontentloaded' });
-    const projectRow = page.locator('.sidebar .trow.sub').filter({ hasText: '收费与工单数字化' });
-    await projectRow.waitFor();
-    const unitRow = page.locator(`.sidebar [data-unit="${unit}"]`);
-    if (!await unitRow.isVisible()) await projectRow.click();
-    await unitRow.click();
-    await page.locator('.sidebar .trow.sub2').filter({ hasText: '验证' }).click();
-    const preview = await clickRequest(page, '启动材料入库验收', 'POST', '/api/units/' + unit + '/material-preview', [200, 201]);
+    await selectUnit();
+    await openBuildPreview();
+    await runtimeCard.getByText('请由 BA 启动当前提交的测试实例。', { exact: false }).waitFor();
+    assert.equal(await runtimeCard.locator('a[href], iframe').count(), 0);
+    assert.deepEqual(await previewFacts(), []);
+    const preview = await clickRequest(page, startPreview, 'POST', previewPath, 201);
     assert.equal(new URL(preview.url, base).href, new URL(testPath, base).href);
     assert.equal(preview.commit, commit);
     assert.equal(preview.digest, digest);
-    await page.frameLocator('iframe[title="材料入库业务验收"]').getByRole('heading', { name: '新建入库', exact: true }).waitFor();
+    await page.frameLocator(buildFrame).getByRole('heading', { name: '新建入库', exact: true }).waitFor();
+    assert.equal(await runtimeCard.getByRole('link', { name: '在新窗口打开材料入库', exact: true }).getAttribute('href'), preview.url);
+    assert.equal(await runtimeCard.locator(buildFrame).getAttribute('src'), preview.url);
+    const [previewFact, extraPreviewFact] = await previewFacts();
+    assert.equal(extraPreviewFact, undefined);
+    assert.equal(previewFact?.actor, 'BA');
+    // 事实列表只有元数据，运行地址与提交绑定由已返回的启动结果和帧核对。
+    assert.ok(previewFact.seq > build.seq);
+    await screenshot(page, 'issue72-started-preview');
+    console.log('PASS #72 构建页在真实启动后展示本提交的地址并关联启动事实',
+      JSON.stringify({ seq: previewFact.seq, ...preview }));
+
+    await page.locator('.sidebar .trow.sub2').filter({ hasText: '验证' }).click();
+    assert.deepEqual(await clickRequest(page, startPreview, 'POST', previewPath, 200), preview);
+    await page.frameLocator(buildFrame).getByRole('heading', { name: '新建入库', exact: true }).waitFor();
+    assert.equal((await previewFacts()).length, 1);
     assert.equal(await page.getByRole('button', { name: '批量生成缴费单' }).count(), 0);
-    console.log('PASS 验证页启动并嵌入当前提交的材料入库制品', preview.commit, preview.url);
+    console.log('PASS 验证页取得同一预览地址且没有新增启动事实', preview.commit, preview.url);
     const loaded = await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
     assert.equal(loaded.status(), 200);
     await page.getByRole('heading', { name: '新建入库', exact: true }).waitFor();
