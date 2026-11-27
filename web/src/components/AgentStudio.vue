@@ -23,11 +23,23 @@ const sel = ref(null);
 const dirty = ref(false);
 const promptDraft = ref('');
 
+// 每次重拉 Agent（试跑结果、保存、构建之后都会换一个 agent 对象）都会走到这里。
+// 只有「换了一个 Agent」或「当前选中的节点在新编排里没了」才重设默认选中；
+// 否则保留用户点的那一个。以前这里每次都重设成第一个节点，于是点完 kb 节点后
+// 稍等片刻面板自己跳回开始节点——点选与「重设默认」抢着改同一个状态（#54）；
+// e2e 在固定等待后读面板，读到哪个完全看异步刷新谁后到（#47 间歇失败的由来）。
+const loadedId = ref(null);
 watch(
   () => props.agent,
   (a) => {
+    const id = a && a.id ? a.id : null;
+    const sameAgent = id !== null && id === loadedId.value;
     flow.value = a && a.flow ? JSON.parse(JSON.stringify(a.flow)) : null;
-    sel.value = flow.value && flow.value.nodes.length ? flow.value.nodes[0].id : null;
+    const ids = (flow.value && flow.value.nodes || []).map((n) => n.id);
+    if (!sameAgent || !sel.value || !ids.includes(sel.value)) {
+      sel.value = ids.length ? ids[0] : null;
+    }
+    loadedId.value = id;
     dirty.value = false;
     promptDraft.value = '';
   },
