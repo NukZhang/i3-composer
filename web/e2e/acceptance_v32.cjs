@@ -226,10 +226,15 @@ async function waitFor(fn, ms, step) {
     check('5.1 同单元再发一次，新批次 live=true', !!okURL && i2 >= 0 && o2.live[i2] === true,
       { code: rel1.code, okURL, live: o2.live && o2.live[i2] });
     const newFacts = ((((await api('/api/state?pbc=' + pbcUnit.id)).body || {}).deploys) || []);
+    // 同一账本跑过多轮时，这个单元身上会有前面几轮的部署事实（各自带批次号）。
+    // 只认「最后两条」：上一轮发的那条（已被本轮换版本收掉，仍记 success 但进程不在）
+    // 与本轮这条；判据是「两个不同的批次号、后一条是 success 且归本轮批次」（#61）。
+    const tail = newFacts.slice(-2);
+    const ids = new Set(tail.map((d) => d.batch));
     check('5.1 两条部署事实分别归两个批次（后一条 success 并带新批次号）',
-      newFacts.filter((d) => d.batch).length === 2 && newFacts[newFacts.length - 1].status === 'success' &&
-        newFacts[newFacts.length - 1].batch === rel1.body.id,
-      newFacts.map((d) => d.status + '@' + d.batch));
+      tail.length === 2 && ids.size === 2 && tail[1].status === 'success' &&
+        tail[1].batch === rel1.body.id,
+      { facts: newFacts.map((d) => d.status + '@' + d.batch), batch: rel1.body && rel1.body.id });
   }
 
   // ---- 6. 打 tag 的前置：验收没全过就打不动 ----

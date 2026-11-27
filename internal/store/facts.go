@@ -119,6 +119,7 @@ const (
 	FactReleaseProgress  = "release.batch.progress" // 批次里第 i 个单元已部署（带 batch / url）
 	FactReleaseFailed    = "release.batch.failed"   // 批次没走完：已起的进程已收回，原因在 payload
 	FactDeployRolledback = "deploy.rolledback"      // 某条部署事实（按 url 认）被撤销
+	FactDeployLost       = "deploy.lost"            // 某条部署事实对应的进程已经不在了（#19）
 
 	// v3.3：入口准入。工作项进流水线之前，先判五件事（三项硬、两项软）。
 	//

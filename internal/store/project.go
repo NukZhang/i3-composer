@@ -96,6 +96,8 @@ type Deploy struct {
 	URL    string `json:"url"`
 	At     string `json:"at"`
 	By     string `json:"by"`
+	// Env 是这条部署落在哪个环境（#19 #28）：以前不带环境，注释却写「谁在哪个环境可查」。
+	Env    string `json:"env,omitempty"`
 	Status string `json:"status"`
 	// Batch 是落下这条部署的批次号：让每条部署都能被某个批次认领（#41）。
 	Batch string `json:"batch,omitempty"`
@@ -381,6 +383,27 @@ func apply(v *View, f Fact) error {
 		for i := len(v.Deploys) - 1; i >= 0; i-- {
 			if v.Deploys[i].URL == p.URL && v.Deploys[i].Status == "success" {
 				v.Deploys[i].Status = "rolledback"
+				if v.Deploys[i].Reason == "" {
+					v.Deploys[i].Reason = p.Reason
+				}
+				break
+			}
+		}
+
+	case FactDeployLost:
+		// 部署成功之后进程没了（自己崩了、被别的东西杀了）：账本不能再沉默地记 success。
+		// 同样按 url 认领那条事实，状态改成 lost——「账本说 active、现实里已经死了」
+		// 正是这个 issue 要消灭的那种偏差（#19）。
+		var p struct {
+			URL    string `json:"url"`
+			Reason string `json:"reason"`
+		}
+		if err := dec(&p); err != nil {
+			return err
+		}
+		for i := len(v.Deploys) - 1; i >= 0; i-- {
+			if v.Deploys[i].URL == p.URL && v.Deploys[i].Status == "success" {
+				v.Deploys[i].Status = "lost"
 				if v.Deploys[i].Reason == "" {
 					v.Deploys[i].Reason = p.Reason
 				}

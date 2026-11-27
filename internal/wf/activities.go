@@ -520,7 +520,7 @@ func (a *Activities) Deploy(ctx context.Context, in StepInput) (StepResult, erro
 		if out.Skipped {
 			return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Detail: out.Detail})
 		}
-		d := store.Deploy{ID: in.ItemID, Tag: "", Commit: head.No, URL: out.URL, At: stamp(), By: "x-ops", Status: "success"}
+		d := store.Deploy{ID: in.ItemID, Tag: "", Commit: head.No, URL: out.URL, Env: in.Env, At: stamp(), By: "x-ops", Status: "success"}
 		if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/deploy",
 			store.FactDeploySucceeded, "x-ops", d); err != nil {
 			return StepResult{}, err

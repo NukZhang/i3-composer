@@ -259,11 +259,13 @@ func (p *Pipeline) Deploy(ctx context.Context, pbc, env, commit, digest string, 
 	if err != nil {
 		return wf.DeployResult{}, err
 	}
-	dir, err := p.workspace(pbc, commit)
+	path, err := p.binPath(pbc, env, commit, digest)
 	if err != nil {
 		return wf.DeployResult{}, err
 	}
-	path := filepath.Join(dir, "app.bin")
+	// 按 (内容摘要, 环境) 写一份自己的文件：以前所有环境共用一个 app.bin，
+	// 第二个环境一写就把第一个环境正在执行的那个覆盖了，那个进程当场退出，
+	// 账本却还记着 active（#19）。
 	if err := os.WriteFile(path, bin, 0o755); err != nil {
 		return wf.DeployResult{}, err
 	}
@@ -283,6 +285,44 @@ func (p *Pipeline) StopAll() { p.Dep.StopAll() }
 
 // Alive 判定部署是否还在跑。
 func (p *Pipeline) Alive(pbc, env string) bool { return p.Dep.Alive(pbc, env) }
+
+// binPath 给出某次部署用的可执行文件路径。
+//
+// 文件名按摘要 + 环境分：同一份构建产物推到 SIT 与 UAT，是**两个**正在运行的进程，
+// 必须各自有一份文件。归到提交目录下是为了排查时一眼看到它是哪个版本的部署。
+// 摘要算进文件名而不是随便加序号：重发同一版本到同一环境会覆盖同一个文件，
+// 但那时旧进程已经先被停掉了（Deploy 开头 Stop 同 (pbc, env)），覆盖的是没人跑的文件。
+func (p *Pipeline) binPath(pbc, env, commit, digest string) (string, error) {
+	dir, err := p.workspace(pbc, commit)
+	if err != nil {
+		return "", err
+	}
+	sum := digest
+	if i := strings.Index(sum, ":"); i >= 0 {
+		sum = sum[i+1:]
+	}
+	if len(sum) > 16 {
+		sum = sum[:16]
+	}
+	return filepath.Join(dir, "app-"+safeName(env)+"-"+sum+".bin"), nil
+}
+
+// safeName 把环境名变成文件名里安全的片段（只留字母数字和横竖线）。
+func safeName(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "default"
+	}
+	return b.String()
+}
 
 // workspace 给出某个提交的工作目录（同一提交复用，便于复算）。
 func (p *Pipeline) workspace(pbc, commit string) (string, error) {

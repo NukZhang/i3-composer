@@ -176,3 +176,61 @@ func TestBrokenCodeFailsTheTest(t *testing.T) {
 		t.Fatal("编译不过的代码必须让测试失败")
 	}
 }
+
+// 同一单元推到两个环境：两个进程必须同时活着（#19）。
+//
+// 根因是所有环境共用一个 app.bin，第二个环境的 WriteFile 覆盖了第一个环境
+// 正在执行的可执行文件，那个进程当场退出。这里按真实路径起两个进程来验。
+func TestSameUnitTwoEnvsStayAlive(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("环境里没有 go，跳过")
+	}
+	ctx := context.Background()
+	p := newTestPipeline(t)
+
+	spec := testSpec()
+	files := map[string]string{}
+	for _, f := range filesOf(spec) {
+		files[f.Path] = f.Content
+	}
+	out, err := p.Build(ctx, "fee", "1.0.1", files)
+	if err != nil {
+		t.Fatalf("构建应成功：%v", err)
+	}
+	a, err := p.Deploy(ctx, "fee", "SIT", "1.0.1", out.Digest, true)
+	if err != nil {
+		t.Fatalf("部署 SIT 应成功：%v", err)
+	}
+	b, err := p.Deploy(ctx, "fee", "UAT", "1.0.1", out.Digest, true)
+	if err != nil {
+		t.Fatalf("部署 UAT 应成功：%v", err)
+	}
+	if a.URL == b.URL {
+		t.Fatalf("两个环境应是两个进程，URL 却相同：%s", a.URL)
+	}
+	if !p.Alive("fee", "SIT") {
+		t.Fatal("部署 UAT 之后 SIT 的进程不应被带走")
+	}
+	if !p.Alive("fee", "UAT") {
+		t.Fatal("UAT 的进程应活着")
+	}
+	// 两个地址都要真的能应答：只看登记表不够，进程可能已经死了而哨兵还没清。
+	for _, u := range []string{a.URL, b.URL} {
+		resp, err := http.Get(u + "/healthz")
+		if err != nil {
+			t.Fatalf("%s 应可访问：%v", u, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s 健康检查应 200，实际 %d", u, resp.StatusCode)
+		}
+	}
+	// 停一个环境不连坐另一个：回滚只收回自己那一份。
+	p.Stop("fee", "SIT")
+	if p.Alive("fee", "SIT") {
+		t.Fatal("停掉 SIT 之后不应还活着")
+	}
+	if !p.Alive("fee", "UAT") {
+		t.Fatal("停掉 SIT 不应把 UAT 的进程一起收掉")
+	}
+}

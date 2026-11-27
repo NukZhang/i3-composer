@@ -278,30 +278,44 @@ func (s *Server) orch(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 		}
 	}
 	// 每个批次带一句「进程还在不在」：#29 的现象是旧批次仍显示「已上线」而地址已经死了。
-	// 探测并行走、每个 800ms 封顶，批次再多也就是一个超时的时间。
-	live := make([]bool, len(out.Batches))
+	// 探测并行走。一个批次里只要有一条地址不通，就算「不全在线」：多环境并存时
+	// 只看碰巧活着的那个，会把「SIT 已经死了」说成「批次还活着」（#19）。
+	lives := make([][]bool, len(out.Batches))
 	var wg sync.WaitGroup
 	for i := range out.Batches {
 		b := &out.Batches[i]
 		if b.Status != "active" {
 			continue
 		}
+		lives[i] = make([]bool, len(b.Units))
 		for j := range b.Units {
 			u := &b.Units[j]
-			if u.URL == "" {
+			if u.URL == "" || u.Status == "rolledback" {
 				continue
 			}
 			wg.Add(1)
-			go func(i int, url string) {
+			go func(i, j int, url string) {
 				defer wg.Done()
-				if liveURL(r.Context(), url) {
-					live[i] = true
-				}
-			}(i, u.URL)
+				lives[i][j] = liveURL(r.Context(), url)
+			}(i, j, u.URL)
 		}
 	}
 	wg.Wait()
-	out.Live = live
+	out.Live = make([]bool, len(out.Batches))
+	for i := range out.Batches {
+		if out.Batches[i].Status != "active" {
+			continue
+		}
+		all, any := true, false
+		for _, ok := range lives[i] {
+			if ok {
+				any = true
+			} else {
+				all = false
+			}
+		}
+		out.Live[i] = any && all
+	}
 	writeJSON(w, http.StatusOK, out)
 	return nil
 }
@@ -482,7 +496,7 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 		l.URL, l.Status = out.URL, "deployed"
 		// 部署事实落在单元自己的账本里：这条线的「谁在哪个环境、部署了哪个字节」可查。
 		// batch 让每条部署都能被某个批次认领——这是 #41 里那些「无批次引用的 success」不再出现的原因。
-		d := store.Deploy{ID: "release", Tag: l.Tag, Commit: l.Commit, URL: out.URL,
+		d := store.Deploy{ID: "release", Tag: l.Tag, Commit: l.Commit, URL: out.URL, Env: in.Env,
 			At: stampNow(), By: string(c.Role), Status: "success", Batch: id}
 		if _, err := s.Log.Append(r.Context(), l.ID, store.FactDeploySucceeded, string(c.Role), d); err != nil {
 			return fail("部署 " + l.Name + " 已起进程，但部署事实没落进账本：" + err.Error())
@@ -493,6 +507,25 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 			// 但账本不全会让人以为没上，宁可让发布失败、由人决定重发。
 			return fail("部署事实已落账，但批次进度没记上：" + err.Error())
 		}
+	}
+	// 上线之后复核一遍：同一单元别的环境还可能也在跑（#19），前一次部署在新进程起来之后
+	// 死掉了，这里才看得见。死了的落 deploy.lost——账本不能明明记着 success、
+	// 现实里进程已经没了，还一声不吭（宪法 I：事实日志是唯一权威；判不了就说判不了）。
+	// 部署器自己看得到的（登记表里那份）不算「lost」：那是正常换版本留下的。
+	for i := range locked {
+		l := &locked[i]
+		if l.URL == "" || !l.Binary || liveURL(r.Context(), l.URL) {
+			continue
+		}
+		if s.Pipe != nil && s.Pipe.Alive(l.ID, in.Env) {
+			continue
+		}
+		reason := "批次上线复核：地址不再应答"
+		rb := map[string]any{"url": l.URL, "batch": id, "reason": reason, "at": stampNow()}
+		if _, err := s.Log.Append(r.Context(), l.ID, store.FactDeployLost, string(c.Role), rb); err != nil {
+			slog.Warn("部署进程不见了，deploy.lost 没落账", "unit", l.ID, "url", l.URL, "err", err)
+		}
+		l.Status = "lost"
 	}
 	s.publish("releases", "release.batch.created", map[string]any{"id": id, "proj": proj})
 	writeJSON(w, http.StatusCreated, b)

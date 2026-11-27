@@ -40,6 +40,7 @@ type Instance struct {
 }
 
 // Deployer 管理本机上的部署实例：同 (pbc, env) 只有一个活着的。
+// 不同 env 各自登记、各自活着（#19）：收的时候只收指定的那一份，不连坐别的环境。
 type Deployer struct {
 	mu       sync.Mutex
 	running  map[string]*proc
@@ -68,8 +69,15 @@ var listenLine = regexp.MustCompile(`listen=(\S+)`)
 //
 // binary 是构建产物的路径；它必须来自 build.succeeded 事实指向的那个文件。
 func (d *Deployer) Deploy(ctx context.Context, pbc, env, commit, digest, binary string) (*Instance, error) {
-	// 同 (pbc, env) 换版本：先停旧的，别让两个版本抢同一个端口。
-	d.Stop(pbc, env)
+	// 同 (pbc, env) 换版本：先把旧的那个让出来。注意这里只能摘自己那一份——
+	// 走 Stop 的话，它「没找到就按 pbc 兜底」的分支会把同一单元**别的环境**
+	// 刚起来的进程一起收掉（#19：SIT 刚上线，UAT 一部署它就死了）。
+	// 端口是每个进程自己挑的（ADDR=127.0.0.1:0），不同环境的进程不会抢端口。
+	old := d.take(key(pbc, env))
+	if old != nil {
+		slog.Info("同 (pbc, env) 换版本，先停旧的", "pbc", pbc, "env", env, "pid", old.inst.PID)
+		stopProc(old)
+	}
 
 	cmd := exec.Command(binary)
 	cmd.Env = append(os.Environ(), "ADDR=127.0.0.1:0", "ENV="+env, "COMMIT="+commit)
@@ -132,6 +140,7 @@ func (d *Deployer) Deploy(ctx context.Context, pbc, env, commit, digest, binary 
 	slog.Info("部署进程已起", "pbc", pbc, "env", env, "pid", inst.PID, "url", inst.URL, "key", key(pbc, env))
 	// 登记之前再看一眼：Deploy 开头停旧进程之后、登记之前，可能已经有同一个键的新进程登记进来
 	// （并发发布同一个单元）。直接覆盖会让先登记的那个变成没人认领的孤儿。
+	// 注意这里也不能走 Stop：这条路径上另一个环境可能刚登记好，按 pbc 兜底会把它一起收掉（#19）。
 	prev, had := d.running[key(pbc, env)]
 	d.running[key(pbc, env)] = p
 	d.mu.Unlock()
@@ -212,31 +221,27 @@ func (d *Deployer) waitHealth(ctx context.Context, base string) error {
 	return fmt.Errorf("健康检查超时（%s）", last)
 }
 
+// take 从登记表里摘掉一个键对应的进程（不收）。摘不到返回 nil。
+func (d *Deployer) take(k string) *proc {
+	d.mu.Lock()
+	p := d.running[k]
+	delete(d.running, k)
+	d.mu.Unlock()
+	return p
+}
+
 // Stop 停掉某个 (pbc, env) 的部署进程。回滚走这里。
 func (d *Deployer) Stop(pbc, env string) {
 	k := key(pbc, env)
 	d.mu.Lock()
 	p := d.running[k]
 	delete(d.running, k)
-	// 同 pbc、别的 env 名下还登记着的进程：部署只等旧 env 的进程真的停了才起新的，
-	// 但它可能已经自己退出而哨兵还没清表。这些一律收掉——同一个单元不该有第二个进程活着。
-	var others []*proc
-	for kk, pp := range d.running {
-		if kk != k && strings.HasPrefix(kk, pbc+"/") {
-			others = append(others, pp)
-			delete(d.running, kk)
-		}
-	}
 	d.mu.Unlock()
-	for _, pp := range others {
-		slog.Warn("Stop：同单元在别的环境还有登记的进程，一并收掉", "pbc", pbc, "env", env,
-			"foundEnv", pp.inst.Env, "pid", pp.inst.PID)
-		stopProc(pp)
-	}
 	if p == nil {
-		// 没收到不代表线上没进程：登记表可能因为键对不上（同 pbc 换了 env）而漏过，
-		// 而「回滚了但进程还在应答」比「多杀一个」严重得多。所以这里按 pbc 兜底，
-		// 把同 pbc 名下所有还活着的部署都收掉，并把被兜底收掉的条目记下来（#41）。
+		// 「回滚了但进程还在应答」比「多杀一个」严重，所以这一下按 pbc 兜底：同 pbc 名下
+		// 还活着的部署都收掉。但要说是谁按的——并发发布同一个单元到别的环境时，
+		// 这一下收掉的正是那个环境**刚起来**的进程（#19：SIT 刚 201，UAT 一失败它就死了）。
+		// 正常回滚的调用方先找准自己的 (pbc, env)，不会走到这里，所以这里如实记 WARN。
 		var extra []*proc
 		d.mu.Lock()
 		for kk, pp := range d.running {
