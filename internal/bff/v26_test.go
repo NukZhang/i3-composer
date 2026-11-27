@@ -155,6 +155,14 @@ func TestAcceptanceDecideCreatesDefectAndBacklogItem(t *testing.T) {
 		m := it.(map[string]any)
 		if m["type"] == "defect" {
 			found = true
+			accept, _ := m["accept"].([]any)
+			if len(accept) != 1 || accept[0] != "Given 勾选 32 户，When 点批量生成，Then 二次确认后生成" {
+				t.Errorf("修复项应继承原验收口径：%v", m)
+			}
+			repair, _ := m["repair"].(map[string]any)
+			if repair["check"] != "AC-2" || repair["defect"] != defect["id"] {
+				t.Errorf("修复项应关联原缺陷和验收项：%v", repair)
+			}
 		}
 	}
 	if !found {
@@ -166,6 +174,56 @@ func TestAcceptanceDecideCreatesDefectAndBacklogItem(t *testing.T) {
 		map[string]any{"st": "pass"}, RoleDA)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("DA 验收应 403，实际 %d", resp.StatusCode)
+	}
+}
+
+func TestRepairAdmitsWithInputsFromCurrentCommit(t *testing.T) {
+	h := newHarness(t)
+	ctx := t.Context()
+	seedTagCandidate(t, h, "fee")
+	check := domain.Check{ID: "AT-01", G: "已有账单", W: "查询列表", T: "显示本期账单", ST: domain.CheckTodo}
+	seedNewCommit(t, h.st, "fee", "1.0.2", check)
+	seedItem(t, h.st, store.Item{
+		ID: "US-01", PBC: "fee", Kind: "Story", Title: "收费列表",
+		Data: []string{"fee.bill.amount"}, AcceptBy: "收费验收岗", ComplyBy: "合规岗",
+	})
+	if _, err := h.st.Append(ctx, "fee", store.FactTestRun, "x-qa", store.TestResult{
+		ItemID: "US-01", Commit: "1.0.2", Pass: 5, Total: 5,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, body := h.do(t, http.MethodPost, "/api/checks/AT-01/decide?pbc=fee",
+		map[string]string{"st": "fail", "commit": "1.0.2", "title": "列表缺少本期账单"}, RoleBA)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("提缺陷返回 %d：%v", resp.StatusCode, body)
+	}
+	defect := body["defect"].(map[string]any)
+	id, _ := defect["repairItem"].(string)
+	if id != "US-02" {
+		t.Fatalf("应关联新修复项：%v", defect)
+	}
+	resp, detail := h.do(t, http.MethodGet, "/api/items/"+id+"?pbc=fee", nil, RoleBA)
+	inputs, _ := detail["repairInputs"].(map[string]any)
+	if resp.StatusCode != http.StatusOK || inputs["reasons"] != nil ||
+		inputs["acceptBy"] != "收费验收岗" || inputs["complyBy"] != "合规岗" {
+		t.Fatalf("应继承当前提交相关工作项的准入输入：%d %v", resp.StatusCode, detail)
+	}
+	resp, result := h.do(t, http.MethodPost, "/api/items/"+id+"/run?pbc=fee", nil, RoleDA)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("DA 应能直接发起修复：%d %v", resp.StatusCode, result)
+	}
+	before, err := h.st.Load(ctx, "fee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, result = h.do(t, http.MethodPost, "/api/checks/AT-01/decide?pbc=fee",
+		map[string]string{"st": "pass", "commit": "1.0.2"}, RoleBA)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("运行中的修复不能提前判过：%d %v", resp.StatusCode, result)
+	}
+	after, err := h.st.Load(ctx, "fee")
+	if err != nil || len(after) != len(before) {
+		t.Fatalf("提前判过被拒时不得写账本：%d → %d，%v", len(before), len(after), err)
 	}
 }
 

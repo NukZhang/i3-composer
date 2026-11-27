@@ -34,6 +34,7 @@ export const S = reactive({
 
   // v2.5 真人验收台：当前验收项。
   vIdx: 0,
+  retestCheck: null,
   // v2.6 编排工作台：选中的节点、是否跑过一条。
   agNode: null,
   agRan: false,

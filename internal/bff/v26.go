@@ -2,6 +2,7 @@ package bff
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -441,39 +442,48 @@ func (s *Server) checkDecide(w http.ResponseWriter, r *http.Request, c reqCtx) e
 	if cur == nil {
 		return fmt.Errorf("%w：验收项 %s", errNotFound, c.ItemID)
 	}
-	now := time.Now().Format("01-02 15:04")
-	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactCheckDecided, c.Role.String(), map[string]any{
-		"id": cur.ID, "st": in.ST, "commit": commit, "at": now, "by": c.Role.String(),
-	}); err != nil {
-		return err
+	if in.ST == domain.CheckPass && v.HasRunningRepair(cur.ID) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": cur.ID + " 的修复正在执行，机器交付完成后再重验"})
+		return nil
 	}
+	now := time.Now().Format("01-02 15:04")
+	decision := map[string]any{"id": cur.ID, "st": in.ST, "commit": commit, "at": now, "by": c.Role.String()}
+	typ, payload := store.FactCheckDecided, any(decision)
+	condition := store.AppendCondition{AfterSeq: v.Seq}
 	var bug *domain.Defect
 	if in.ST == domain.CheckFail {
-		d := domain.Defect{
-			ID: domain.NextDefectID(v.Defects), PBC: c.PBC, AC: cur.ID,
-			T: in.Title, Sev: in.Sev, Steps: in.Steps, At: now, By: c.Role.String(),
-		}
-		if _, err := s.Log.Append(r.Context(), c.PBC, store.FactDefect, c.Role.String(), d); err != nil {
-			return err
-		}
-		bug = &d
-		// bug 进 backlog：修复项由 X 领活，走同一条交付链路。
-		// 编号在全项目范围内取，不能各单元各自从 US-01 开始——
-		// 需求池是把各单元的工作项合在一起看的，编号撞了就没法指认。
 		id, err := s.nextGlobalItemID(r, c.PBC)
 		if err != nil {
 			return err
+		}
+		bug = &domain.Defect{
+			ID: domain.NextDefectID(v.Defects), PBC: c.PBC, AC: cur.ID, RepairItem: id,
+			T: in.Title, Sev: in.Sev, Steps: in.Steps, At: now, By: c.Role.String(),
 		}
 		it := store.Item{
 			ID: id, Title: "修复：" + in.Title, PT: 2, St: "todo", Owner: "—", Kind: "Story",
 			PBC: c.PBC, Type: "defect", Mode: "fast", Env: "test", Run: "idea",
 			By: string(c.Role), At: now,
+			Repair: &store.RepairRef{Defect: bug.ID, Check: cur.ID, Commit: commit, DecisionSeq: v.Seq + 1},
 		}
-		if _, err := s.Log.Append(r.Context(), c.PBC, store.FactItemCreated, c.Role.String(), it); err != nil {
-			return err
+		inheritRepairInputs(&it, v, *cur)
+		typ, payload = store.FactItemCreated, it
+		condition.Before = []store.PendingFact{
+			{Type: store.FactCheckDecided, Payload: decision},
+			{Type: store.FactDefect, Payload: bug},
 		}
+	}
+	// 旧提交的判定不能落到新 HEAD。失败判定、缺陷和修复项同时可见。
+	if _, err := s.Log.Append(r.Context(), c.PBC, typ, c.Role.String(), payload, condition); err != nil {
+		if errors.Is(err, store.ErrSnapshotChanged) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "单元账本已更新，请刷新后重新判定"})
+			return nil
+		}
+		return err
+	}
+	if bug != nil {
 		s.publish(c.PBC, "defect.created", map[string]any{
-			"id": d.ID, "ac": d.AC, "item": id, "by": c.Role.String(),
+			"id": bug.ID, "ac": bug.AC, "item": bug.RepairItem, "by": c.Role.String(),
 		})
 	}
 	s.publish(c.PBC, "check.decided", map[string]any{"id": cur.ID, "st": in.ST})
@@ -481,6 +491,22 @@ func (s *Server) checkDecide(w http.ResponseWriter, r *http.Request, c reqCtx) e
 		"pbc": c.PBC, "id": cur.ID, "st": in.ST, "defect": bug,
 	})
 	return nil
+}
+
+// 只有当前提交的测试事实点名了原工作项，才继承它申报过的数据和责任人。
+func inheritRepairInputs(item *store.Item, v *store.View, check domain.Check) {
+	oneLine := func(text string) string { return strings.Join(strings.Fields(text), " ") }
+	g, w, then := oneLine(check.G), oneLine(check.W), oneLine(check.T)
+	if g != "" && w != "" && then != "" {
+		item.Accept = []string{"Given " + g + "，When " + w + "，Then " + then}
+	}
+	if len(v.Commits) == 0 || v.Test == nil || v.Test.Commit != v.Commits[0].No {
+		return
+	}
+	if source := v.Items[v.Test.ItemID]; source != nil {
+		item.Data, item.AcceptBy, item.ComplyBy = source.Data, source.AcceptBy, source.ComplyBy
+		item.Repair.SourceItem = source.ID
+	}
 }
 
 // nextGlobalItemID 在全项目范围内取下一个工作项编号。

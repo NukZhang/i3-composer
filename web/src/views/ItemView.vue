@@ -29,6 +29,8 @@ const canBacklog = computed(() => (S.acts || []).includes('backlog'));
 const canBuild = computed(() => (S.acts || []).includes('build'));
 const hasWorkflow = computed(() => item.value?.kind === 'Story' && !!item.value.steps?.length);
 const deliveryUnit = computed(() => unitById(item.value?.pbc));
+const repair = computed(() => item.value?.repair || null);
+const repairInputs = computed(() => detail.value?.item?.id === item.value?.id ? detail.value?.repairInputs : null);
 
 // 工作项只能引用自己的执行事实，项目批次的部署地址由发布编排展示。
 const testResult = computed(() => facts.value.findLast((f) => f.type === 'test.run')?.payload);
@@ -41,12 +43,33 @@ const busy = ref(false);
 const admit = computed(() => (item.value && item.value.admit) || null);
 // 被拒的原因：一人一行。它是后端 err 原文的一部分，这里只负责把三行摊开显示，
 // 不改写措辞——「缺什么 / 找谁 / 补哪」是后端给的，前端不发明。
-const rejectLines = computed(() => (admit.value && admit.value.reasons) || []);
+const rejectLines = computed(() => {
+  if (!repair.value) return admit.value?.reasons || [];
+  return (repairInputs.value?.reasons || []).map((r) => `${r.n}：${r.missing}；找 ${r.ask}；${r.fix}`);
+});
+const needsInputs = computed(() => repair.value ? rejectLines.value.length > 0 : admit.value?.st === 'rejected');
+const checkPassed = computed(() => repair.value && S.state?.pbc === item.value?.pbc
+  && S.state.checks?.some((check) => check.id === repair.value.check && check.st === 'pass'));
+const canStart = computed(() => canBuild.value && (!repair.value || (repairInputs.value && !needsInputs.value && !checkPassed.value)));
 const waivers = computed(() => (admit.value && admit.value.waivers) || []);
 
 // 补输入的表单：只补三项硬项（验收口径 / 数据范围 / 责任人）。
 const fixing = ref(false);
 const fix = ref({ accept: '', data: '', acceptBy: '', complyBy: '' });
+watch(() => [S.pbcId, S.itemId], () => { fixing.value = false; });
+
+function toggleFix() {
+  if (!fixing.value) {
+    const inputs = repairInputs.value;
+    fix.value = {
+      accept: (inputs?.accept || []).join('\n'),
+      data: (inputs?.data || []).join(', '),
+      acceptBy: inputs?.acceptBy || '',
+      complyBy: inputs?.complyBy || '',
+    };
+  }
+  fixing.value = !fixing.value;
+}
 
 async function run() {
   busy.value = true;
@@ -57,7 +80,7 @@ async function run() {
   } catch (e) {
     toast(e.message, 'err');
     // 被准入挡下时，直接把「补哪」的表单摊出来，不让用户猜怎么补。
-    if (e.status === 400 && /准入/.test(e.message)) fixing.value = true;
+    if (e.status === 400 && /准入/.test(e.message) && !fixing.value) toggleFix();
   }
   busy.value = false;
   await refresh();
@@ -91,6 +114,7 @@ function openVerification() {
   if (!unit) return;
   S.projId = unit.proj;
   S.pbcId = unit.id;
+  S.retestCheck = repair.value ? { pbc: unit.id, id: repair.value.check } : null;
   S.view = 'verify';
 }
 
@@ -182,6 +206,12 @@ function factDetail(f) {
       </div>
     </div>
 
+    <div v-if="repair" class="card">
+      <div class="ch"><h3>缺陷 {{ repair.defect }} · 验收项 {{ repair.check }}</h3></div>
+      <div v-for="accept in repairInputs?.accept || []" :key="accept" class="small">{{ accept }}</div>
+      <div v-if="repair.sourceItem" class="small muted">准入数据和责任人来源于工作项 {{ repair.sourceItem }}。</div>
+    </div>
+
     <!-- 入口准入：放行了但软项没补 → 黄条（别把自己卡死，也别假装五项全判过） -->
     <div v-if="admit && admit.st === 'admitted' && waivers.length" class="ws warn" style="margin-bottom: 11px">
       <div class="ws-h">
@@ -194,12 +224,13 @@ function factDetail(f) {
     </div>
 
     <!-- 入口准入：硬项不过被拒 → 三行「缺什么 / 找谁 / 补哪」，并就地补 -->
-    <div v-if="admit && admit.st === 'rejected'" class="gate" style="flex-direction: column; align-items: stretch; gap: 8px">
+    <div v-if="needsInputs" class="gate" style="flex-direction: column; align-items: stretch; gap: 8px">
       <div class="row" style="gap: 8px; align-items: center">
         <span v-html="icon('lock')" />
-        <b>入口准入没过 · {{ admit.at }} 由 {{ admit.by }} 判</b>
+        <b v-if="repair">发起修复前需补准入输入</b>
+        <b v-else>入口准入没过 · {{ admit.at }} 由 {{ admit.by }} 判</b>
         <span class="spacer" style="flex: 1" />
-        <button v-if="canBacklog" class="btn small" @click="fixing = !fixing">{{ fixing ? '收起补录' : '补输入' }}</button>
+        <button v-if="canBacklog" class="btn small" @click="toggleFix">{{ fixing ? '收起补录' : '补输入' }}</button>
       </div>
       <ul class="admit-list">
         <li v-for="(r, i) in rejectLines" :key="i">{{ r }}</li>
@@ -246,17 +277,18 @@ function factDetail(f) {
     </div>
 
     <div v-if="hasWorkflow && ['idea', 'blocked', 'failed'].includes(item.run)" class="row" style="margin-bottom: 11px; gap: 6px; flex-wrap: wrap">
-      <button class="btn primary" :disabled="!canBuild || busy" @click="run">
+      <button class="btn primary" :disabled="!canStart || busy" @click="run">
         <span v-html="icon('play', 12)" /> {{ item.run === 'idea' ? '发起直通' : '重新发起' }}
       </button>
       <span class="small muted">
-        {{ canBuild ? '生成制品、收敛、提交、测试并构建。机器完成后进入验证。' : '当前角色没有 build 权限（DA 专属）' }}
+        {{ checkPassed ? '关联验收项已通过，如需继续修复，请重新登记失败。' : canBuild ? '生成制品、收敛、提交、测试并构建。机器完成后进入验证。' : '当前角色没有 build 权限（DA 专属）' }}
       </span>
     </div>
 
     <div v-if="hasWorkflow && item.run === 'verified' && deliveryUnit" class="row wrap" style="gap: 8px; margin-bottom: 9px">
       <button class="btn small primary" @click="openVerification">前往验证</button>
-      <span class="small muted">在验证页验收并打 tag。打 tag 后可从项目的发布编排发起批次。</span>
+      <span v-if="repair" class="small muted">机器交付已完成，请 BA 重验 {{ repair.check }}。</span>
+      <span v-else class="small muted">在验证页验收并打 tag。打 tag 后可从项目的发布编排发起批次。</span>
     </div>
 
     <div v-if="item.run === 'published'" class="ws clean" style="margin-top: 4px">

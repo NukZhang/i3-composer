@@ -40,7 +40,15 @@ type Input struct {
 	// 把前缀放进输入，activity 就永远写进工作项该去的那本账。
 	Ledger string `json:"ledger,omitempty"`
 	// 登记可能在交付途中被作废或改名，新实例保持发起时的制品输入。
-	Unit *UnitInfo `json:"unit,omitempty"`
+	Unit        *UnitInfo    `json:"unit,omitempty"`
+	RepairStart *RepairStart `json:"repairStart,omitempty"`
+}
+
+// RepairStart 让发起端与第一个 activity 共用同一次修复的准入和开始凭据。
+type RepairStart struct {
+	OpID    string   `json:"opId"`
+	By      string   `json:"by"`
+	Waivers []string `json:"waivers,omitempty"`
 }
 
 // StepResult 是单个 activity 的结果。只回报「成没成」+ 一句说明；

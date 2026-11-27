@@ -14,12 +14,13 @@ import (
 
 // 验收清单的一条 AC。G/W/T 是 Given / When / Then。
 type Check struct {
-	ID string `json:"id"`
-	N  string `json:"n"`
-	G  string `json:"g"`
-	W  string `json:"w"`
-	T  string `json:"t"`
-	ST string `json:"st"` // pass | fail | todo
+	ID         string `json:"id"`
+	N          string `json:"n"`
+	G          string `json:"g"`
+	W          string `json:"w"`
+	T          string `json:"t"`
+	ST         string `json:"st"` // pass | fail | todo
+	RetestItem string `json:"retestItem,omitempty"`
 }
 
 // 验收结论。只有两种；「不提过」必须带一条 bug，否则没有下文。
@@ -43,6 +44,7 @@ func DecideCheck(list []Check, id, st string) ([]Check, error) {
 		if list[i].ID == id {
 			out := append([]Check(nil), list...)
 			out[i].ST = st
+			out[i].RetestItem = ""
 			return out, nil
 		}
 	}
@@ -52,14 +54,15 @@ func DecideCheck(list []Check, id, st string) ([]Check, error) {
 // Defect 是验收不通过时提出的 bug。它进 backlog，由 X 修；
 // 修完这一条重验，其它条不受影响。
 type Defect struct {
-	ID    string `json:"id"`
-	PBC   string `json:"pbc,omitempty"`
-	AC    string `json:"ac"`
-	T     string `json:"t"`
-	Sev   string `json:"sev"`
-	Steps string `json:"steps,omitempty"`
-	At    string `json:"at"`
-	By    string `json:"by"`
+	ID         string `json:"id"`
+	PBC        string `json:"pbc,omitempty"`
+	AC         string `json:"ac"`
+	T          string `json:"t"`
+	Sev        string `json:"sev"`
+	Steps      string `json:"steps,omitempty"`
+	At         string `json:"at"`
+	By         string `json:"by"`
+	RepairItem string `json:"repairItem,omitempty"`
 }
 
 // Sevs 是原型里的严重级选项。

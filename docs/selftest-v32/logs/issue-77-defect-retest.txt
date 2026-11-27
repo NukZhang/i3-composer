@@ -1,0 +1,15 @@
+专项 RUN_TAG=issue77case
+PASS 验收失败、缺陷和修复项连续落账，修复项带原验收与可追溯准入 {"pbc":"repair-issue77case","id":"US-05","defect":"BUG-118","source":"US-04","facts":[{"actor":"BA","at":"2026-11-27T15:13:50Z","seq":37,"type":"item.created"},{"actor":"BA","at":"2026-11-27T15:13:50Z","seq":36,"type":"defect.created"},{"actor":"BA","at":"2026-11-27T15:13:50Z","seq":35,"type":"check.decided"}]}
+PASS DA 直接发起，机器交付后当前提交仅对关联验收项标记待重验 {"pbc":"repair-issue77case","id":"US-05","old":"1.0.1","commit":"1.0.2","checks":[{"id":"AT-01","n":"核对报告","g":"服务完成构建","w":"查看质量报告","t":"返回测试通过数和摘要","st":"todo"},{"id":"AT-02","n":"核对列表","g":"当前账期已有样本","w":"请求账单列表","t":"显示当前账期","st":"todo","retestItem":"US-05"}],"test":{"id":"US-05","commit":"1.0.2","pass":5,"total":5,"at":"2026-11-27T15:13:52Z","by":"x-qa"}}
+PASS 重验前打 tag 返回 400，BA 完成当前提交验收后可打 tag {"blocked":{"error":"请求不合法：还差 2 条验收未通过（0/2），不能打 tag"},"tag":{"commit":"1.0.2","digest":"sha256:940dd31d4ef65054a757cb6eded0c607d10a56dea5d369c7e707998d78b39d96","pooled":true,"tag":"v1.0.0","unit":"repair-issue77case"}}
+PASS 历史检查缺少准入数据可先补录，修复后绑定新提交并重验原清单 {"pbc":"dun","legacyID":"US-06","old":"1.0.1","commit":"1.0.2","missing":["data","owner"],"retest":{"id":"DR-4","n":"7 天内不超 3 次","g":"7 天内已触达 3 次","w":"再触发一次","t":"第 4 次被拦下并提示","st":"todo","retestItem":"US-06"}}
+PASS 同一旧提交登记的第二个修复项接续当前清单 {"pbc":"dun","id":"US-07","commit":"1.0.3","retest":{"id":"DR-5","n":"话术不含减免承诺","g":"任意草稿","w":"读草稿","t":"不出现「申请减免」类表述","st":"todo","retestItem":"US-07"}}
+PASS 机器测试失败落受阻事实，验收项不被标记为待重验 {"id":"US-08","run":"blocked","blockedFact":{"actor":"i3-pipeline","at":"2026-11-27T15:13:56Z","payload":{"by":"i3-pipeline","id":"US-08","reason":"测试未通过：TestRepairFailure"},"seq":74,"type":"item.blocked"}}
+SUMMARY 6/6 缺陷修复专项通过
+
+回归 RUN_TAG=issue77ready
+acceptance_v32 SUMMARY 70/70 passed
+acceptance_exec SUMMARY 35/35 passed
+acceptance_flow SUMMARY 33/33 passed
+acceptance_full SUMMARY 20/20 passed
+acceptance_v26 SUMMARY 75/75 passed

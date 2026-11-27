@@ -223,10 +223,10 @@ func (s *Store) Ensure(ctx context.Context, pbc string) error {
 }
 
 // AppendCondition 将本次写入绑定到用于判断的账本序号。
-// 如果还需写一条判定证据，Before 与最终事实共用一次 head CAS。
+// Before 中的关联事实与最终事实共用一次 head CAS。
 type AppendCondition struct {
 	AfterSeq int
-	Before   *PendingFact
+	Before   []PendingFact
 }
 
 type PendingFact struct {
@@ -259,11 +259,14 @@ func (s *Store) append(ctx context.Context, pbc, opID, typ, actor string, payloa
 	if err != nil {
 		return Fact{}, err
 	}
-	var before json.RawMessage
-	if condition != nil && condition.Before != nil {
-		before, err = json.Marshal(condition.Before.Payload)
-		if err != nil {
-			return Fact{}, err
+	var before []json.RawMessage
+	if condition != nil {
+		for _, pending := range condition.Before {
+			data, err := json.Marshal(pending.Payload)
+			if err != nil {
+				return Fact{}, err
+			}
+			before = append(before, data)
 		}
 	}
 	for attempt := 0; attempt < s.maxRetry; attempt++ {
@@ -303,7 +306,7 @@ func (s *Store) append(ctx context.Context, pbc, opID, typ, actor string, payloa
 // first-write-wins 无法串行化并发写，所以不能直接写。
 var errNoLog = errors.New("store: 日志未建立")
 
-func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, payload json.RawMessage, condition *AppendCondition, before json.RawMessage) (Fact, error) {
+func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, payload json.RawMessage, condition *AppendCondition, before []json.RawMessage) (Fact, error) {
 	rawHead, etag, err := s.c.GetState(ctx, s.state, s.headKey(pbc))
 	if err != nil {
 		return Fact{}, err
@@ -331,8 +334,8 @@ func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, pa
 		return Fact{}, ErrSnapshotChanged
 	}
 
-	if before != nil {
-		f, err := s.writeFact(ctx, pbc, "", condition.Before.Type, actor, before, h)
+	for i, data := range before {
+		f, err := s.writeFact(ctx, pbc, "", condition.Before[i].Type, actor, data, h)
 		if err != nil {
 			return Fact{}, err
 		}
@@ -342,7 +345,7 @@ func (s *Store) appendOnce(ctx context.Context, pbc, opID, typ, actor string, pa
 	if err != nil {
 		return Fact{}, err
 	}
-	// 只推进一次 head，两条证据同时对读者可见。
+	// 只推进一次 head，关联事实同时对读者可见。
 	if _, err := s.c.SetState(ctx, s.state, s.headKey(pbc),
 		head{Seq: f.Seq, Hash: f.Hash}, etag); err != nil {
 		return Fact{}, err
