@@ -217,7 +217,13 @@ async function rollback(b) {
         <span class="mono small">{{ b.id }}</span>
         <span class="tag t-info" style="font-size: 9px">{{ b.env }}</span>
         <span class="tag t-gray" style="font-size: 9px">{{ b.mode === 'gray' ? '灰度' : '全量' }}</span>
-        <span class="small" style="flex: 1">{{ b.units.map((u) => u.name + ' ' + u.tag + (u.url ? ' · ' + u.url : ' · 定义')).join('；') }}</span>
+        <span class="small" style="flex: 1">
+          <template v-for="(u, idx) in b.units" :key="u.id">
+            {{ idx ? '；' : '' }}{{ u.name }} {{ u.tag }}
+            <a v-if="u.browserUrl && b.status !== 'rolledback'" :href="u.browserUrl" target="_blank" rel="noopener">打开 SIT 业务页面</a>
+            <template v-else>{{ u.url ? ' · ' + u.url : ' · 定义' }}</template>
+          </template>
+        </span>
         <span class="tag" :class="b.status === 'rolledback' ? 't-err' : 't-ok'" style="font-size: 9px">{{ b.status === 'rolledback' ? '已回滚' : '已上线' }}</span>
         <span class="small muted">{{ b.by }} · {{ b.at }}</span>
         <button class="btn small" v-if="b.status !== 'rolledback' && can('tag')" :disabled="busy" @click="rollback(b)">整批回滚</button>

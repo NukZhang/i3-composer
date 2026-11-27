@@ -28,6 +28,7 @@ type Spec struct {
 	UnitID   string // 交付单元 id
 	UnitName string // 交付单元名
 	Kind     string // pbc | agent | hybrid
+	Profile  string // 业务 PBC 的制品类型，空表示通用示例
 	Title    string // 工作项标题
 	Change   string // new | feature | defect | backlog | doc
 	At       string // 时间戳
@@ -64,6 +65,9 @@ type Acceptance struct {
 // 文档（AT）与代码（单元测试）共用同一份清单：文档里写「Then 什么」，
 // 测试里就断言什么。这样「文档说一套、代码做另一套」不会发生。
 func (s Spec) Acceptance() []Acceptance {
+	if s.Profile == domain.ProfileMaterialInbound {
+		return materialAcceptance
+	}
 	return []Acceptance{
 		{ID: "AC-1", Name: "健康检查可用", Given: "服务已启动", When: "请求 /healthz", Then: "返回 200 且带单元标识"},
 		{ID: "AC-2", Name: "列表可读", Given: "单元内有若干条记录", When: "请求列表接口", Then: "返回非空列表，且金额与逾期天数可读"},
@@ -95,12 +99,18 @@ func Docs(s Spec) map[domain.Artifact]string {
 
 // proto 是原型说明：这块交付物长什么样、用户怎么用它。
 func (s Spec) proto() string {
+	if s.Profile == domain.ProfileMaterialInbound {
+		return "# 材料入库原型\n\n入库单按类型带出来源单据、资产归属与财务口径，提交前核对计划余量。库房收发存明细支持按入库单号追溯。可操作界面随当前构建的业务制品发布。"
+	}
 	return render(protoTmpl, map[string]string{
 		"UNIT": s.UnitName, "TITLE": s.Title, "AT": s.At,
 	})
 }
 
 func (s Spec) prd() string {
+	if s.Profile == domain.ProfileMaterialInbound {
+		return "# 材料入库\n\n支持采购入库和甲供入库。确认前核对来源与计划余量，确认后按单号追溯材料、数量及归属。"
+	}
 	goal := map[string]string{
 		"new":     "新增一个此前不存在的交付能力",
 		"feature": "在已有能力上扩展边界",
@@ -117,6 +127,9 @@ func (s Spec) prd() string {
 }
 
 func (s Spec) ad() string {
+	if s.Profile == domain.ProfileMaterialInbound {
+		return "# 材料入库技术方案\n\nPOST /api/inbounds 校验来源、库房、单位及余量。确认事实固化入库明细与扣减后余量，GET /api/inbounds/{单号} 回放追溯。数量按千分位整数存算。"
+	}
 	return render(adTmpl, map[string]string{
 		"UNIT": s.UnitName, "TITLE": s.Title, "AT": s.At, "PLURAL": s.Plural(),
 	})
@@ -152,6 +165,9 @@ func (s Spec) backlog() string {
 // 关键点：它实现的正是 AT 里写的那些口径（幂等、滞纳金封顶、统计一致），
 // 所以 `go test` 跑的是真实现，而不是对着空壳编出来的条数。
 func Code(s Spec) map[string]string {
+	if s.Profile == domain.ProfileMaterialInbound {
+		return materialCode(s)
+	}
 	p := s.Plural()
 	mod := "i3/" + s.UnitID
 	if s.UnitID == "" {

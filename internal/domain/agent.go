@@ -13,6 +13,9 @@ import (
 //   - hybrid 微服务 + Agent，一次 tag 锁两条产物
 type UnitKind string
 
+// ProfileMaterialInbound 选择随材料入库 PBC 交付的领域制品。
+const ProfileMaterialInbound = "material-inbound"
+
 const (
 	KindPBC    UnitKind = "pbc"
 	KindAgent  UnitKind = "agent"

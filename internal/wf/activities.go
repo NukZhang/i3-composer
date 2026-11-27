@@ -266,6 +266,7 @@ func (a *Activities) unitOf(ctx context.Context, in Input) UnitInfo {
 			u.Name = x.Name
 			u.Kind = x.Kind
 			u.AgentID = x.AgentID
+			u.Profile = x.Profile
 			break
 		}
 	}

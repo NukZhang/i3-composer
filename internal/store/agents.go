@@ -23,6 +23,7 @@ type Unit struct {
 	Code    string `json:"code"`
 	Kind    string `json:"kind"`
 	AgentID string `json:"agentId,omitempty"`
+	Profile string `json:"profile,omitempty"`
 	// Proj 是所属项目（v2.7 起交付单元挂在项目下，不再是全局列表）。
 	// 老账本里没有这个字段的单元归入 DefaultProject。
 	Proj string `json:"proj,omitempty"`
@@ -68,34 +69,26 @@ func ProjectUnits(facts []Fact) (*UnitsView, error) {
 	for _, f := range facts {
 		switch f.Type {
 		case FactUnitCreated:
-			var p struct {
-				ID      string `json:"id"`
-				Name    string `json:"name"`
-				Code    string `json:"code"`
-				Kind    string `json:"kind"`
-				AgentID string `json:"agentId"`
-				Proj    string `json:"proj"`
-			}
-			if err := json.Unmarshal(f.Payload, &p); err != nil {
+			var u Unit
+			if err := json.Unmarshal(f.Payload, &u); err != nil {
 				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
 			}
-			if p.ID == "" {
+			if u.ID == "" {
 				return nil, fmt.Errorf("unit 事缺少 id")
 			}
-			if p.Proj == "" {
-				p.Proj = DefaultProject
+			if u.Proj == "" {
+				u.Proj = DefaultProject
 			}
-			u := Unit{ID: p.ID, Name: p.Name, Code: p.Code,
-				Kind: domain.ParseKind(p.Kind).String(), AgentID: p.AgentID, Proj: p.Proj}
-			if seen[p.ID] {
+			u.Kind = domain.ParseKind(u.Kind).String()
+			if seen[u.ID] {
 				for i := range v.Units {
-					if v.Units[i].ID == p.ID {
+					if v.Units[i].ID == u.ID {
 						v.Units[i] = u
 					}
 				}
 				continue
 			}
-			seen[p.ID] = true
+			seen[u.ID] = true
 			v.Units = append(v.Units, u)
 
 		case FactUnitRemoved:

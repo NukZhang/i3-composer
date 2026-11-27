@@ -72,6 +72,7 @@ export const api = {
       body: JSON.stringify({ approve, note: note || '' }),
     }),
   createUnit: (body) => request('/api/units', { method: 'POST', body: JSON.stringify(body) }),
+  materialPreview: (id) => request('/api/units/' + encodeURIComponent(id) + '/material-preview', { method: 'POST' }),
   svcVerify: (id, body) =>
     request('/api/units/' + encodeURIComponent(id) + '/svcverify', {
       method: 'POST',

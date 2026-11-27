@@ -40,6 +40,7 @@ type Instance struct {
 
 // Deployer 管理本机上的部署实例：同 (pbc, env) 只有一个活着的。
 type Deployer struct {
+	launchMu sync.Mutex
 	mu       sync.Mutex
 	running  map[string]*proc
 	HealthTO time.Duration
@@ -67,6 +68,9 @@ var listenLine = regexp.MustCompile(`listen=(\S+)`)
 //
 // binary 是构建产物的路径；它必须来自 build.succeeded 事实指向的那个文件。
 func (d *Deployer) Deploy(ctx context.Context, pbc, env, commit, digest, binary string) (*Instance, error) {
+	// 同一运行目录不能被两个并发启动的版本同时写入。
+	d.launchMu.Lock()
+	defer d.launchMu.Unlock()
 	// 同 (pbc, env) 换版本：先停旧的，别让两个版本抢同一个端口。
 	d.Stop(pbc, env)
 
@@ -127,6 +131,21 @@ func (d *Deployer) Deploy(ctx context.Context, pbc, env, commit, digest, binary 
 	d.running[key(pbc, env)] = p
 	d.mu.Unlock()
 	return inst, nil
+}
+
+// Instance 返回已启动且尚未退出的本地进程。
+func (d *Deployer) Instance(pbc, env string) (Instance, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	p := d.running[key(pbc, env)]
+	if p != nil {
+		select {
+		case <-p.done:
+		default:
+			return *p.inst, true
+		}
+	}
+	return Instance{}, false
 }
 
 // kill 杀掉进程并回收它。

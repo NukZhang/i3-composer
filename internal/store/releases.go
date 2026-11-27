@@ -15,16 +15,17 @@ import (
 
 // ReleaseUnit 是批次里锁定的一个交付物。
 type ReleaseUnit struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Kind    string `json:"kind"`
-	AgentID string `json:"agentId,omitempty"`
-	Tag     string `json:"tag"`
-	Commit  string `json:"commit"`
-	Digest  string `json:"digest"`
-	Binary  bool   `json:"binary"`
-	URL     string `json:"url,omitempty"` // Agent 产物没有进程，就是空
-	Status  string `json:"status"`        // deployed | activated
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	AgentID    string `json:"agentId,omitempty"`
+	Tag        string `json:"tag"`
+	Commit     string `json:"commit"`
+	Digest     string `json:"digest"`
+	Binary     bool   `json:"binary"`
+	URL        string `json:"url,omitempty"` // Agent 产物没有进程，就是空
+	BrowserURL string `json:"browserUrl,omitempty"`
+	Status     string `json:"status"` // deployed | activated
 }
 
 // ReleaseBatch 是一个发布批次。

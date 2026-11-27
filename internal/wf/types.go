@@ -21,6 +21,7 @@ type UnitInfo struct {
 	Name    string `json:"name"`
 	Kind    string `json:"kind"`
 	AgentID string `json:"agentId,omitempty"`
+	Profile string `json:"profile,omitempty"`
 }
 
 // Input 是一个工作项进入 workflow 时的全部输入。

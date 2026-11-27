@@ -42,6 +42,7 @@ const (
 	FactTagCreated       = "tag.created"
 	FactBuildSucceeded   = "build.succeeded"
 	FactTestRun          = "test.run"
+	FactMaterialPreview  = "material.preview.started"
 	FactDeploySucceeded  = "deploy.succeeded"
 	FactItemCreated      = "item.created"
 	FactItemRunStarted   = "item.run.started"

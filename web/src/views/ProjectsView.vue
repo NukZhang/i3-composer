@@ -27,7 +27,7 @@ const canPbc = computed(() => (S.acts || []).includes('pbc'));
 const canBrd = computed(() => (S.acts || []).includes('brd'));
 
 const creating = ref(false);
-const nf = ref({ id: '', name: '', kind: 'pbc', agentId: '' });
+const nf = ref({ id: '', name: '', kind: 'pbc', agentId: '', profile: '' });
 
 function stTag(st) {
   return st === 'done' ? 't-ok' : st === 'doing' ? 't-info' : 't-gray';
@@ -72,7 +72,7 @@ async function newBRD() {
 
 function startCreate() {
   creating.value = true;
-  nf.value = { id: '', name: '', kind: 'pbc', agentId: '' };
+  nf.value = { id: '', name: '', kind: 'pbc', agentId: '', profile: '' };
 }
 async function submitUnit() {
   const f = nf.value;
@@ -81,7 +81,7 @@ async function submitUnit() {
     return;
   }
   try {
-    await api.createUnit({ ...f, proj: S.projId });
+    await api.createUnit({ ...f, profile: f.kind === 'pbc' ? f.profile : '', proj: S.projId });
     toast('已建交付单元：' + f.name, 'ok');
     creating.value = false;
     await refresh();
@@ -221,7 +221,14 @@ async function submitTask() {
             <option value="agent">Agent（交付的产物）</option>
           </select>
         </div>
-        <div v-if="nf.kind !== 'pbc'" class="field" style="margin: 0">
+        <div v-if="nf.kind === 'pbc'" class="field" style="margin: 0">
+          <label for="pbc-profile">业务实现</label>
+          <select id="pbc-profile" v-model="nf.profile">
+            <option value="">通用示例</option>
+            <option value="material-inbound">材料入库</option>
+          </select>
+        </div>
+        <div v-else class="field" style="margin: 0">
           <label>Agent</label>
           <select v-model="nf.agentId" style="width: 160px">
             <option value="">选择一个交付的 Agent</option>

@@ -3,13 +3,15 @@ import { computed, ref } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import ProtoAgentReview from '../components/ProtoAgentReview.vue';
 import ProtoDunConsole from '../components/ProtoDunConsole.vue';
-import { S, unitKind, currentAgent, toast, refresh } from '../store.js';
+import MaterialRuntime from '../components/MaterialRuntime.vue';
+import { S, unitKind, currentAgent, currentUnit, toast, refresh } from '../store.js';
 import { icon } from '../icons.js';
 import { api } from '../api.js';
 import { latest, staleList, kindCls, kindText } from '../derive.js';
 
 const versions = computed(() => (S.state && S.state.versions) || {});
 const kind = computed(() => unitKind());
+const material = computed(() => currentUnit()?.profile === 'material-inbound');
 const proto = computed(() => latest(versions.value, 'proto') || {});
 const annos = computed(() => (S.state && S.state.annos) || []);
 const agent = computed(() => currentAgent());
@@ -78,13 +80,13 @@ async function saveAnno() {
 <template>
   <PageHeader
     :title="'原型 <span class=&quot;mono&quot; style=&quot;color:var(--purple);font-size:13px&quot;>' + (proto.v || '—') + '</span>'"
-    :sub="kind === 'agent'
+    :sub="material ? '打开当前提交的材料入库业务制品，核对入库单、计划余量和收发存明细。' : kind === 'agent'
       ? 'Agent 交付的是一屏工具：它的产出（判定 / 草稿）在这里被人看、被人改、被人拍板。就这一屏，没有别的。'
       : kind === 'hybrid'
         ? '组合项交付的是一套业务系统：策略、任务、话术三块，Agent 只负责第三块的话术生成。'
         : '线框与批注都来自账本：批注是 annotation.added 事实，坐标归一化存储，可定位。'"
   >
-    <button v-if="kind === 'pbc'" class="btn small" :class="{ primary: annoOn }" @click="annoOn = !annoOn">
+    <button v-if="kind === 'pbc' && !material" class="btn small" :class="{ primary: annoOn }" @click="annoOn = !annoOn">
       <span v-html="icon('layout', 12)" /> {{ annoOn ? '框选中…（点此退出）' : '框选批注' }}
     </button>
     <button class="btn small" @click="S.view = 'plan'"><span v-html="icon('doc', 12)" /> 回方案页</button>
@@ -97,7 +99,9 @@ async function saveAnno() {
     <span v-if="stale" class="muted" style="color: var(--err)">上游已变，待重算</span>
   </div>
 
-  <template v-if="kind === 'agent'">
+  <MaterialRuntime v-if="material" />
+
+  <template v-else-if="kind === 'agent'">
     <ProtoAgentReview :agent="agent" />
     <div class="card">
       <div class="ch"><span v-html="icon('list')" /><h3>评审批注（{{ annos.length }}）</h3><span class="spacer" /><span class="small muted">坐标归一化，可定位</span></div>
@@ -135,6 +139,7 @@ async function saveAnno() {
   </template>
 
   <template v-else>
+    <p class="small muted">通用示例原型</p>
     <div class="frame" :class="{ anno: annoOn }" ref="wrap" @pointerdown="down" @pointermove="move" @pointerup="up">
       <div class="screens">
         <div v-for="(nm, i) in ['缴费单列表', '生成缴费单', '对账中心']" :key="nm" class="scr">
