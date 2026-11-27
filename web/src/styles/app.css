@@ -377,7 +377,7 @@ table.tb tr:hover td{background:var(--bg-hover6)}
 .cr-state.verified,.cr-state.published{background:var(--bg-ok-soft3);color:var(--ok);border:1px solid var(--line-ok3)}
 .cr-state.draft{background:var(--bg-gray);color:var(--tx-6);border:1px solid var(--line-g)}
 .cr-state.paused{background:var(--bg-purple-soft);color:var(--purple);border:1px solid var(--line-purple)}
-.cr-state.blocked{background:var(--bg-err-soft3);color:var(--err);border:1px solid var(--line-err3)}
+.cr-state.blocked,.cr-state.failed{background:var(--bg-err-soft3);color:var(--err);border:1px solid var(--line-err3)}
 .tl{position:relative;padding-left:26px}
 .tl:before{content:"";position:absolute;left:8px;top:6px;bottom:10px;width:1px;background:var(--line-c)}
 .tl-item{position:relative;padding:9px 0 9px 0}

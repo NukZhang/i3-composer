@@ -38,7 +38,30 @@ const tab = computed(() => {
   return isAgent.value ? 'agentdef' : 'code';
 });
 
-const items = computed(() => S.inbox.filter((x) => x.pbc === S.pbcId));
+const runningBadge = { text: '执行中', tone: 't-warn' };
+const workflowBadges = {
+  running: runningBadge,
+  waiting: { text: '待发布', tone: 't-warn' },
+  verified: { text: '待打 tag', tone: 't-ok' },
+  published: { text: '已发布', tone: 't-ok' },
+  paused: { text: '已介入', tone: 't-warn' },
+  blocked: { text: '受阻', tone: 't-err' },
+  failed: { text: '失败', tone: 't-err' },
+};
+const taskBadges = {
+  todo: { text: '待领', tone: 't-gray' },
+  doing: runningBadge,
+  done: { text: '已完成', tone: 't-ok' },
+};
+
+function backlogBadge(item) {
+  // 历史 Task 的 verified 只是任务完成状态，打 tag 属于交付 Story。
+  if (item.kind !== 'Story' && item.run === 'verified') return taskBadges.done;
+  return workflowBadges[item.run] || taskBadges[item.st] || taskBadges.todo;
+}
+
+const items = computed(() => S.inbox.filter((x) => x.pbc === S.pbcId)
+  .map((item) => ({ ...item, badge: backlogBadge(item) })));
 
 // v3.2：Backlog 页的顺序是「工作项 → 文档」。
 // 打开 Backlog 的人想看的是「这版要干哪些活」，不是先读一遍需求文档；
@@ -66,7 +89,7 @@ const bkLines = computed(() => (bkCur.value && bkCur.value.md ? String(bkCur.val
 const stories = computed(() => items.value.filter((x) => x.kind === 'Story'));
 const tasksOf = (sid) => items.value.filter((x) => x.kind !== 'Story' && x.parent === sid);
 const looseTasks = computed(() => items.value.filter((x) => x.kind !== 'Story' && !x.parent));
-const doingCount = computed(() => items.value.filter((x) => x.st === 'doing').length);
+const doingCount = computed(() => items.value.filter((x) => x.badge === runningBadge).length);
 
 // 代码编辑器：草稿内容从投影里取；改动只有「保存为草稿」才会落账。
 const files = ref({});
@@ -179,7 +202,7 @@ function ownerText(o) {
               <td class="small bk-title">{{ s.t }}</td>
               <td class="small muted">{{ s.pt || '' }}</td>
               <td class="small">{{ ownerText(s.owner) }}</td>
-              <td><span class="tag" :class="s.st === 'done' ? 't-ok' : s.st === 'doing' ? 't-warn' : 't-gray'" style="font-size: 9px">{{ s.st === 'done' ? '已完成' : s.st === 'doing' ? '执行中' : '待领' }}</span></td>
+              <td><span class="tag" :class="s.badge.tone" style="font-size: 9px">{{ s.badge.text }}</span></td>
               <td><button class="btn small" @click="S.pbcId = s.pbc; S.itemId = s.id; S.view = 'item'">查看</button></td>
             </tr>
             <tr v-for="x in tasksOf(s.id)" :key="x.id" class="bk-task">
@@ -187,7 +210,7 @@ function ownerText(o) {
               <td class="small bk-title"><span class="bk-branch">└</span>{{ x.t }}</td>
               <td class="small muted">{{ x.pt || '' }}</td>
               <td class="small">{{ ownerText(x.owner) }}</td>
-              <td><span class="tag" :class="x.st === 'done' ? 't-ok' : x.st === 'doing' ? 't-warn' : 't-gray'" style="font-size: 9px">{{ x.st === 'done' ? '已完成' : x.st === 'doing' ? '执行中' : '待领' }}</span></td>
+              <td><span class="tag" :class="x.badge.tone" style="font-size: 9px">{{ x.badge.text }}</span></td>
               <td><button class="btn small" @click="S.pbcId = x.pbc; S.itemId = x.id; S.view = 'item'">查看</button></td>
             </tr>
           </template>
@@ -199,7 +222,7 @@ function ownerText(o) {
             <td class="small bk-title"><span class="bk-branch">└</span>{{ x.t }}</td>
             <td class="small muted">{{ x.pt || '' }}</td>
             <td class="small">{{ ownerText(x.owner) }}</td>
-            <td><span class="tag" :class="x.st === 'done' ? 't-ok' : x.st === 'doing' ? 't-warn' : 't-gray'" style="font-size: 9px">{{ x.st === 'done' ? '已完成' : x.st === 'doing' ? '执行中' : '待领' }}</span></td>
+            <td><span class="tag" :class="x.badge.tone" style="font-size: 9px">{{ x.badge.text }}</span></td>
             <td><button class="btn small" @click="S.pbcId = x.pbc; S.itemId = x.id; S.view = 'item'">查看</button></td>
           </tr>
         </tbody>

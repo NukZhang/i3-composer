@@ -28,6 +28,7 @@ const facts = computed(() => (detail.value && detail.value.facts) || []);
 const canBacklog = computed(() => (S.acts || []).includes('backlog'));
 const canBuild = computed(() => (S.acts || []).includes('build'));
 const canTag = computed(() => (S.acts || []).includes('tag'));
+const hasWorkflow = computed(() => item.value?.kind === 'Story' && !!item.value.steps?.length);
 
 // 这一轮真跑出来的结论：测试条数、构建摘要、部署地址。
 const testResult = computed(() => (S.state && S.state.test) || null);
@@ -106,10 +107,11 @@ async function decide(approve) {
 }
 
 function runText(run) {
-  return { idea: '未发起', draft: '未发起', running: '执行中', waiting: '待发布', verified: '待打 tag', paused: '已介入', blocked: '受阻', published: '已发布' }[run] || run || '—';
+  if (run === 'verified' && item.value.kind !== 'Story') return '已完成';
+  return { idea: '未发起', draft: '未发起', running: '执行中', waiting: '待发布', verified: '待打 tag', paused: '已介入', blocked: '受阻', failed: '失败', published: '已发布' }[run] || run || '—';
 }
 function runCls(run) {
-  return 'cr-state ' + (['published', 'running', 'waiting', 'verified', 'paused', 'blocked'].includes(run) ? run : 'draft');
+  return 'cr-state ' + (['published', 'running', 'waiting', 'verified', 'paused', 'blocked', 'failed'].includes(run) ? run : 'draft');
 }
 function stepCls(st) {
   return st === 'done' ? 'done' : st === 'doing' ? 'doing' : st === 'blocked' ? 'blocked' : st.human ? 'human' : '';
@@ -185,8 +187,8 @@ function factDetail(f) {
         <span class="small muted">
           <template v-if="item.run === 'published'">已发布 {{ item.version || '' }}{{ item.tag ? ' · tag ' + item.tag : '' }}</template>
           <template v-else-if="item.run === 'blocked'">卡在 {{ ((item.steps || [])[item.step] || {}).n || '' }}：{{ item.blocked || '' }}</template>
-          <template v-else-if="item.run === 'waiting'">全链已跑通，就差你一句「发不发」</template>
-          <template v-else-if="item.run === 'running'">正在跑，可以随时介入</template>
+          <template v-else-if="hasWorkflow && item.run === 'waiting'">全链已跑通，就差你一句「发不发」</template>
+          <template v-else-if="hasWorkflow && item.run === 'running'">正在跑，可以随时介入</template>
         </span>
         <span class="spacer" style="flex: 1" />
         <span class="small muted">{{ item.pbc }} · 作者 {{ item.by }}</span>
@@ -232,15 +234,15 @@ function factDetail(f) {
       </div>
     </div>
 
-    <div v-if="item.kind !== 'Story'" class="card">
+    <div v-if="!hasWorkflow" class="card">
       <div class="ch"><span v-html="icon('doc')" /><h3>这类项不跑代码链路</h3></div>
       <div class="small muted">它推进的是制品或配置，不是软件交付。</div>
     </div>
 
-    <div class="card">
+    <div v-else class="card">
       <div class="ch">
         <span v-html="icon('git')" /><h3>执行链路</h3><span class="spacer" />
-        <span v-if="item.steps?.length" class="small muted">{{ item.steps.length }} 步</span>
+        <span class="small muted">{{ item.steps.length }} 步</span>
       </div>
       <div class="tl">
         <div v-for="(st, i) in item.steps || []" :key="i" class="tl-item" :class="stepCls(st)">
@@ -256,16 +258,16 @@ function factDetail(f) {
       </div>
     </div>
 
-    <div v-if="item.run === 'idea' || item.run === 'blocked'" class="row" style="margin-bottom: 11px; gap: 6px; flex-wrap: wrap">
+    <div v-if="hasWorkflow && ['idea', 'blocked', 'failed'].includes(item.run)" class="row" style="margin-bottom: 11px; gap: 6px; flex-wrap: wrap">
       <button class="btn primary" :disabled="!canBuild || busy" @click="run">
-        <span v-html="icon('play', 12)" /> {{ item.run === 'blocked' ? '重新发起' : '发起直通' }}
+        <span v-html="icon('play', 12)" /> {{ item.run === 'idea' ? '发起直通' : '重新发起' }}
       </button>
       <span class="small muted">
         {{ canBuild ? '会自动跑完制品→提交→测试→镜像→' + item.env + '，停在发布前由 SA 拍板' : '当前角色没有 build 权限（DA 专属）' }}
       </span>
     </div>
 
-    <div v-if="item.run === 'waiting'" class="gate">
+    <div v-if="hasWorkflow && item.run === 'waiting'" class="gate">
       <span v-html="icon('alert')" />
       <b>就差这一步：是否发布生产？</b>
       <span class="small muted">其余全部跑通（制品/提交/测试/镜像/{{ item.env }}）。</span>
@@ -274,7 +276,7 @@ function factDetail(f) {
       <button class="btn small" :disabled="!canTag || busy" @click="decide(false)">退回修改</button>
       <button class="btn primary small" :disabled="!canTag || busy" @click="decide(true)"><span v-html="icon('check', 12)" /> 发布生产</button>
     </div>
-    <div v-if="!canTag && item.run === 'waiting'" class="perm-note">
+    <div v-if="hasWorkflow && !canTag && item.run === 'waiting'" class="perm-note">
       <span v-html="icon('lock', 12)" /> 发布拍板是 <b>SA</b> 的权限；当前角色点下去会被 403 拒绝，界面不会假装成功。
     </div>
 
