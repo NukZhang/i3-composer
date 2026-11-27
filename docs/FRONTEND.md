@@ -109,13 +109,5 @@ digest 是编译产物的字节 sha256，部署地址上的 `/healthz` 真的返
 
 ## 7. 验收脚本
 
-```bash
-cd web/e2e
-BASE=http://127.0.0.1:8080 node acceptance_exec.cjs   # 执行侧：真测试 / 真构建 / 真部署 / 真收发
-BASE=http://127.0.0.1:8080 node acceptance_flow.cjs  # 写路径：建任务 → 发起 → 拍板 → 发布
-BASE=http://127.0.0.1:8080 node acceptance_v26.cjs   # 界面：编排工作台 / 质量报告 / 验收台
-BASE=http://127.0.0.1:8080 node acceptance_full.cjs  # 从零：建单元 → 真跑六步 → 发布（放最后跑）
-```
-
-`acceptance_full.cjs` 会自己建交付单元，先跑它会让 `acceptance_v26.cjs`
-里「种子单元只剩三个」那条断言看到四个单元——所以它放最后。
+按 [执行说明](EXECUTION.md#三怎么自己验一遍) 在新的干净演示账本上运行五套验收。
+每轮依次执行 v32、exec、flow、full、v26；任一套失败就停止，不在同一账本上重跑整轮。
