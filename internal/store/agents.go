@@ -325,6 +325,12 @@ func ProjectAgents(facts []Fact) (*AgentsView, error) {
 			if a := v.Agents[p.AgentID]; a != nil && p.Trial != nil {
 				a.TrialRun = p.Trial
 				a.TrialAt, a.TrialBy = p.At, p.By
+				// 只有真载入了知识的那一轮才更新 lastLoadedTrial：被工具白名单拦掉的一轮
+				// kb 拿到的 query 是空的、loaded=0，它不是「最近一次检索的结果」（#33）。
+				if trialRetrieved(p.Trial) {
+					a.LastLoadedTrial = p.Trial
+					a.LastLoadedAt = p.At
+				}
 			}
 
 		case FactAgentCase:
@@ -369,6 +375,18 @@ func ProjectAgents(facts []Fact) (*AgentsView, error) {
 		}
 	}
 	return v, nil
+}
+
+// trialRetrieved 判定这一轮试跑是否真的检索过并载入了知识：
+// 至少一条装配有 query、且载入数 > 0。被工具白名单拦掉的一轮，kb 的输入没进来，
+// query 空、loaded 0——它是证据，但不是「最近一次检索的结果」。
+func trialRetrieved(t *domain.Trial) bool {
+	for _, a := range t.Assemblies {
+		if a.Query != "" && len(a.Loaded) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func validRollout(p int) bool { return p == 10 || p == 50 || p == 100 }

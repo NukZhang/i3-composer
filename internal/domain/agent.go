@@ -137,6 +137,12 @@ type Agent struct {
 	TrialRun *Trial `json:"trialRun,omitempty"`
 	TrialAt  string `json:"trialAt,omitempty"`
 	TrialBy  string `json:"trialBy,omitempty"`
+	// LastLoadedTrial 是**最近一次真的载入了知识**的试跑（任一 kb 节点 loaded>0），
+	// 连同当轮 assemblies 一起。TrialRun 只记最后一次，而最后一次可能是被白名单
+	// 拦掉的一轮（kb 的 query 为空、loaded=0）——「上一次检索到底召回没召回」这类
+	// 问题不该依赖「最后一次恰好也是成功的那次」这种运气（#33）。
+	LastLoadedTrial *Trial `json:"lastLoadedTrial,omitempty"`
+	LastLoadedAt    string `json:"lastLoadedAt,omitempty"`
 
 	Digest string `json:"digest"`
 	// BuiltDigest 是最后一次「构建」落下的 digest。它和 Digest 不一致，

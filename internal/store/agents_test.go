@@ -175,3 +175,43 @@ func mustJSON(v any) []byte {
 	}
 	return b
 }
+
+// #33：TrialRun 只记最后一次试跑，而最后一次可能是被白名单拦掉的一轮（query 空、loaded 0）。
+// lastLoadedTrial 必须钉在「最近一次真的载入了知识」的那一轮，不随后来的空装配滚掉。
+func TestProjectAgentsLastLoadedTrialSurvivesEmptyTrial(t *testing.T) {
+	loaded := domain.Trial{
+		In: "你们这个热玛吉能维持多久",
+		Assemblies: []domain.ContextAssembly{{
+			Node:   "n3",
+			Query:  "你们这个热玛吉能维持多久",
+			Loaded: []domain.LoadedChunk{{Doc: "产品口径字典/热玛吉", Ver: "2026.11.1", Score: 3}},
+		}},
+	}
+	// 第二轮：工具被白名单拦掉，kb 没拿到输入。
+	empty := domain.Trial{
+		In:         "你们这个热玛吉能维持多久",
+		Assemblies: []domain.ContextAssembly{{Node: "n3", Query: "", Loaded: nil}},
+	}
+	facts := agentFacts(9, 10)
+	facts = append(facts,
+		Fact{Type: FactAgentTrial, Payload: mustJSON(map[string]any{"agentId": "x-fe", "trial": loaded, "at": "01:00", "by": "DA"})},
+		Fact{Type: FactAgentTrial, Payload: mustJSON(map[string]any{"agentId": "x-fe", "trial": empty, "at": "02:00", "by": "DA"})},
+	)
+	v, err := ProjectAgents(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := v.Agents["x-fe"]
+	if a == nil {
+		t.Fatal("agent 未投影出来")
+	}
+	if a.TrialAt != "02:00" {
+		t.Fatalf("TrialRun 仍应是最新一轮，实际 at=%q", a.TrialAt)
+	}
+	if a.LastLoadedTrial == nil || a.LastLoadedAt != "01:00" {
+		t.Fatalf("lastLoadedTrial 应停在真召回的那一轮（01:00），实际 %+v at=%q", a.LastLoadedTrial, a.LastLoadedAt)
+	}
+	if len(a.LastLoadedTrial.Assemblies) != 1 || a.LastLoadedTrial.Assemblies[0].Query == "" {
+		t.Fatalf("lastLoadedTrial 必须带着当轮装配：%+v", a.LastLoadedTrial.Assemblies)
+	}
+}
