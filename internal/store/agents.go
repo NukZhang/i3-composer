@@ -320,6 +320,7 @@ func ProjectAgents(facts []Fact) (*AgentsView, error) {
 				Trial   *domain.Trial `json:"trial"`
 				At      string        `json:"at"`
 				By      string        `json:"by"`
+				RunID   string        `json:"runId"`
 			}
 			if err := json.Unmarshal(f.Payload, &p); err != nil {
 				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
@@ -328,6 +329,13 @@ func ProjectAgents(facts []Fact) (*AgentsView, error) {
 				a.TrialRun = p.Trial
 				a.TrialAt, a.TrialBy = trialStamp(p.At, p.Trial.AtExact), p.By
 				a.TrialRunAt = p.Trial.AtExact
+				a.TrialRuns = append([]domain.TrialRunRef{{
+					RunID: p.RunID, At: trialStamp(p.At, p.Trial.AtExact), AtExact: p.Trial.AtExact,
+					By: p.By, Trial: p.Trial,
+				}}, a.TrialRuns...)
+				if len(a.TrialRuns) > trialRunHistory {
+					a.TrialRuns = a.TrialRuns[:trialRunHistory]
+				}
 				// 只有真载入了知识的那一轮才更新 lastLoadedTrial：被工具白名单拦掉的一轮
 				// kb 拿到的 query 是空的、loaded=0，它不是「最近一次检索的结果」（#33）。
 				if trialRetrieved(p.Trial) {
@@ -398,6 +406,10 @@ func (v *AgentsView) LoadedSinceTrial(a *domain.Agent, atExact, at string) bool 
 	}
 	return at == "" || at <= a.LastLoadedAt
 }
+
+// trialRunHistory 是 TrialRuns 保留的轮数。浏览器套件每套要来回试跑几十次，
+// 全留会让 /api/agents/{id} 越拉越大；留最近 20 轮足够「找回自己那一轮」（#61）。
+const trialRunHistory = 20
 
 // trialStamp 是给人看的试跑时间戳：事实里的 at 只有分钟，同一分钟内连跑两轮时
 // 「最近一次检索」与「本轮」会显示成同一时刻，分不出先后（#47）。有精确时间就带上

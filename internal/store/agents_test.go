@@ -278,3 +278,39 @@ func TestTrialWithEmptyQueryDoesNotPinLastLoaded(t *testing.T) {
 		t.Fatalf("真·没召回的一轮是查过了的，应更新 lastLoadedTrial，实际 at=%q", a.LastLoadedAt)
 	}
 }
+
+// agents 日志多实例共用：最近一轮可能是别人跑的那一轮。TrialRuns 按轮列出并带 runId，
+// 断言才能找回自己那一轮，而不是假定 TrialRun 就是自己的（#61）。
+func TestTrialRunsListNewestFirstWithRunID(t *testing.T) {
+	loaded := domain.Trial{In: "a", AtExact: "2026-11-27T08:48:12.100Z"}
+	empty := domain.Trial{In: "b", AtExact: "2026-11-27T08:48:20.500Z"}
+	// runId 为空的老事实排最前：投影按事实顺序追加，这一条最新，回滚时它先于其他轮落地。
+	facts := agentFacts(9, 10)
+	facts = append(facts,
+		Fact{Type: FactAgentTrial, Payload: mustJSON(map[string]any{
+			"agentId": "x-fe", "trial": loaded, "at": "11-27 08:47", "by": "SA"})},
+		Fact{Type: FactAgentTrial, Payload: mustJSON(map[string]any{
+			"agentId": "x-fe", "trial": loaded, "at": "11-27 08:48", "by": "DA", "runId": "v26-4b"})},
+		Fact{Type: FactAgentTrial, Payload: mustJSON(map[string]any{
+			"agentId": "x-fe", "trial": empty, "at": "11-27 08:48", "by": "DA", "runId": "exec-5"})},
+	)
+	v, err := ProjectAgents(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := v.Agents["x-fe"]
+	got := make([]string, 0, len(a.TrialRuns))
+	for _, r := range a.TrialRuns {
+		got = append(got, r.RunID)
+	}
+	// 没带 runId 的那轮（外部提交/老账本）照样列出来，runId 为空。
+	if len(got) != 3 || got[0] != "exec-5" || got[1] != "v26-4b" || got[2] != "" {
+		t.Fatalf("TrialRuns 应新的在前并带 runId，实际 %v", got)
+	}
+	if a.TrialRuns[1].At != "11-27 08:48:12" || a.TrialRuns[1].AtExact != "2026-11-27T08:48:12.100Z" {
+		t.Fatalf("每轮要带落地时间（人看的带秒 + 精确），实际 %+v", a.TrialRuns[1])
+	}
+	if a.TrialRuns[1].Trial == nil || a.TrialRuns[1].Trial.In != "a" {
+		t.Fatalf("每轮要带结论本身，实际 %+v", a.TrialRuns[1].Trial)
+	}
+}

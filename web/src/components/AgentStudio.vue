@@ -29,6 +29,8 @@ const promptDraft = ref('');
 // 稍等片刻面板自己跳回开始节点——点选与「重设默认」抢着改同一个状态（#54）；
 // e2e 在固定等待后读面板，读到哪个完全看异步刷新谁后到（#47 间歇失败的由来）。
 const loadedId = ref(null);
+// 上一次「试跑这一条」用的 runId：面板挂成 data-run，与本轮事实上的标签对得上（#61）。
+const lastRunID = ref('');
 watch(
   () => props.agent,
   (a) => {
@@ -134,7 +136,11 @@ async function build() {
 async function runTrial() {
   if (!props.agent) return;
   try {
-    const j = await api.agentTrial(props.agent.id, {});
+    // 带一个本轮 id：agents 日志是多实例共用的，光看「最近一轮」分不清是不是自己跑的（#61）。
+    // 也挂在面板上（data-run），e2e 据此认出「刚点的是哪一轮」，不必猜最新一轮是自己。
+    const runId = 'ui-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+    lastRunID.value = runId;
+    const j = await api.agentTrial(props.agent.id, { runId });
     pushRuntime('ACTOR', 'agent.trial.run ' + props.agent.id);
     S.agRan = true;
     toast('跑通一条' + (j.source === 'sample' ? '（回放定义里的样例）' : ''), 'ok');
@@ -229,7 +235,7 @@ const curAssembly = computed(() => {
       </div>
     </div>
 
-    <div class="as-top">
+    <div class="as-top" :data-run="lastRunID">
       <span class="tag t-warn" style="font-size: 9px">草稿</span>
       <span class="mono small" style="color: var(--tx-2)">v{{ agent.ver }}</span>
       <span class="small muted">{{ stats.nodes }} 节点 · {{ stats.ms }}ms · {{ tokText(stats.tok) }} tok / 轮</span>

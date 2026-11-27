@@ -131,6 +131,10 @@ func (s *Server) agentTrial(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		Raw   string         `json:"raw"`
 		Out   []string       `json:"out"`
 		Reply string         `json:"reply"`
+		// RunID 是调用方给这一轮起的名字（页面用 run-<随机>）。它不进 trial.in，
+		// 只落成事实上的标签：agents 日志多实例共用，「最近一轮」可能不是自己的，
+		// 有了它断言就能找回自己那一轮（#61）。
+		RunID string `json:"runId"`
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&in)
 
@@ -204,9 +208,15 @@ func (s *Server) agentTrial(w http.ResponseWriter, r *http.Request, c reqCtx) er
 			return err
 		}
 	}
-	if _, err := s.Log.Append(r.Context(), agentsLog, store.FactAgentTrial, c.Role.String(), map[string]any{
+	runID := strings.TrimSpace(in.RunID)
+	fact := map[string]any{
 		"agentId": a.ID, "trial": trial, "at": at, "by": c.Role.String(), "source": trial.Source,
-	}); err != nil {
+	}
+	// 调用方没给 runId 就不落这个键：老账本与外部提交的结果都没有它，重放时按空处理（#61）。
+	if runID != "" {
+		fact["runId"] = runID
+	}
+	if _, err := s.Log.Append(r.Context(), agentsLog, store.FactAgentTrial, c.Role.String(), fact); err != nil {
 		return err
 	}
 	s.publish(agentsLog, "agent.trial.run", map[string]any{"id": a.ID})

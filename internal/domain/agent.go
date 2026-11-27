@@ -147,6 +147,12 @@ type Agent struct {
 	LastLoadedTrial *Trial `json:"lastLoadedTrial,omitempty"`
 	LastLoadedAt    string `json:"lastLoadedAt,omitempty"`
 
+	// TrialRuns 是最近的若干轮试跑（新的在前），每轮带发起人给的 runId。
+	// TrialRun 只有「最后一次」，而 agents 日志是多实例共用的：两台 BFF 并行跑
+	// 浏览器套件时，谁的最后一次都可能被别人顶掉。有了这份清单，断言按
+	// 「我自己那一轮」找，不必假定最新一轮就是自己的（#61）。
+	TrialRuns []TrialRunRef `json:"trialRuns,omitempty"`
+
 	Digest string `json:"digest"`
 	// BuiltDigest 是最后一次「构建」落下的 digest。它和 Digest 不一致，
 	// 说明编排改了但没构建——gate 会红，上一轮评测也不能再给新版本背书。
@@ -155,6 +161,15 @@ type Agent struct {
 	Published  bool   `json:"published"`
 	Rollout    int    `json:"rollout"`              // 10 / 50 / 100，0 表示未放量
 	RollbackTo string `json:"rollbackTo,omitempty"` // 最近一次回滚目标版本
+}
+
+// TrialRunRef 是一轮试跑在账上的引用：发起人给的 runId、落地时间、以及结论本身。
+type TrialRunRef struct {
+	RunID   string `json:"runId,omitempty"`
+	At      string `json:"at,omitempty"` // 给人看的（带秒）
+	AtExact string `json:"atExact,omitempty"`
+	By      string `json:"by,omitempty"`
+	Trial   *Trial `json:"trial,omitempty"`
 }
 
 // Allows 判定一个工具在不在白名单里。执行器用它拦越界调用。

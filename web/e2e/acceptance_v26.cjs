@@ -162,21 +162,33 @@ function check(name, ok, detail) {
   const ran = await page.evaluate(() => ({
     out: (document.querySelector('.as-dbg-r') || {}).textContent || '',
     chain: document.querySelectorAll('.as-chain span').length,
+    // 页面给这一轮起的名字（#61）：agents 日志多实例共用，「最近一轮」可能已经被别人顶掉，
+    // 有了它就能按 runId 找回刚点的这一轮，而不是赌它待在 TrialRun 上。
+    run: (document.querySelector('.as-top') || {}).dataset?.run || '',
   }));
   check('4 试跑有输出与逐节点耗时链', /risk/.test(ran.out) && ran.chain >= 4, { chain: ran.chain, out: ran.out.slice(0, 60) });
 
   // ---- 4b. 当轮装配：kb 节点能展开「载入 N 篇 / 省略 M 篇（原因）」 ----
   // 光看「跑通」回答不了「是不是没召回」，所以装配要落事实、也要看得见。
-  const trialAsm = await page.evaluate(async (base) => {
+  // 按面板上的 runId 找回「刚点的那一轮」：同一本 agents 日志上还有别的实例在试跑时，
+  // TrialRun / lastLoadedTrial 都可能已经不是自己的那一轮（#61）。找不到本轮就如实报 run
+  // 与清单里最近的几个 runId，不再去猜最新一轮。
+  const trialAsm = await page.evaluate(async ({ base, run }) => {
     const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
-    // lastLoadedTrial 是「最近一次真的载入了知识」的那一轮（#33）：服务端已经把它和
-    // 被白名单拦掉的空轮分开，e2e 不再自己挑、也不写「找不到就退回第一轮」的兜底——
-    // 兜底会把这个字段缺失这件事掩盖成一个假绿。
-    const t = a.lastLoadedTrial || {};
-    // 这一页刚点完「试跑这一条」：最新一轮就是本套件 4b 跑的那次，记下它的精确落地时间，
-    // 后面 10 段核对「最近一次检索」仍旧钉在这一轮上（#47）。
-    return { assemblies: t.assemblies || [], lastAtExact: t.atExact || '', trialAtExact: (a.trialRun || {}).atExact || '' };
-  }, BASE);
+    const runs = a.trialRuns || [];
+    const mine = run ? runs.find((r) => r.runId === run) : null;
+    // 4b 的装配取「本轮」；老账本里没有 runId 时才退回最近一次真召回（#33 的语义不变）。
+    const t = (mine && mine.trial) || a.lastLoadedTrial || {};
+    const seen = runs.map((r) => ({ runId: r.runId || '', trialAt: r.at || '' }));
+    return {
+      assemblies: t.assemblies || [],
+      lastAtExact: (a.lastLoadedTrial || {}).atExact || '',
+      trialAtExact: (a.trialRun || {}).atExact || '',
+      mine: !!mine, run, seen: seen.slice(0, 5),
+    };
+  }, { base: BASE, run: ran.run });
+  check('4b 本轮试跑能按 runId 找回来（不被别的实例顶掉）',
+    !ran.run || trialAsm.mine, { run: ran.run, mine: trialAsm.mine, trials: trialAsm.seen });
   // #33：以前只读 assemblies[0]，而同一本账上更早那轮「被白名单拦下、载入 0 篇」的试跑也在这份
   // 清单里，读到空轮就把原因写成「没召回」。现在挑「真的拿到 query 的那一轮」，并断言空轮的
   // 归因是「没读到输入」——两种 0 篇要分得开，否则失败详情会把人引到错的排查方向。
@@ -447,22 +459,32 @@ function check(name, ok, detail) {
     const pills = Array.from(document.querySelectorAll('.as-dbg-r .tag')).map((x) => x.textContent.trim());
     const stuck = Array.from(document.querySelectorAll('.as-chain span.is-blocked')).map((x) => x.textContent.trim());
     const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
-    const nodes = ((a.trialRun || {}).nodes || []).map((n) => ({ n: n.n, blocked: (n.blocked || []).join(' ') }));
-    return { pills, stuck, nodes };
+    // 同样按面板上的 runId 找回这一轮：多实例共用日志时 TrialRun 可能是别人的（#61）。
+    const run = (document.querySelector('.as-top') || {}).dataset?.run || '';
+    const runs = a.trialRuns || [];
+    const mine = run ? runs.find((r) => r.runId === run) : null;
+    const t = (mine && mine.trial) || a.trialRun || {};
+    const nodes = (t.nodes || []).map((n) => ({ n: n.n, blocked: (n.blocked || []).join(' ') }));
+    return { pills, stuck, nodes, run, mine: !!mine, seen: runs.map((r) => r.runId || '').slice(0, 5) };
   }, BASE);
   check('10 试跑状态是「跑完 · 被拒 N 步」，不再只写「跑通」',
     tgRun.pills.some((p) => /跑完 · 被拒 \d+ 步/.test(p)), tgRun.pills);
   check('10 被拒的节点在链上单独标出（读会话）',
     tgRun.stuck.length >= 1 && /读会话/.test(tgRun.stuck.join('')), tgRun.stuck);
   check('10 试跑结果进账本：tool.blocked 可从 /api/agents/{id} 查回',
-    tgRun.nodes.some((n) => n.n === '读会话' && n.blocked.includes(foreign)), tgRun.nodes);
+    tgRun.nodes.some((n) => n.n === '读会话' && n.blocked.includes(foreign)),
+    { nodes: tgRun.nodes, run: tgRun.run, mine: tgRun.mine, trials: tgRun.seen });
 
   // 这一轮「读会话」被白名单拦了，kb 节点拿到的 query 是空的——一篇没载入，
   // 但原因是「没读到输入」不是「没召回」。诊断必须是算出来的，不能写死成没召回（宪法 II）。
-  const blockedAsm = await page.evaluate(async (base) => {
+  const blockedAsm = await page.evaluate(async ({ base, run }) => {
     const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
-    const asms = (a.trialRun || {}).assemblies || [];
+    const runs = a.trialRuns || [];
+    const mine = run ? runs.find((r) => r.runId === run) : null;
+    const asms = (((mine && mine.trial) || a.trialRun || {}).assemblies) || [];
     const empty = asms.find((x) => !x.query && (!x.loaded || x.loaded.length === 0));
+    // 「这轮 kb 拿到的是空 query」与「上游被拦所以没拿到」要能分开：读会话节点上留了拦截原因。
+    const blockedNode = (mine && mine.trial ? mine.trial.nodes || [] : []).find((n) => (n.blocked || []).length);
     // #33：这一轮被拦了，但它不能污染「最近一次检索的结果」。这一套件里真召回的那一轮是
     // 4b（trialRunAt 记的是本套件刚跑的那次），所以 lastLoadedTrial 必须正是 4b 那一轮
     // （query 非空、有载入），而不是跟着最新的空轮走。
@@ -478,11 +500,15 @@ function check(name, ok, detail) {
       pinned: !!lastAsm && !!lastAsm.query && (lastAsm.loaded || []).length > 0,
       lastAt: a.lastLoadedAt || '', trialAt: a.trialAt || '',
       lastExact: last ? last.atExact || '' : '', trialExact: (a.trialRun || {}).atExact || '',
+      run, mine: !!mine, seen: runs.map((r) => r.runId || '').slice(0, 5),
+      upstreamBlocked: !!blockedNode, upstreamNote: blockedNode ? (blockedNode.blocked || []).join(' ') : '',
     };
-  }, BASE);
+  }, { base: BASE, run: tgRun.run });
   check('10 没读到输入时装配归因写「没读到输入」而不是「没召回」',
-    !!blockedAsm && /^没读到输入/.test(blockedAsm.note || '') && /query 是空/.test(blockedAsm.note || ''),
-    blockedAsm);
+    !!blockedAsm && blockedAsm.upstreamBlocked
+      && /^没读到输入/.test(blockedAsm.note || '') && /query 是空/.test(blockedAsm.note || ''),
+    { note: blockedAsm && blockedAsm.note, upstreamBlocked: blockedAsm && blockedAsm.upstreamBlocked,
+      upstreamNote: blockedAsm && blockedAsm.upstreamNote, mine: blockedAsm && blockedAsm.mine });
   // 失败时分清两种情况：本轮自己没被拦（pinned=false），或本轮被拦了但「最近一轮」读了空轮。
   // 「最近一轮试跑」在同一本 agents 日志上是全局的，多实例共用时这里会是别人的一轮（#61）；
   // 同一本账上连跑多轮时（#45），lastLoadedTrial 往往停在本轮 4b 那一回的真召回上——
@@ -492,21 +518,28 @@ function check(name, ok, detail) {
   // 时间戳带秒（trialStamp）：同一分钟内连跑两轮时按分钟比永远相等，分不出先后（#47）。
   const after = blockedAsm.lastAt > blockedAsm.trialAt; // "MM-DD HH:MM:SS" 字面序即时间序
   const pinnedToRun4b = !!trialAsm.lastAtExact && blockedAsm.lastExact === trialAsm.lastAtExact;
-  const recallState = !blockedAsm.pinned ? 'unpinned' : after || pinnedToRun4b ? 'ok' : 'stale';
+  // 没找回本轮时，「最近一次检索」是别人的一轮——那是多实例共用日志（#61），不是空轮顶掉（#47），
+  // 先分开报，免得把人引去查错的地方。
+  const recallState = !blockedAsm.mine ? 'not-mine'
+    : !blockedAsm.pinned ? 'unpinned' : after || pinnedToRun4b ? 'ok' : 'stale';
   // 判「最近一次检索没有被空轮顶掉」两种说法都对：
   //   · 被拦轮之后又有新召回（lastAt > trialAt）——本账上还跑过别的试跑；
   //   · lastLoadedTrial 仍是 4b 那一轮（精确落地时间一致）——本轮只召回了一次，之后没有新召回，
   //     它当然早于被拦轮，而这恰恰是对的。以前只认第一种，同一本账连跑多轮时（#45）必挂（#47）。
   check('10 被白名单拦掉的一轮不进 lastLoadedTrial（最近一次检索仍钉在真召回那轮）',
-    blockedAsm.pinned && blockedAsm.lastAt !== '' && (trialAsm.lastAtExact ? pinnedToRun4b : after),
+    blockedAsm.mine && blockedAsm.pinned && blockedAsm.lastAt !== '' && (trialAsm.lastAtExact ? pinnedToRun4b : after),
     {
       lastAt: blockedAsm.lastAt, trialAt: blockedAsm.trialAt, pinned: blockedAsm.pinned, recallState,
       lastExact: blockedAsm.lastExact, run4bExact: trialAsm.lastAtExact,
-      reason: recallState === 'unpinned'
-        ? '本轮被拦的一轮没被标成拦下，或「最近一轮」不是本轮（同一本 agents 日志上多实例同时试跑，见 #61）'
-        : recallState === 'stale'
-          ? '最近一次召回既不是本套件 4b 那一轮，也不在被拦轮之后：空轮混进了「最近一次检索」（见 #47）'
-          : '',
+      // 失败时先答「这是谁的那一轮」：多实例共用日志时，只看 null/false 分不清是自己的问题（#61）。
+      mine: blockedAsm.mine, run: blockedAsm.run, run4b: trialAsm.run, trials: blockedAsm.seen,
+      reason: !blockedAsm.mine
+        ? '没找回本轮（runId=' + blockedAsm.run + '）：「最近一轮」已是别人的一轮——同一本 agents 日志上多实例同时试跑，见 #61'
+        : recallState === 'unpinned'
+          ? '本轮这一轮没被标成拦下（kb 装配里没有空 query 那轮），先确认白名单闸是不是真的生效了'
+          : recallState === 'stale'
+            ? '最近一次召回既不是本套件 4b 那一轮，也不在被拦轮之后：空轮混进了「最近一次检索」（见 #47）'
+            : '',
     });
 
   // 对话验收不能拿一轮被拦下的执行拼回复：拒绝，且一条对话事实都不落。
