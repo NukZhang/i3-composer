@@ -178,6 +178,22 @@ function check(name, ok, detail) {
     gateSummary.text === '3/4 通过 · 1 判不了' && gateSummary.warning && visualMark === '?',
     { summary: gateSummary, visualMark, unknown: unknown.map((gate) => gate.key) });
 
+  await page.locator('.ptab').filter({ hasText: 'Backlog' }).click();
+  await page.getByRole('row').filter({ has: page.getByRole('cell', { name: id, exact: true }) })
+    .getByRole('button', { name: '查看' }).click();
+  const badge = await page.locator('.stage .cr-state').evaluate((el) => ({
+    text: el.textContent.trim(), cls: el.className,
+  }));
+  const chain = page.locator('.card').filter({ has: page.getByRole('heading', { name: '执行链路', exact: true }) });
+  const label = await chain.locator('.ch .muted').innerText();
+  const rendered = await chain.locator('.tl-item').count();
+  const human = await chain.locator('.tl-item').filter({ hasText: '人工闸' }).allTextContents();
+  check('5 工作项详情显示待打 tag，不把 verified 当草稿（#74）',
+    item.run === 'verified' && badge.text === '待打 tag' && badge.cls.split(' ').includes('verified'), badge);
+  check('5 执行链路标题按账本步骤计数，打 tag 是人工闸（#74）',
+    rendered === item.steps.length && rendered === 6 && label === `${rendered} 步` &&
+    human.length === 1 && human[0].includes('打 tag'), { label, rendered, human });
+
   // ---- 6. 种子写的历史与真跑的事实分得开 ----
   // 种子事实查种子单元（fee）；真跑的事实查这次新建的单元。
   const facts = ((((await api('/api/facts?pbc=' + unit)).body || {}).facts) || []);
