@@ -80,6 +80,36 @@ function check(name, ok, detail) {
   check('1 Agent 工厂：5 名平台员工 + 2 个交付产物',
     boot.agents.length === 7 && boot.agents.includes('qa-agent') && boot.agents.includes('dun-agent'), boot.agents);
 
+  // #30：趁种子评测仍对应当前版本，用真实发布事实核对版本线。
+  await page.click('.rolebtn:has-text("SA")');
+  await page.click('.rolebtn.x');
+  await page.locator('.agent-row:has-text("质检 Agent")').click();
+  await page.locator('.ptab').filter({ hasText: '发布' }).click();
+  const releaseCard = page.locator('.card').filter({ has: page.getByRole('heading', { name: '发布 · 版本线', exact: true }) });
+  const versionLine = releaseCard.locator('.tree-line').filter({ hasText: '当前 · 评测' });
+  const unpublished = await releaseCard.innerText();
+  check('1 未发布的 Agent 不显示灰度档位（#30）',
+    unpublished.includes('未发布') && !unpublished.includes('灰度档位'), unpublished);
+
+  const [publishResponse] = await Promise.all([
+    page.waitForResponse((r) => r.url() === BASE + '/api/agents/qa-agent/publish' && r.request().method() === 'POST'),
+    page.getByRole('button', { name: '发布新版本' }).click(),
+  ]);
+  if (publishResponse.status() !== 202) {
+    throw new Error(`发布质检 Agent → ${publishResponse.status()} ${await publishResponse.text()}`);
+  }
+  const publishedState = await page.request.get(BASE + '/api/agents/qa-agent').then((r) => r.json());
+  const published = await releaseCard.getByText(/已注册 agent\/qa-agent/).innerText();
+  check('1 已发布的 Agent 显示账本档位并标明未接分流（#30）',
+    publishedState.published && publishedState.rollout === 10 &&
+    published.includes(`灰度档位 ${publishedState.rollout}%（未接流量分流）`), published);
+
+  await page.locator('.sidebar .trow').filter({ hasText: '技术架构' }).click();
+  await page.getByRole('heading', { name: '技术架构', exact: true }).waitFor();
+  const rolloutRows = await page.getByRole('row').filter({ hasText: /Agent.*灰度/ }).allTextContents();
+  check('1 技术架构标明 Agent 灰度只记录档位（#30）',
+    rolloutRows.some((row) => row.includes('仅记录档位，未接流量分流') && !row.includes('已实现')), rolloutRows);
+
   // ---- 2. Agent 单元的构建页 = 编排工作台 ----
   // 编排与构建是 DA 的活：先切角色（会话由服务端签发，前端改不动权限）。
   await page.click('.rolebtn:has-text("DA")');
@@ -347,6 +377,14 @@ function check(name, ok, detail) {
   check('9 Agent 详情构建页是编排摘要 + 节点一览',
     /编排摘要/.test(agBuild.text) && /节点一览/.test(agBuild.text) && agBuild.chips.length === 7, agBuild.chips);
   check('9 有「去编排页」按钮', /去编排页/.test(agBuild.text), null);
+
+  await page.locator('.ptab').filter({ hasText: '发布' }).click();
+  const rebuiltLine = await versionLine.innerText();
+  const registered = await releaseCard.getByText(/已注册 agent\/qa-agent/).innerText();
+  check('9 新构建的版本号和既有的 Agent 注册档位分别显示（#30）',
+    rebuiltLine.includes('v' + afterBuild.ver) && !/已注册|灰度档位/.test(rebuiltLine) &&
+    registered.includes('灰度档位 10%（未接流量分流）'), { rebuiltLine, registered });
+  await page.locator('.ptab').filter({ hasText: '构建' }).click();
 
   // ---- 10. 工具白名单：编排越界 → 闸红 / 试跑留痕 / 对话拒绝 ----
   // 这条闸曾经只看「名单非空」就写「无越权」：四闸全绿也能真的读账单。

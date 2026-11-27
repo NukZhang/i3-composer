@@ -29,7 +29,8 @@ const mp = [
   ['Agent 编排（流程图 → digest）', 'PUT /api/agents/{id}/flow + POST .../build', '已实现', 't-ok'],
   ['知识库依赖与准确度', 'agent.kb + 失败归因 / 问题单', '已实现', 't-ok'],
   ['真人验收台（AC 判定 / 提 bug）', 'POST /api/checks/{id}/decide + defect.created', '已实现', 't-ok'],
-  ['Agent 评测 / 灰度', '/api/agents/*', '已实现', 't-ok'],
+  ['Agent 评测', 'POST /api/agents/{id}/eval', '已实现', 't-ok'],
+  ['Agent 灰度分流', 'POST /api/agents/{id}/rollout', '仅记录档位，未接流量分流', 't-warn'],
 ];
 </script>
 
@@ -122,7 +123,7 @@ const mp = [
     <div class="honest">
       <b>已接 Dapr。</b>事实日志在 Dapr state store（Redis，etag CAS 串行），workflow 走 durabletask 真实编排，
       确认门用 external event 唤醒。未接的部分：真 CI（构建是确定性 mock）、真模型调用（评测结果由外部执行器提交）、
-      飞书 / 企微卡片（通知只到站内）。上表标「未接」的是差距，不是待办清单里的装饰。
+      飞书 / 企微卡片（通知只到站内）、Agent 灰度分流。
     </div>
     <div class="row" style="margin-top: 11px; gap: 10px; align-items: flex-start">
       <div style="flex: 1; font-size: 11px; color: var(--tx-8b); line-height: 1.7">
