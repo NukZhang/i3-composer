@@ -1,6 +1,7 @@
 // v2.6 验收：Vue 前端 + 真实 Dapr 后端（端口由 BASE 决定）。
 // 断言「所见即账本」：编排改 digest、验收判定落事实、bug 进 backlog。
 const { chromium } = require('playwright');
+const { isDeepStrictEqual } = require('node:util');
 const fs = require('fs');
 const path = require('path');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
@@ -26,6 +27,11 @@ function check(name, ok, detail) {
   const browser = await chromium.launch({ executablePath: CHROME });
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
+  const latestTrialSeq = () => page.evaluate(async () => {
+    const response = await fetch('/api/facts?pbc=agents');
+    const { facts } = await response.json();
+    return (facts || []).find((fact) => fact.type === 'agent.trial.run')?.seq ?? null;
+  });
   const pageErrors = [];
   const httpErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e)));
@@ -169,8 +175,9 @@ function check(name, ok, detail) {
     // 被白名单拦掉的空轮分开，e2e 不再自己挑、也不写「找不到就退回第一轮」的兜底——
     // 兜底会把这个字段缺失这件事掩盖成一个假绿。
     const t = a.lastLoadedTrial || {};
-    return { assemblies: t.assemblies || [] };
+    return { assemblies: t.assemblies || [], trialRun: a.trialRun || null };
   }, BASE);
+  const loadedTrialSeq = await latestTrialSeq();
   const asm0 = (trialAsm.assemblies || []).find((a) => a.query && a.loaded && a.loaded.length > 0);
   check('4b 试跑结果带当轮装配（载入清单 + 省略 + 预算）',
     !!asm0 && Array.isArray(asm0.loaded) && asm0.loaded.length > 0
@@ -439,27 +446,19 @@ function check(name, ok, detail) {
     const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
     const asms = (a.trialRun || {}).assemblies || [];
     const empty = asms.find((x) => !x.query && (!x.loaded || x.loaded.length === 0));
-    // #33：这一轮被拦了，但它不能污染「最近一次检索的结果」。上一段 4b 的试跑真载入过，
-    // 所以 lastLoadedTrial 必须停那一轮（query 非空、有载入），而不是跟着最新的空轮走。
-    const last = a.lastLoadedTrial || null;
-    const lastAsm = last ? ((last.assemblies || [])[0] || null) : null;
     return {
       note: empty && empty.note, query: empty && empty.query, loaded: empty ? (empty.loaded || []).length : null,
-      pinned: !!lastAsm && !!lastAsm.query && (lastAsm.loaded || []).length > 0,
-      lastAt: a.lastLoadedAt || '', trialAt: a.trialAt || '',
+      lastLoadedTrial: a.lastLoadedTrial || null,
     };
   }, BASE);
   check('10 没读到输入时装配归因写「没读到输入」而不是「没召回」',
     !!blockedAsm && /^没读到输入/.test(blockedAsm.note || '') && /query 是空/.test(blockedAsm.note || ''),
-    blockedAsm);
-  // 失败时分清两种情况：本轮自己没被拦（pinned=false），或本轮被拦了但「最近一轮」读了空轮。
-  // 「最近一轮试跑」在同一本 agents 日志上是全局的，多实例共用时这里会是别人的一轮（#61）。
+    { note: blockedAsm.note, query: blockedAsm.query, loaded: blockedAsm.loaded });
+  const blockedTrialSeq = await latestTrialSeq();
+  const pinned = !!asm0 && !!trialAsm.trialRun && isDeepStrictEqual(blockedAsm.lastLoadedTrial, trialAsm.trialRun);
   check('10 被白名单拦掉的一轮不进 lastLoadedTrial（最近一次检索仍钉在真召回那轮）',
-    blockedAsm.pinned && blockedAsm.lastAt !== '' && blockedAsm.lastAt !== blockedAsm.trialAt,
-    {
-      lastAt: blockedAsm.lastAt, trialAt: blockedAsm.trialAt, pinned: blockedAsm.pinned,
-      reason: blockedAsm.pinned ? '' : '本轮被拦的一轮没被标成拦下，或「最近一轮」不是本轮（同一本 agents 日志上多实例同时试跑，见 #61）',
-    });
+    pinned && Number.isInteger(loadedTrialSeq) && Number.isInteger(blockedTrialSeq) && blockedTrialSeq > loadedTrialSeq,
+    { loadedTrialSeq, blockedTrialSeq, pinned });
 
   // 对话验收不能拿一轮被拦下的执行拼回复：拒绝，且一条对话事实都不落。
   // 对话是 BA 的活（验收台），DA 点这个口子会被 403 拦住——先切回 BA。

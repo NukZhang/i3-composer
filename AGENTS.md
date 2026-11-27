@@ -23,7 +23,7 @@ i3 Composer 把项目 BRD 拆成交付单元。PBC 和 Agent 单元经历方案�
 - 工作区存在 `../docker-local/compose.yml` 时，沿用该配置运行容器。现有实例通过附加 Compose 文件启动时，使用同一组配置文件。保留 Redis 与制品卷，写入业务数据的验收使用独立 Compose 项目。
 - 仓库自带 Compose 用于启动 Dapr，Redis 复用宿主机 6379。用 `go build -o /tmp/i3-composer-bin ./cmd/i3-composer` 构建后直接运行二进制，以便 SIGTERM 触发子进程回收。应用端口须与 daprd 的 `--app-port` 一致，默认 8080。用 `/api/health` 的 `pubsub.ok` 验证接线。
 - 工程验证运行 `go vet ./...`、`go test ./...`、`npm --prefix web ci` 和 `npm --prefix web run build`。
-- Playwright 套件在 `web/e2e/`。在干净账本上按 `acceptance_v32.cjs`、`acceptance_exec.cjs`、`acceptance_flow.cjs`、`acceptance_full.cjs`、`acceptance_v26.cjs` 的顺序执行。v32 依赖初始种子单元数，v26 会改动 Agent 编排与评测。使用 `BASE`、`RUN_TAG`、`SHOTS` 配置目标与输出，容器内用可用的 Chromium 路径运行。
+- Playwright 套件在 `web/e2e/`。每轮使用新的干净演示账本，按 `acceptance_v32.cjs`、`acceptance_exec.cjs`、`acceptance_flow.cjs`、`acceptance_full.cjs`、`acceptance_v26.cjs` 的顺序各执行一次。v32 会在账本上创建单元，v26 会改动 Agent 编排与评测，不复用已经跑过的账本做下一轮验收。使用 `BASE`、`RUN_TAG`、`SHOTS` 配置目标与输出，容器内用可用的 Chromium 路径运行。
 - 业务行为核对事实流，界面行为核对 DOM。改动门禁、部署或账本语义时，同轮更新自测报告、截图和事实证据。外部能力的接入状态单列。
 
 ## Spec Kit

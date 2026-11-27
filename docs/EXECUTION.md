@@ -135,13 +135,17 @@ docker compose up -d
 go build -o /tmp/i3-composer-bin ./cmd/i3-composer
 /tmp/i3-composer-bin
 
-# 3. 五套验收（v32 要先跑：它断言项目下只有 4 个种子单元）
-cd web/e2e
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs   # v3.2：四阶段 / 打 tag / 批次发布 / 整批回滚
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs  # 执行侧：真测试 / 真构建 / 批次部署 / 真收发
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs  # 写路径：建单元 → 发起 → 越权 → 打 tag
-BASE=http://127.0.0.1:8080 node acceptance_v26.cjs               # v2.6 界面：编排工作台 / 质量报告 / 验收台
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs  # 从零：建单元 → 建任务 → 真跑五步 → 打 tag → 批次
+# 3. 五套验收（每轮使用新的干净演示账本，按顺序各跑一次）
+(
+  set -e
+  cd web/e2e
+  export BASE=http://127.0.0.1:8080 RUN_TAG=fin
+  node acceptance_v32.cjs   # v3.2：四阶段 / 打 tag / 批次发布 / 整批回滚
+  node acceptance_exec.cjs  # 执行侧：真测试 / 真构建 / 批次部署 / 真收发
+  node acceptance_flow.cjs  # 写路径：建单元 → 发起 → 越权 → 打 tag
+  node acceptance_full.cjs  # 从零：建单元 → 建任务 → 真跑五步 → 打 tag → 批次
+  node acceptance_v26.cjs   # v2.6 界面：编排工作台 / 质量报告 / 验收台
+)
 ```
 
 **为什么要先编译再跑、而不是 `go run`：** `go run` 把 SIGTERM 送给 `go`
@@ -155,9 +159,9 @@ BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs  # 从零：建�
 digest 是不是内容摘要、部署地址是不是真的活着；还要**在页面上**核对一遍，
 那些证据得是人看得见的，不是只躺在 Redis 里。
 
-`acceptance_full.cjs` 从空账本开始（它自己建交付单元），所以**放最后跑**：
-它会在账上留下一个新单元，先跑它会让 `acceptance_v26.cjs` 里
-「种子单元只剩三个」那条断言看到四个单元。
+`acceptance_v32.cjs` 先检查项目 `p1` 的四个演示种子单元和发布历史，发现额外或缺失的单元、已有发布批次时会在浏览器启动前退出。
+它和 `acceptance_full.cjs` 都会创建新单元，后者在本轮账本中新建自己的交付单元来验从零交付。
+下一轮须切换到新的账本，而不只是换 `RUN_TAG`。
 
 Go 侧还有一条进程内的：
 
@@ -182,7 +186,7 @@ go test ./internal/wf/ -run TestDeliveryChainReallyBuildsTestsAndDeploys -v
 这四处都是**换实现，不改结构**：编排、账本、闸门、页面都已经是真的了。
 
 仓库自己的验证已经接到 CI（`.github/workflows/ci.yml`，每个 PR 都跑）。
-四套 Playwright 验收不在 CI 里：它们要 Dapr sidecar 与真实进程部署，
+五套 Playwright 验收不在 CI 里：它们要 Dapr sidecar 与真实进程部署，
 在 CI 上只能跑成假绿，所以在本地跑。
 
 ---

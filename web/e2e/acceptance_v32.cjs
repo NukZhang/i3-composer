@@ -31,7 +31,27 @@ async function waitFor(fn, ms, step) {
   return null;
 }
 
+async function requireSeedLedger() {
+  const endpoint = BASE + '/api/projects/p1/orch';
+  const response = await fetch(endpoint, { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) {
+    throw new Error(`无法检查验收账本：GET ${endpoint} 返回 HTTP ${response.status}`);
+  }
+  const { units, batches } = await response.json();
+  const expected = new Set(['fee', 'qa', 'dun', 'dunx']);
+  const projectUnits = (units || []).map((unit) => unit.id);
+  const unexpected = projectUnits.filter((id) => !expected.has(id));
+  const missing = [...expected].filter((id) => !projectUnits.includes(id));
+  const existingBatches = (batches || []).map((batch) => batch.id);
+  if (unexpected.length || missing.length || existingBatches.length) {
+    throw new Error(`v32 需要干净的演示账本（项目 p1）；额外单元：${unexpected.join(', ') || '无'}；` +
+      `缺少种子单元：${missing.join(', ') || '无'}；已有发布批次：${existingBatches.join(', ') || '无'}。` +
+      '请切换到全新账本并启用 SEED_DEMO=1 后再跑。');
+  }
+}
+
 (async () => {
+  await requireSeedLedger();
   fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch({ executablePath: CHROME });
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
