@@ -188,7 +188,7 @@ export function refresh() {
       await loadActs();
       await loadGlobal();
       await loadPbc();
-      S.facts = S.pbcId ? (await api.facts(S.pbcId)).facts || [] : [];
+      S.facts = S.pbcId ? (await api.facts(S.pbcId, 60)).facts || [] : [];
       S.tick++;
       lastError = '';
     } catch (e) {

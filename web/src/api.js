@@ -52,7 +52,8 @@ export const api = {
   agent: (id) => request('/api/agents/' + encodeURIComponent(id)),
   tasks: (pbc, tab) => request('/api/tasks' + q(pbc) + '&tab=' + encodeURIComponent(tab)),
   item: (id, pbc) => request('/api/items/' + encodeURIComponent(id) + q(pbc)),
-  facts: (pbc) => request('/api/facts' + q(pbc)),
+  // 页面只看最近的事实流；整本账（几百条还在长）不该每轮 refresh 都走一遍（#46）。
+  facts: (pbc, limit) => request('/api/facts' + q(pbc) + (limit ? '&limit=' + limit : '')),
   notifications: () => request('/api/notifications'),
   inbox: () => request('/api/inbox'),
 

@@ -13,11 +13,34 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
 // ErrConflict 表示状态写入的 etag 不匹配（并发写输家）。
 var ErrConflict = errors.New("dapr: state etag conflict")
+
+// Unreachable 判断一次状态读写是不是「连不上 sidecar」。
+// 连接被拒、sidecar 在重启、3xx/5xx 都属于可重试；业务语义错误（409 等）不算。
+// 调用方据此决定等一下再试，而不是当成账本坏了。
+func Unreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "connect: connection refused") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, ": 500 ") ||
+		strings.Contains(msg, ": 503 ")
+}
 
 // Client 是 Dapr sidecar 的 HTTP 客户端。
 type Client struct {
@@ -138,6 +161,8 @@ func (c *Client) Publish(ctx context.Context, pubsub, topic string, data any) er
 type AppConnection struct {
 	Port    int    `json:"port"`
 	Address string `json:"channelAddress"`
+	// AppID 是 sidecar 的 app-id：workflow 注册表就挂在它名下（#60）。
+	AppID string `json:"appID"`
 }
 
 // AppConnection 读 sidecar 的 app 连接配置。读不到（sidecar 没起、版本不认）时返回错误，
@@ -159,9 +184,14 @@ func (c *Client) AppConnection(ctx context.Context) (AppConnection, error) {
 	}
 	var m struct {
 		AppConnectionProperties AppConnection `json:"appConnectionProperties"`
+		// sidecar 的 /v1.0/metadata 把 app-id 放在顶层字段 id（不是 appID）。
+		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(body, &m); err != nil {
 		return zero, fmt.Errorf("dapr metadata 解析失败：%w", err)
+	}
+	if m.AppConnectionProperties.AppID == "" {
+		m.AppConnectionProperties.AppID = m.ID
 	}
 	return m.AppConnectionProperties, nil
 }
@@ -229,6 +259,8 @@ type WorkflowStatus struct {
 	Properties    struct {
 		DaprWorkflowVersion string          `json:"dapr.workflow.version"`
 		DaprWorkflowInput   json.RawMessage `json:"dapr.workflow.input"`
+		// 失败原因放在 properties 里（"workflow named 'X' is not registered" 就在这）。
+		DaprFailureMessage string `json:"dapr.workflow.failure.error_message"`
 	} `json:"properties"`
 }
 

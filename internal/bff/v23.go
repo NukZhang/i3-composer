@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -146,6 +147,27 @@ func pbcGates(v *store.View) []domain.Gate {
 //
 // 注意：这不是另一份真相——它就是 Project(facts) 的输出，和 /overview 同源。
 func (s *Server) state(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	// 不带 pbc 不许回落某个默认单元（#43）：那是「拿另一个单元的完整答案冒充这个问题的答案」。
+	// 前端在 S.pbcId 为空时根本不发这个请求，套件全部显式带参——去掉默认不影响谁。
+	if strings.TrimSpace(r.URL.Query().Get("pbc")) == "" {
+		return fmt.Errorf("%w：/api/state 需要 ?pbc=<单元 id>", errBadRequest)
+	}
+	// 注册表里没有的 id 是 404，和 /api/replay 一致；只有「在注册表里、日志还空」才回 200 空投影——
+	// 那才是「刚建好还没事实」，和「id 写错了」必须分得开。
+	uv, err := s.loadUnits(r.Context())
+	if err != nil {
+		return err
+	}
+	known := false
+	for _, u := range uv.Units {
+		if u.ID == c.PBC {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return fmt.Errorf("%w：单元 %s 不存在", errNotFound, c.PBC)
+	}
 	v, err := s.load(r, c.PBC)
 	if err != nil {
 		return err
@@ -680,7 +702,12 @@ func (s *Server) svcVerify(w http.ResponseWriter, r *http.Request, c reqCtx) err
 
 // facts 是右栏「运行时」的数据源：真实的事实流，不是模拟日志。
 // 只给 seq/at/type/actor，不带 payload——运行时面板要的是「谁在什么时候做了什么」。
+// facts 列出某本账的事实。?limit=N 只回最近 N 条：
+// 页面只要一条事实流给人看，不需要每轮 refresh 都把整本账（几百条、还在长）从 Dapr 走一遍——
+// 那会占住 refresh，切角色后权限位要等它跑完才更新（#46）。
+// 不带 limit 仍然回全量（验收脚本核对账本用）。
 func (s *Server) facts(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	facts, err := s.Log.Load(r.Context(), c.PBC)
 	if err != nil {
 		return err
@@ -692,6 +719,9 @@ func (s *Server) facts(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	// 新的在前：和运行时日志的阅读顺序一致。
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"pbc": c.PBC, "facts": out})
 	return nil

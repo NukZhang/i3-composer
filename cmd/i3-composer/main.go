@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dapr/durabletask-go/client"
 	"github.com/dapr/durabletask-go/workflow"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -89,7 +90,14 @@ func run() error {
 	}
 	defer conn.Close()
 
+	// 信号要在自检之前就有：自检期间 Ctrl-C 也能干净退出，不能被当成「自检失败」。
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	wfc := workflow.NewClient(conn)
+	// 启动自检直接用底层 client：探针要「发起 + 等结束 + 看终态」三步，
+	// 这正是它在 gRPC 上做的事。
+	probe := client.NewTaskHubGrpcClient(conn, nil)
 	registry := workflow.NewRegistry()
 	// 执行侧：真生成制品、真跑测试、真构建、真部署。
 	// 以前这里是 mockBuilder——digest 是树摘要拼的，测试条数是编的，
@@ -111,9 +119,11 @@ func run() error {
 	if err := wf.RegisterAs(registry, acts, wfName); err != nil {
 		return fmt.Errorf("注册 workflow 失败：%w", err)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	// 探针与业务 workflow 注册在同一个 registry 里：worker 能不能认领名字，
+	// 看的就是这个 registry。
+	if err := wf.RegisterProbe(registry, wf.NameProbe); err != nil {
+		return fmt.Errorf("注册启动自检 workflow 失败：%w", err)
+	}
 
 	// worker 必须在建实例前连上 sidecar，否则 start 会因「没有 worker」失败。
 	go func() {
@@ -123,6 +133,11 @@ func run() error {
 			slog.Error("workflow worker 退出", "err", err)
 		}
 	}()
+
+	// 启动自检放在种子与监听之前：名字没被认领时不写任何数据、也不对外服务（#60）。
+	if err := checkWiring(ctx, dc, probe, wfName); err != nil {
+		return err
+	}
 
 	if seedDemo {
 		// 种子要真的构建一次基线：digest 得是真的构建产物的摘要，
@@ -137,7 +152,10 @@ func run() error {
 			out, err := exec.Test(ctx, pbc, commit, files)
 			return out.Pass, out.Total, out.Failures, err
 		}}
-		if err := seed.Run(context.Background(), log, so); err != nil {
+		// 种子跑在 sidecar 起来之后：拿不到账本就一直重试到 ctx 结束，
+		// 而不是打一条 warn 就带着空账本对外服务（#43 验证时遇过：sidecar 晚到，
+		// 进程照常监听，整轮验收对着空库跑）。
+		if err := seed.Run(ctx, log, so); err != nil && ctx.Err() == nil {
 			slog.Warn("种子数据写入失败", "err", err)
 		}
 	}
@@ -164,10 +182,12 @@ func run() error {
 		Handler:           bff.NewCORS(srv.Handler(), bff.ParseOrigins(env("CORS_ORIGINS", ""))),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	var listenErr error
 	go func() {
 		slog.Info("BFF 监听", "addr", addr, "stateStore", stateSt, "workflowComponent", wfComp)
 		if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("http 服务异常", "err", err)
+			listenErr = err
 			stop()
 		}
 	}()
@@ -178,7 +198,12 @@ func run() error {
 	exec.StopAll()
 	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return hs.Shutdown(shutCtx)
+	if err := hs.Shutdown(shutCtx); err != nil {
+		return err
+	}
+	// 监听失败（例如端口被占）也是启动失败：以前这里返回 nil、进程退出码 0，
+	// 脚本看见「正常退出」就以为服务起过了（#60 自测时遇过）。
+	return listenErr
 }
 
 // publisher 把 activity 的事件发到 Dapr pub/sub。占位 topic 由组件 routing 决定去向。
@@ -189,4 +214,42 @@ type publisher struct {
 
 func (p publisher) Publish(ctx context.Context, topic string, data any) error {
 	return p.dc.Publish(ctx, p.pubsub, topic, data)
+}
+
+// checkWiring 确认本进程注册的 workflow 名字已经被 sidecar 认领（#60）。
+//
+// 注册表挂在 sidecar 的 app-id 名下：换了 WORKFLOW_NAME 却没换 --app-id 时，
+// 新名字永远不在册，每次发起都只得到「is not registered」，账本上看起来像业务
+// 失败，整轮验收全挂。这里用一次探针实例问清楚：跑不通就拒绝启动，
+// 并报出 app-id、名字与改法——不用人去猜是 worker 没起还是名字没注册。
+func checkWiring(ctx context.Context, dc *dapr.Client, c wf.ProbeClient, wfName string) error {
+	// sidecar 的 /v1.0/metadata 顶层 id 是 app-id（没有 worker 连上来时也读得到）。
+	appID := "?"
+	if ac, err := dc.AppConnection(ctx); err == nil && ac.AppID != "" {
+		appID = ac.AppID
+	}
+	// 等一小会儿：sidecar 刚起时注册表可能还没跟上 worker（最多等 5 秒）。
+	id := fmt.Sprintf("i3probe_%d", time.Now().UnixNano())
+	var err error
+	for i := 0; i < 10; i++ {
+		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err = wf.CheckRegistered(pctx, c, wf.NameProbe, id)
+		cancel()
+		if err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("启动自检被中断（%w）", ctx.Err())
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if err != nil {
+		return fmt.Errorf("启动自检没通过：workflow 名 %q 在 sidecar（app-id=%s）上跑不起来：%v。"+
+			"本进程按 %s 注册了 worker，但发起实例时没有被认领，对外服务也只会得到同样的错误。"+
+			"排查顺序：① sidecar（DAPR_GRPC_ENDPOINT=%s / DAPR_HTTP_ENDPOINT）是否跟本进程连的是同一个；"+
+			"② WORKFLOW_NAME 是否被改过——换新名字必须同时把 sidecar 的 --app-id 换成新名字重起（注册表挂在 app-id 名下）。",
+			wfName, appID, err, wfName, env("DAPR_GRPC_ENDPOINT", "127.0.0.1:50001"))
+	}
+	slog.Info("启动自检通过", "workflow", wfName, "probe", wf.NameProbe, "app-id", appID)
+	return nil
 }

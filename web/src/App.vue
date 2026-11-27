@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, ref, computed, watch } from 'vue';
 import { S, refresh, connect, toast } from './store.js';
 import { api } from './api.js';
 import { icon } from './icons.js';
-import SideBar from './components/SideBar.vue';
+import SideBar from './components/Sidebar.vue';
 import RightPane from './components/RightPane.vue';
 import HomeView from './views/HomeView.vue';
 import ProjectsView from './views/ProjectsView.vue';

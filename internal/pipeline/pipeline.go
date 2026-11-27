@@ -43,6 +43,10 @@ type Pipeline struct {
 	LogFor func(prefix string) *store.Store
 }
 
+// Root 是产物仓库根目录。产物不在仓库里时要把它报出来：
+// 账本记 digest，不记「字节放在哪个目录」，换目录重启后就对不上了（#52）。
+func (p *Pipeline) Root() string { return p.Store.Root() }
+
 // logOf 按前缀取账本；没有 LogFor 时用 Log。
 func (p *Pipeline) logOf(prefix string) *store.Store {
 	if p.LogFor != nil {

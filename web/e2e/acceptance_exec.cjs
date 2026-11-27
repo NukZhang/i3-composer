@@ -37,6 +37,15 @@ function check(name, ok, detail) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: r }),
   });
 
+  // 服务起没起先说清楚：连不上时 goto 会抛一句「navigating to …」，
+  // 看不出是哪个接口、什么状态。前置不通就只报这一条，后面无从谈起（#56）。
+  const up = await fetch(BASE + '/api/health').then((r) => r.ok).catch(() => false);
+  if (!up) {
+    check('前置：BFF 可用（' + BASE + '）', false, { reason: '连不上，先起服务再跑' });
+    await browser.close();
+    console.log('SUMMARY 0/' + results.length + ' passed');
+    process.exit(1);
+  }
   await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1500);
 
@@ -119,12 +128,23 @@ function check(name, ok, detail) {
     if (p) p.click();
   }, unit);
   await page.waitForTimeout(700);
-  await page.evaluate((name) => {
-    const rows = Array.from(document.querySelectorAll('.sidebar .trow'));
-    const p = rows.find((x) => x.textContent.trim().startsWith(name));
-    if (p) p.click();
-  }, '执行侧验收单元');
-  await page.waitForTimeout(700);
+  // 按单元 code 精确点：同一账本上跑过多轮时侧栏会有多个同名单元，
+  // 按名字找会点进别人的账，digest 自然对不上（质量报告那段 #43 复跑时遇过）。
+  // 点没点中要能当场看出来：选错账时 digest 对不上，但原因在「点在谁身上」，
+  // 把点击前后侧栏的选中行报出来，而不是只报一句 digest 不一致（#44）。
+  const picked = await page.evaluate(async (id) => {
+    const sel = () => {
+      const on = document.querySelector('.sidebar .trow.on[data-unit]');
+      return on ? on.getAttribute('data-unit') : null;
+    };
+    const el = document.querySelector('.sidebar [data-unit="' + id + '"]');
+    const before = sel();
+    if (el) el.click();
+    await new Promise((r) => setTimeout(r, 600));
+    return { found: !!el, before, after: sel() };
+  }, unit);
+  check('5.1 侧栏点中本次单元（不是同名的上一轮）', picked.found && picked.after === unit, picked);
+  await page.waitForTimeout(300);
   await page.evaluate(() => {
     const s = Array.from(document.querySelectorAll('.sidebar .trow.sub2')).find((x) => x.textContent.trim().startsWith('构建'));
     if (s) s.click();
@@ -134,17 +154,29 @@ function check(name, ok, detail) {
     const t = Array.from(document.querySelectorAll('.ptab')).find((x) => x.textContent.includes('质量报告'));
     if (t) t.click();
   });
-  await page.waitForTimeout(900);
-  const pageText = await page.evaluate(() => (document.querySelector('#app') || {}).textContent || '');
+  // 切单元会触发一次重拉（App.vue 里 watch S.pbcId），质量报告要用新账本的
+  // test / builds 才出现。固定等 900ms 会读到上一个项目的旧报告，digest 对不上——
+  // 所以等到本单元的摘要出现为止，超时再断言并带上此刻页面里真实的摘要（#44）。
   const shortDigest = String(digest).slice(0, 19);
+  const pageText = await (async () => {
+    const end = Date.now() + 10000;
+    for (;;) {
+      const t = await page.evaluate(() => (document.querySelector('#app') || {}).textContent || '');
+      if (t.includes(shortDigest) || Date.now() > end) return t;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  })();
+  const shot = page
+    ? await page.evaluate(() => (document.querySelector('#app').textContent.match(/sha256:[0-9a-f]+/) || [''])[0]).catch(() => '')
+    : '';
   check('5 质量报告里看得到真证据（测试条数 / digest）',
     /\d+\/\d+ 通过/.test(pageText) && pageText.includes(shortDigest),
-    { digest: shortDigest, hasPass: /\d+\/\d+ 通过/.test(pageText) });
+    { digest: shortDigest, shown: shot, hasPass: /\d+\/\d+ 通过/.test(pageText), unit: picked.after });
 
   // ---- 6. 种子写的历史与真跑的事实分得开 ----
   // 种子事实查种子单元（fee）；真跑的事实查这次新建的单元。
-  const facts = (await api('/api/facts?pbc=' + unit)).body.facts || [];
-  const seedFacts = (await api('/api/facts?pbc=fee')).body.facts.filter((f) => f.actor === 'seed');
+  const facts = ((((await api('/api/facts?pbc=' + unit)).body || {}).facts) || []);
+  const seedFacts = ((((await api('/api/facts?pbc=fee')).body || {}).facts) || []).filter((f) => f.actor === 'seed');
   const realFacts = facts.filter((f) => f.actor !== 'seed');
   check('6 种子事实 actor 是 seed（演示数据可识别）', seedFacts.length > 0, seedFacts.length);
   check('6 真跑出来的事实 actor 不是 seed', realFacts.length > 0, realFacts.map((f) => f.actor).slice(0, 4));
@@ -175,37 +207,61 @@ function check(name, ok, detail) {
   });
   check('8 BA 核实当前提交的测试与摘要并判定通过', verdict?.code === 201, verdict?.body);
   await role('SA');
+  // 发布失败时不崩：后面的 check 记 FAIL 并带原因。以前这里一失败，
+  // 后面每个 check 都是 null.find 的 TypeError，整轮塌成 FATAL，
+  // 看不出到底还坏了哪些（#52）。
   const tag = await api('/api/units/' + unit + '/tag', { method: 'POST' });
-  check('8 SA 打 tag 进池', tag.code === 201 && !!tag.body.tag, tag.body);
+  const tagOk = tag.code === 201 && !!(tag.body && tag.body.tag);
+  check('8 SA 打 tag 进池', tagOk, tag.body);
 
-  const rel = await api('/api/projects/p1/orch/release', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ env: 'UAT', mode: 'full', units: [unit] }),
-  });
-  check('8 批次发布返回 201', rel.code === 201, rel.body && rel.body.id);
-  const b = rel.body || {};
-  const ru = (b.units || [])[0] || {};
-  check('8 批次锁住该单元的 tag 与 digest', ru.tag === tag.body.tag && ru.digest === digest, { tag: ru.tag, digest: ru.digest });
+  const b = {};
+  const ru = {};
+  let relErr = null;
+  if (!tagOk) {
+    relErr = { reason: '打 tag 没成，批次发布无从发起', tag: tag.body };
+  } else {
+    const rel = await api('/api/projects/p1/orch/release', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ env: 'UAT', mode: 'full', units: [unit] }),
+    });
+    if (rel.code !== 201) relErr = { code: rel.code, body: rel.body };
+    else Object.assign(b, rel.body || {});
+  }
+  check('8 批次发布返回 201', !relErr, relErr || b.id);
+  Object.assign(ru, (b.units || [])[0] || {});
+  check('8 批次锁住该单元的 tag 与 digest',
+    !!ru.tag && ru.tag === (tag.body || {}).tag && ru.digest === digest,
+    { tag: ru.tag, digest: ru.digest });
+  const depState = (await api('/api/state?pbc=' + unit)).body || {};
   check('8 部署事实落在单元账本（deploy.succeeded 带批次号）',
-    !!(await api('/api/state?pbc=' + unit)).body.deploys.find((d) => d.url === ru.url), ru.url);
+    !!ru.url && (depState.deploys || []).some((d) => d.url === ru.url), ru.url);
   let health = null;
   if (ru.url) {
     health = await fetch(ru.url + '/healthz');
     health = { code: health.status, body: await health.text() };
+  } else {
+    health = relErr || { reason: '批次里没有该单元' };
   }
-  check('8 部署地址能访问且 /healthz 返回 200', health && health.code === 200, health);
+  check('8 部署地址能访问且 /healthz 返回 200', !!(health && health.code === 200), health);
 
   // ---- 9. 整批回滚，进程真的收掉 ----
-  const rb = await api('/api/projects/p1/orch/rollback', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: b.id, note: '执行侧验收回滚' }),
-  });
-  check('9 整批回滚返回 200', rb.code === 200, rb.body);
-  if (ru.url) {
-    await new Promise((r) => setTimeout(r, 600));
-    let after = null;
-    try { after = (await fetch(ru.url + '/healthz')).status; } catch { after = 0; }
-    check('9 回滚后部署进程真的停了', after !== 200, after);
+  if (!b.id) {
+    check('9 整批回滚返回 200', false, { reason: '没有批次可回滚', relErr });
+    check('9 回滚后部署进程真的停了', false, { reason: '没有批次可回滚' });
+  } else {
+    const rb = await api('/api/projects/p1/orch/rollback', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: b.id, note: '执行侧验收回滚' }),
+    });
+    check('9 整批回滚返回 200', rb.code === 200, rb.body);
+    if (ru.url) {
+      await new Promise((r) => setTimeout(r, 600));
+      let after = null;
+      try { after = (await fetch(ru.url + '/healthz')).status; } catch { after = 0; }
+      check('9 回滚后部署进程真的停了', after !== 200, after);
+    } else {
+      check('9 回滚后部署进程真的停了', false, { reason: '没有部署地址（发布未成功）' });
+    }
   }
 
   check('页面无 JS 异常', pageErrors.length === 0, pageErrors.slice(0, 3));

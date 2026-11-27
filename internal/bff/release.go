@@ -316,6 +316,7 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	// 先把整批锁定清单算出来：任何一个没就绪就整批不发，不落地半批。
 	var locked []store.ReleaseUnit
 	var views = map[string]*store.View{}
+	builtBy := map[string]string{}
 	for _, id := range in.Units {
 		u, ok := byID[id]
 		if !ok {
@@ -340,6 +341,27 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 			Tag: h.Tag, Commit: h.No, Digest: h.Digest, Binary: v.Binaries[h.No],
 		})
 		views[u.ID] = v
+		// 记下 digest 是哪次构建落账的：产物找不到时要能回答「谁算出这个 digest」，
+		// 否则「不在仓库里」只是一句把排查推给人的话（#52）。
+		{
+			facts, err := s.Log.Load(r.Context(), id)
+			if err != nil {
+				return err
+			}
+			// 取最后一条产出同一 digest 的构建：账本上多次构建同一个字节是正常的。
+			for _, f := range facts {
+				if f.Type != store.FactBuildSucceeded {
+					continue
+				}
+				var p struct {
+					Commit string `json:"commit"`
+					Digest string `json:"digest"`
+				}
+				if json.Unmarshal(f.Payload, &p) == nil && p.Digest == h.Digest {
+					builtBy[id] = fmt.Sprintf("build.succeeded seq=%d · actor=%s · %s", f.Seq, f.Actor, f.At)
+				}
+			}
+		}
 	}
 
 	if s.Pipe == nil {
@@ -361,7 +383,16 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 		}
 		out, err := s.Pipe.Deploy(r.Context(), l.ID, in.Env, l.Commit, l.Digest, true)
 		if err != nil {
-			return fail("部署 " + l.Name + " 失败：" + err.Error())
+			// 产物找不到时把「谁算出这个 digest、仓库在哪」一起报出来：
+			// 换 ARTIFACT_DIR 或清掉目录后重启，账本还在、字节没了——
+			// 这句话要能让人一眼看出是哪一头没对上（#52）。
+			where := fmt.Sprintf("仓库根 %s", s.Pipe.Root())
+			if src := builtBy[l.ID]; src != "" {
+				where += " · digest 出自 " + src
+			} else {
+				where += " · 账本里没有产出该 digest 的 build.succeeded"
+			}
+			return fail("部署 " + l.Name + "（" + l.Commit + "）失败：" + err.Error() + "；" + where)
 		}
 		l.URL, l.Status = out.URL, "deployed"
 		if in.Env == "SIT" && byID[l.ID].Profile == domain.ProfileMaterialInbound {

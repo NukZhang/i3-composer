@@ -364,7 +364,8 @@ func seedCommit(t *testing.T, st *store.Store, pbc string) {
 
 func TestSaveDraftCreatesNewVersionWithContent(t *testing.T) {
 	h := newHarness(t)
-	seedCommit(t, h.st, "fee") // v1.0.1 全树 accepted
+	registerUnit(t, h.st, "fee") // #43：/api/state 只认登记过的单元
+	seedCommit(t, h.st, "fee")   // v1.0.1 全树 accepted
 	// BA 写 PRD：允许。
 	resp, out := h.do(t, http.MethodPost, "/api/artifacts",
 		map[string]any{"artifact": "prd", "text": "# 新需求", "note": "补 §4"}, RoleBA)
@@ -407,5 +408,81 @@ func TestSaveCodeDraftKeepsFiles(t *testing.T) {
 		map[string]any{"artifact": "code"}, RoleDA)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("没有 files 应 400，实际 %d", resp.StatusCode)
+	}
+}
+
+// #43：/api/state 不许回落某个默认单元，也不许把「不存在的 id」答成 200 空投影。
+func TestStateRequiresKnownPBC(t *testing.T) {
+	h := newHarness(t)
+	ctx := t.Context()
+	if err := h.st.Ensure(ctx, unitsLog); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.st.Append(ctx, unitsLog, store.FactUnitCreated, "PA", map[string]any{
+		"id": "fee", "name": "收费缴费", "kind": "pbc",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 不带 pbc：以前回 fee 的完整账本并 200，看上去一切正常——这正是要禁止的。
+	resp, out := h.do(t, http.MethodGet, "/api/state", nil, RoleBA)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(errText(out), "?pbc=") {
+		t.Fatalf("不带 pbc 应 400 并说明需要 ?pbc=，实际 %d %s", resp.StatusCode, errText(out))
+	}
+	// 空值同样不行：空串不是「用默认」，是「没给」。
+	resp, out = h.do(t, http.MethodGet, "/api/state?pbc=", nil, RoleBA)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("pbc 为空应 400，实际 %d %s", resp.StatusCode, errText(out))
+	}
+	// 注册表里没有的 id：404，与 /api/replay 一致。
+	resp, out = h.do(t, http.MethodGet, "/api/state?pbc=no-such-unit", nil, RoleBA)
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(errText(out), "no-such-unit") {
+		t.Fatalf("不存在的单元应 404 并点名，实际 %d %s", resp.StatusCode, errText(out))
+	}
+	// 在注册表里、日志还空：200 + 空投影（「刚建好还没事实」）。
+	resp, out = h.do(t, http.MethodGet, "/api/state?pbc=fee", nil, RoleBA)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("已登记的单元应 200，实际 %d %s", resp.StatusCode, errText(out))
+	}
+}
+
+func errText(v map[string]any) string {
+	s, _ := v["error"].(string)
+	return s
+}
+
+// 页面只要最近的事实流：?limit=N 回最新 N 条（新的在前），不带 limit 仍回全量。
+// 全量每轮 refresh 走一遍会让权限位排队等它（#46）。
+func TestFactsEndpointHonoursLimit(t *testing.T) {
+	h := newHarness(t)
+	ctx := t.Context()
+	if err := h.st.Ensure(ctx, unitsLog); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.st.Append(ctx, unitsLog, store.FactUnitCreated, "PA", map[string]any{
+		"id": "fee", "name": "收费缴费", "kind": "pbc",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedItem(t, h.st, store.Item{ID: "US-01", Title: "t", Kind: "Story", PBC: "fee",
+		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
+	seedItem(t, h.st, store.Item{ID: "US-02", Title: "u", Kind: "Story", PBC: "fee",
+		Type: "feature", Env: "test", Mode: "fast", Run: "idea", By: "BA"})
+
+	resp, out := h.do(t, http.MethodGet, "/api/facts?pbc=fee&limit=2", nil, RoleBA)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("应 200，实际 %d %v", resp.StatusCode, out)
+	}
+	top := out["facts"].([]any)
+	if len(top) != 2 {
+		t.Fatalf("limit=2 应回两条，实际 %d", len(top))
+	}
+	// 账本里这条测试写入的最新事实是第二条 work item。
+	if top[0].(map[string]any)["type"] != "item.created" {
+		t.Fatalf("新的在前：limit 截断后第一条仍是最新那条，实际 %v", top[0])
+	}
+	_, all := h.do(t, http.MethodGet, "/api/facts?pbc=fee", nil, RoleBA)
+	if n := len(all["facts"].([]any)); n != 2 {
+		t.Fatalf("不带 limit 应回全量（两条 work item），实际 %d", n)
 	}
 }
