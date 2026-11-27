@@ -624,7 +624,6 @@ details.as-exp summary::marker{color:var(--tx-11)}
   background:var(--bg-el);border:1px solid var(--line-f);color:var(--tx-2)}
 .ac-term .m:not(.me) .bubble{background:var(--bg-accent-soft);border-color:var(--line-accent)}
 .ac-term .who{font-size:10px;color:var(--tx-11);margin-bottom:2px}
-.ac-steps{font-size:10.5px;color:var(--tx-10);padding:7px 10px;border-top:1px solid var(--line-e);background:var(--bg-panel)}
 .ac-bug{border-left:2px solid var(--err);padding:5px 0 5px 9px;margin-top:6px}
 
 /* ---------- v2.7 侧栏：工作空间 → 项目 ---------- */

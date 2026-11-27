@@ -16,15 +16,17 @@ import { kindCls, kindText } from '../derive.js';
 const kind = computed(() => unitKind());
 const unit = computed(() => currentUnit() || {});
 const material = computed(() => unit.value.profile === 'material-inbound');
+const agentUnit = computed(() => kind.value === 'agent');
 const agent = computed(() => currentAgent());
-const defects = computed(() => (S.state && S.state.defects) || []);
-const chats = computed(() => (S.state && S.state.chats) || []);
+const state = computed(() => S.state?.pbc === S.pbcId ? S.state : null);
+const defects = computed(() => state.value?.defects || []);
+const chats = computed(() => state.value?.chats || []);
 const can = (a) => (S.acts || []).includes(a);
-const head = computed(() => (S.state && S.state.commits && S.state.commits[0]) || null);
-const checkCommit = computed(() => S.state?.checkCommit || '');
+const head = computed(() => state.value?.commits?.[0] || null);
+const checkCommit = computed(() => state.value?.checkCommit || '');
 const checks = computed(() => {
   if (kind.value !== 'agent' && head.value && checkCommit.value !== head.value.no) return [];
-  return S.state?.checks || [];
+  return state.value?.checks || [];
 });
 
 const idx = computed(() => Math.min(S.vIdx || 0, Math.max(0, checks.value.length - 1)));
@@ -33,19 +35,22 @@ const done = computed(() => checks.value.filter((c) => c.st !== 'todo').length);
 const passN = computed(() => checks.value.filter((c) => c.st === 'pass').length);
 
 const terminal = ref(null);
+const bugOpen = ref(false);
 const bugTitle = ref('');
 const bugSev = ref('一般');
 const bugSteps = ref('');
+// 刷新可以切换当前单元或验收清单，旧表单不能提交给新对象。
+watch([() => S.pbcId, checkCommit], () => { bugOpen.value = false; });
 
 // v3.2：打 tag 挪到验证页末尾。tag 是发布编排唯一认的东西——
 // 没有 tag 的单元不会出现在批次里，也不会被「顺手带上」。
 const unitTag = computed(() => (head.value && head.value.tag) || '');
 const testsOK = computed(() => {
-  const t = S.state && S.state.test;
+  const t = state.value?.test;
   return !!(t && head.value && t.commit === head.value.no && t.pass === t.total);
 });
 const gatesOK = computed(() => {
-  const gs = (S.state && S.state.gates && S.state.gates.all) || [];
+  const gs = state.value?.gates?.all || [];
   return gs.length > 0 && gs.every((g) => g.ok || g.unknown);
 });
 const remainAccept = computed(() => checks.value.filter((c) => c.st !== 'pass').length);
@@ -102,7 +107,7 @@ function gateText(g) {
 
 function sel(i) {
   S.vIdx = i;
-  S.vBugOpen = false;
+  bugOpen.value = false;
 }
 function markCls(st) {
   return st === 'pass' ? 'pass' : st === 'fail' ? 'fail' : 'todo';
@@ -131,14 +136,14 @@ function openBug() {
   if (!c) return;
   bugTitle.value = c.n + '：' + String(c.t || '').slice(0, 12);
   bugSev.value = '一般';
-  // 复现步骤自动带入刚才的操作，不用手写。
-  bugSteps.value = terminal.value && terminal.value.repro ? terminal.value.repro : '';
-  S.vBugOpen = true;
+  // Agent 对话有可引用的记录。PBC 由 BA 填写实际操作。
+  bugSteps.value = agentUnit.value ? (terminal.value?.repro || '') : '';
+  bugOpen.value = true;
 }
 
 async function submitBug() {
   const c = cur.value;
-  if (!c) return;
+  if (!bugOpen.value || !c) return;
   const t = bugTitle.value.trim();
   if (!t) {
     toast('先写清 bug 标题', 'err');
@@ -150,8 +155,8 @@ async function submitBug() {
       { st: 'fail', commit: checkCommit.value, title: t, sev: bugSev.value, steps: bugSteps.value },
       S.pbcId,
     );
-    S.vBugOpen = false;
-    toast('已提 bug：' + t + '（复现步骤已自动带入）', 'ok');
+    bugOpen.value = false;
+    toast('已提 bug：' + t, 'ok');
     if (j.defect) pushDefect(j.defect);
   } catch (e) {
     toast(e.message, 'err');
@@ -183,14 +188,14 @@ function pushDefect(d) {
   </div>
 
   <div class="row wrap" style="gap: 6px; margin-bottom: 9px; font-size: 11px">
-    <span class="tag t-info" style="font-size: 9px">验收环境 test</span>
+    <span v-if="material || agentUnit" class="tag t-info" style="font-size: 9px">验收环境 test</span>
     <span class="small muted">以 {{ S.roleName || S.role }} 身份验收</span>
-    <span class="small muted">· 会话 s-{{ S.pbcId }}-0924</span>
-    <span class="spacer" style="flex: 1" />
-    <span v-if="!material" class="small muted">你的每一步操作都会记进复现步骤</span>
   </div>
 
   <MaterialRuntime v-if="material" />
+  <div v-else-if="!agentUnit && checks.length" class="card small muted">
+    当前单元未接入可操作的业务制品。请按验收清单核对实际操作和结果。
+  </div>
 
   <div v-if="!checks.length" class="card">
     <div v-if="kind !== 'agent'" class="empty">请提交有明确验收项的人工 AT。每项使用 AT-01 或 AC-01 等编号，写齐 Given、When、Then。BA 按当前提交逐条验收后方可打 tag。</div>
@@ -212,8 +217,8 @@ function pushDefect(d) {
       </div>
     </div>
 
-    <div :style="{ display: 'grid', gridTemplateColumns: material ? '1fr' : '1fr 234px', gap: '9px', alignItems: 'start' }">
-      <AcceptTerminal v-if="!material" ref="terminal" :kind="kind" :unit="S.pbcId" :agent="agent" :chats="chats" />
+    <div :style="{ display: 'grid', gridTemplateColumns: agentUnit ? '1fr 234px' : '1fr', gap: '9px', alignItems: 'start' }">
+      <AcceptTerminal v-if="agentUnit" ref="terminal" :unit="S.pbcId" :agent="agent" :chats="chats" />
 
       <div class="card" style="margin: 0">
         <div class="ch" style="padding: 8px 10px">
@@ -236,20 +241,22 @@ function pushDefect(d) {
               <span v-html="icon('alert', 11)" /> 不提过
             </button>
           </div>
-          <div class="small muted" style="margin-top: 7px; line-height: 1.6">{{ material ? '不通过时记录操作、单号和实际结果。' : '不通过就提 bug：复现步骤会把你刚才的操作带进去，不用手写。' }}</div>
+          <div v-if="!agentUnit" class="small muted" style="margin-top: 7px; line-height: 1.6">
+            不通过时请填写实际操作、结果及相关编号。
+          </div>
 
-          <div v-if="S.vBugOpen" style="margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--line-i)">
+          <div v-if="bugOpen" style="margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--line-i)">
             <div class="small muted" style="margin-bottom: 4px">bug 标题</div>
             <input v-model="bugTitle" class="bug-title" style="font-size: 11px; margin-bottom: 6px; width: 100%" />
             <div class="small muted" style="margin-bottom: 4px">严重级</div>
             <select v-model="bugSev" class="bug-sev" style="font-size: 11px; margin-bottom: 8px; width: 100%">
               <option>阻塞</option><option>严重</option><option>一般</option><option>建议</option>
             </select>
-            <div class="small muted" style="margin-bottom: 4px">{{ material ? '复现步骤' : '复现步骤（自动带入）' }}</div>
+            <div class="small muted" style="margin-bottom: 4px">{{ agentUnit ? '复现步骤（自动带入对话）' : '复现步骤' }}</div>
             <textarea v-model="bugSteps" class="bug-steps" style="font-size: 10.5px; height: 56px; width: 100%; margin-bottom: 8px" />
             <div class="row" style="gap: 5px">
               <button class="btn small primary" style="flex: 1" @click="submitBug">提交</button>
-              <button class="btn small" @click="S.vBugOpen = false">取消</button>
+              <button class="btn small" @click="bugOpen = false">取消</button>
             </div>
           </div>
         </div>
@@ -260,7 +267,7 @@ function pushDefect(d) {
       <div class="ch"><span v-html="icon('alert')" /><h3>本轮提的 bug</h3><span class="spacer" />
         <span class="small muted">{{ defects.length }} 条 · 会进 backlog 由 X 修</span>
       </div>
-      <div v-if="!defects.length" class="small muted">{{ material ? '暂无缺陷。' : '还没有提 bug。不通过时点「不提过」，复现步骤自动带入。' }}</div>
+      <div v-if="!defects.length" class="small muted">暂无缺陷。</div>
       <div
         v-for="d in defects"
         :key="d.id"
