@@ -317,6 +317,9 @@ async function addAnnotationRound() {
             <input v-model="note" placeholder="保存说明（可选）" style="width: 200px; padding: 4px 8px; font-size: 11px" />
           </div>
           <textarea class="md-edit" spellcheck="false" :value="text" @input="onInput" />
+          <div v-if="S.editArt === 'at'" class="small muted" style="padding: 7px 8px">
+            每条验收用 AT-01 或 AC-01 编号，并写清 Given（前提）、When（操作）、Then（预期）。提交后由 BA 在验证页判定。
+          </div>
         </div>
       </div>
       <div class="small muted" style="margin-top: 7px">

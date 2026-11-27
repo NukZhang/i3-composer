@@ -50,6 +50,11 @@ function check(name, ok, detail) {
   check('0 建执行侧验收单元', cu.code === 201, cu.body);
 
   await role('BA');
+  const at = await api('/api/artifacts?pbc=' + unit, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ artifact: 'at', text: '- AT-01 构建质量。Given 当前提交完成构建，When 查看质量报告，Then 机器测试全部通过且构建含 SHA-256 摘要' }),
+  });
+  check('1 BA 保存人工验收标准', at.code === 201, at.body);
   const title = '执行侧验收-' + Date.now();
   const task = await api('/api/tasks?pbc=' + unit, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -159,6 +164,14 @@ function check(name, ok, detail) {
     stepEvents.length >= 6, { 收到: itemEvents.length, 其中步骤: stepEvents.length });
 
   // ---- 8. 打 tag + 批次发布：部署挪到项目级 ----
+  await role('BA');
+  const hasEvidence = st.checkCommit === head.no && st.test?.commit === head.no
+    && st.test.total > 0 && st.test.pass === st.test.total && /^sha256:[0-9a-f]{64}$/.test(digest);
+  const verdict = hasEvidence && await api('/api/checks/AT-01/decide?pbc=' + unit, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ st: 'pass', commit: head.no }),
+  });
+  check('8 BA 核实当前提交的测试与摘要并判定通过', verdict?.code === 201, verdict?.body);
   await role('SA');
   const tag = await api('/api/units/' + unit + '/tag', { method: 'POST' });
   check('8 SA 打 tag 进池', tag.code === 201 && !!tag.body.tag, tag.body);

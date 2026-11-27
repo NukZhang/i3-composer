@@ -13,10 +13,66 @@ import (
 
 	"github.com/zhangkun/i3-composer/internal/artifacts"
 	"github.com/zhangkun/i3-composer/internal/dapr"
+	"github.com/zhangkun/i3-composer/internal/domain"
 	"github.com/zhangkun/i3-composer/internal/pipeline"
 	"github.com/zhangkun/i3-composer/internal/store"
 	"github.com/zhangkun/i3-composer/internal/wf"
 )
+
+func TestDeliveryKeepsManualPlanAndCreatesPendingChecks(t *testing.T) {
+	ds := httptest.NewServer(newFakeState())
+	defer ds.Close()
+	ctx := t.Context()
+	log := store.New(dapr.New(ds.URL), "fake")
+	exec, err := pipeline.New(log, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const pbc = "material-inbound"
+	want := map[domain.Artifact]string{
+		domain.PRD: "# 采购入库引用采购合同",
+		domain.AD:  "# material_receipt.source_no",
+		domain.AT:  "- AT-01 正常入库。Given 余量 120.000 吨，When 提交 80.400 吨，Then 剩余 39.600 吨。",
+	}
+	for _, tpe := range []domain.Artifact{domain.PRD, domain.AD, domain.AT} {
+		ver := domain.Version{T: tpe, V: "1.0.1", St: domain.StDraft, Source: domain.SourceManual, MD: want[tpe],
+			DF: domain.DeriveRefs(tpe, func(dep domain.Artifact) string {
+				if want[dep] != "" {
+					return "1.0.1"
+				}
+				return ""
+			})}
+		if _, err := log.Append(ctx, pbc, store.FactArtifactDrafted, "BA", ver); err != nil {
+			t.Fatal(err)
+		}
+	}
+	acts := &wf.Activities{D: wf.Deps{Log: log, Exec: exec}}
+	in := wf.Input{ItemID: "US-01", PBC: pbc, Title: "材料入库", Type: "feature", Mode: "fast"}
+	for i, run := range []func(context.Context, wf.StepInput) (wf.StepResult, error){acts.GenArtifacts, acts.Converge, acts.Commit} {
+		out, err := run(ctx, wf.StepInput{Input: in, Step: i, OpID: fmt.Sprintf("manual/%d", i)})
+		if err != nil || !out.OK {
+			t.Fatalf("步骤 %d 失败：%+v %v", i, out, err)
+		}
+	}
+	facts, err := log.Load(ctx, pbc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := store.Project(pbc, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := v.Commits[0]
+	for typ, md := range want {
+		got, _ := domain.Find(v.Versions, typ, head.Tree[typ])
+		if got.MD != md || got.Source != domain.SourceManual || got.St != domain.StAccepted {
+			t.Errorf("%s 提交应保留人工正文和来源，实际 %+v", typ, got)
+		}
+	}
+	if v.CheckCommit != head.No || len(v.Checks) != 1 || v.Checks[0].ID != "AT-01" || v.Checks[0].ST != domain.CheckTodo {
+		t.Fatalf("提交的人工 AT 应转为待验收项：%+v", v.Checks)
+	}
+}
 
 // fakeState 是一个内存版的 Dapr state store：只实现事实日志用到的读写。
 type fakeState struct {

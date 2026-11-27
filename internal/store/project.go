@@ -31,13 +31,21 @@ type View struct {
 	Events []EventRecord `json:"events,omitempty"`
 
 	// v2.5/v2.6：真人验收台的清单、判定、bug 与对话。
-	Checks  []domain.Check  `json:"checks,omitempty"`
-	Defects []domain.Defect `json:"defects,omitempty"`
-	Chats   []VerifyChat    `json:"chats,omitempty"`
+	Checks       []domain.Check `json:"checks,omitempty"`
+	CheckCommit  string         `json:"checkCommit,omitempty"`
+	commitChecks []domain.Check
+	Defects      []domain.Defect `json:"defects,omitempty"`
+	Chats        []VerifyChat    `json:"chats,omitempty"`
 
 	// GateEvals 是历次打 tag 时算出的那组闸。它是「当时」的证据，
 	// 不是按今天的账本重算的结果——重算给的永远是现在。
 	GateEvals []GateEvaluation `json:"gateEvals,omitempty"`
+}
+
+// CommitCreated 将本次人工 AT 清单与制品树原子固化。旧提交仍可解码。
+type CommitCreated struct {
+	domain.Commit
+	Checks []domain.Check `json:"checks,omitempty"`
 }
 
 // GateEvaluation 是打 tag 那一刻的判定快照。
@@ -207,6 +215,10 @@ func Project(pbc string, facts []Fact) (*View, error) {
 			return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
 		}
 	}
+	if len(v.commitChecks) > 0 {
+		v.Checks = v.commitChecks
+		v.CheckCommit = v.Commits[0].No
+	}
 	return v, nil
 }
 
@@ -271,11 +283,12 @@ func apply(v *View, f Fact) error {
 		v.Versions[ver.T] = append(arr, ver)
 
 	case FactCommitCreated:
-		var c domain.Commit
+		var c CommitCreated
 		if err := dec(&c); err != nil {
 			return err
 		}
-		v.Commits = append([]domain.Commit{c}, v.Commits...) // 新的在前
+		v.Commits = append([]domain.Commit{c.Commit}, v.Commits...) // 新的在前
+		v.commitChecks = c.Checks
 		// 提交即接受：把树里引用的版本标为 accepted。
 		for _, t := range domain.Order {
 			vv := c.Tree[t]
@@ -620,6 +633,10 @@ func apply(v *View, f Fact) error {
 		if err := dec(&p); err != nil {
 			return err
 		}
+		// 旧式清单以首次落账时的 HEAD 为归属，后续提交不能沿用。
+		if len(v.Checks) == 0 && len(p.Items) > 0 && len(v.Commits) > 0 {
+			v.CheckCommit = v.Commits[0].No
+		}
 		for _, c := range p.Items {
 			if c.ST == "" {
 				c.ST = domain.CheckTodo
@@ -638,17 +655,27 @@ func apply(v *View, f Fact) error {
 
 	case FactCheckDecided:
 		var p struct {
-			ID string `json:"id"`
-			ST string `json:"st"`
+			ID     string `json:"id"`
+			ST     string `json:"st"`
+			Commit string `json:"commit"`
 		}
 		if err := dec(&p); err != nil {
 			return err
 		}
-		out, err := domain.DecideCheck(v.Checks, p.ID, p.ST)
+		checks := &v.Checks
+		if p.Commit != "" {
+			if len(v.Commits) == 0 || v.Commits[0].No != p.Commit {
+				break // 并发提交之后落下的旧判定不能改变新 HEAD 的进度。
+			}
+			if len(v.commitChecks) > 0 {
+				checks = &v.commitChecks
+			}
+		}
+		out, err := domain.DecideCheck(*checks, p.ID, p.ST)
 		if err != nil {
 			return err
 		}
-		v.Checks = out
+		*checks = out
 
 	case FactDefect:
 		var d domain.Defect

@@ -1,6 +1,7 @@
 package bff
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -9,8 +10,8 @@ import (
 	"github.com/zhangkun/i3-composer/internal/store"
 )
 
-// taggedUnit 造一个可打 tag 的单元：完整制品树 + 一次提交 + 测试全过 + 登记。
-func taggedUnit(t *testing.T, h *harness, id string) {
+// seedTagCandidate 登记一个已构建、机器测试通过的 PBC。
+func seedTagCandidate(t *testing.T, h *harness, id string) {
 	t.Helper()
 	ctx := t.Context()
 	seedCommit(t, h.st, id)
@@ -26,6 +27,89 @@ func taggedUnit(t *testing.T, h *harness, id string) {
 		"id": id, "name": "收费缴费", "kind": "pbc",
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func taggedUnit(t *testing.T, h *harness, id string) {
+	t.Helper()
+	seedTagCandidate(t, h, id)
+	if _, err := h.st.Append(t.Context(), id, store.FactCheckDefined, "BA", map[string]any{
+		"items": []domain.Check{{ID: "AT-01", N: "验证构建", ST: domain.CheckPass}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPBCTagRejectsMissingAcceptance(t *testing.T) {
+	h := newHarness(t)
+	seedTagCandidate(t, h, "fee")
+	before, err := h.st.Load(t.Context(), "fee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, out := h.do(t, http.MethodPost, "/api/units/fee/tag", nil, RoleSA)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(fmt.Sprint(out["error"]), "验收清单") {
+		t.Fatalf("无验收清单时应拒绝打 tag，实际 %d %v", resp.StatusCode, out)
+	}
+	after, err := h.st.Load(t.Context(), "fee")
+	if err != nil || len(after) != len(before) {
+		t.Fatalf("拒绝的打 tag 不应增添事实：%v %d → %d", err, len(before), len(after))
+	}
+}
+
+func TestPBCTagRequiresPassingAcceptanceForCurrentCommit(t *testing.T) {
+	h := newHarness(t)
+	taggedUnit(t, h, "fee")
+	const tagURL = "/api/units/fee/tag"
+	const checkURL = "/api/checks/AT-01/decide?pbc=fee"
+	seedNewCommit(t, h.st, "fee", "1.0.2")
+	addPassingMachineTests := func(commit string) {
+		t.Helper()
+		if _, err := h.st.Append(t.Context(), "fee", store.FactTestRun, "x-qa", store.TestResult{Commit: commit, Pass: 5, Total: 5}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addPassingMachineTests("1.0.2")
+	if resp, out := h.do(t, http.MethodPost, tagURL, nil, RoleSA); resp.StatusCode != 400 || !strings.Contains(fmt.Sprint(out["error"]), "验收清单") {
+		t.Fatalf("旧提交已通过的验收不能为新提交打 tag：%d %v", resp.StatusCode, out)
+	}
+
+	seedNewCommit(t, h.st, "fee", "1.0.3", domain.Check{ID: "AT-01", N: "验证当前构建", ST: domain.CheckTodo})
+	addPassingMachineTests("1.0.3")
+	if resp, out := h.do(t, http.MethodPost, checkURL, map[string]string{"commit": "1.0.2", "st": "pass"}, RoleBA); resp.StatusCode != 400 {
+		t.Fatalf("旧版本的判定应拒绝：%d %v", resp.StatusCode, out)
+	}
+	if resp, out := h.do(t, http.MethodPost, tagURL, nil, RoleSA); resp.StatusCode != 400 || !strings.Contains(fmt.Sprint(out["error"]), "还差 1 条") {
+		t.Fatalf("待验收项应阻断打 tag：%d %v", resp.StatusCode, out)
+	}
+	if resp, out := h.do(t, http.MethodPost, checkURL, map[string]string{
+		"commit": "1.0.3", "st": "fail", "title": "验收失败", "steps": "查看构建产物",
+	}, RoleBA); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("BA 提交当前版本的验收缺陷：%d %v", resp.StatusCode, out)
+	}
+	if resp, out := h.do(t, http.MethodPost, tagURL, nil, RoleSA); resp.StatusCode != 400 || !strings.Contains(fmt.Sprint(out["error"]), "还差 1 条") {
+		t.Fatalf("失败的验收项应阻断打 tag：%d %v", resp.StatusCode, out)
+	}
+	if resp, out := h.do(t, http.MethodPost, checkURL, map[string]string{"commit": "1.0.3", "st": "pass"}, RoleBA); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("BA 判定当前提交：%d %v", resp.StatusCode, out)
+	}
+	if resp, out := h.do(t, http.MethodPost, tagURL, nil, RoleSA); resp.StatusCode != 201 || out["commit"] != "1.0.3" {
+		t.Fatalf("当前提交全部通过后应能打 tag：%d %v", resp.StatusCode, out)
+	}
+}
+
+func TestLegacyAgentAcceptanceDoesNotRequireCommit(t *testing.T) {
+	h := newHarness(t)
+	taggedUnit(t, h, "qa")
+	// 旧 Agent 的构成只在单元登记表中；本单元日志没有 unit.created。
+	if _, err := h.st.Append(t.Context(), unitsLog, store.FactUnitCreated, "PA", map[string]string{
+		"id": "qa", "kind": "agent", "agentId": "qa-agent",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedNewCommit(t, h.st, "qa", "1.0.2")
+	if resp, out := h.do(t, http.MethodPost, "/api/checks/AT-01/decide?pbc=qa", map[string]string{"st": "pass"}, RoleBA); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("旧 Agent 仍能判定已有清单：%d %v", resp.StatusCode, out)
 	}
 }
 
@@ -69,10 +153,9 @@ func TestTagRecordsGateEvaluation(t *testing.T) {
 	if rv["gatesNote"] != nil {
 		t.Fatalf("有落账的闸就不该给「没有记录」的说明：%v", rv["gatesNote"])
 	}
-	// 空数组而不是 null：前端要能直接读长度。
 	checks, ok := rv["checks"].([]any)
-	if !ok || len(checks) != 0 {
-		t.Fatalf("没有验收清单时 checks 应是空数组（不是 null），实际 %v", rv["checks"])
+	if !ok || len(checks) != 1 || checks[0].(map[string]any)["st"] != domain.CheckPass {
+		t.Fatalf("回放应保留打 tag 时已通过的验收项，实际 %v", rv["checks"])
 	}
 	if _, ok := rv["facts"].([]any); !ok {
 		t.Fatalf("回归窗口的事实应是数组，实际 %v", rv["facts"])
@@ -198,7 +281,7 @@ func TestReplayWithoutGateFactSaysSo(t *testing.T) {
 	}
 }
 
-func seedNewCommit(t *testing.T, st *store.Store, pbc, no string) {
+func seedNewCommit(t *testing.T, st *store.Store, pbc, no string, checks ...domain.Check) {
 	t.Helper()
 	ctx := t.Context()
 	tree := map[domain.Artifact]string{}
@@ -207,7 +290,7 @@ func seedNewCommit(t *testing.T, st *store.Store, pbc, no string) {
 	}
 	c := domain.Commit{No: no, Tree: tree, By: "x-fe", At: "11-26 12:00", Type: "feature",
 		TreeSHA: domain.TreeSHA(tree), Digest: "sha256:seed"}
-	if _, err := st.Append(ctx, pbc, store.FactCommitCreated, "x-fe", c); err != nil {
+	if _, err := st.Append(ctx, pbc, store.FactCommitCreated, "x-fe", store.CommitCreated{Commit: c, Checks: checks}); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -1,0 +1,108 @@
+{
+  "materials": {
+    "unit": "material-inbound",
+    "commits": [
+      {
+        "no": "1.0.2",
+        "treeSha": "sha256:9e7a4eee6814",
+        "digest": "sha256:f4d3a49a46cfb7aa56b6f47d789936bd842b32bf1b1341487e0f2f490bbe5772",
+        "tag": null
+      },
+      {
+        "no": "1.0.1",
+        "treeSha": "sha256:03149034f5d0",
+        "digest": "sha256:c1caa036735bffb8d10c44038006862967f5f87034ace24b87db7a7154af1fe5",
+        "tag": null
+      }
+    ],
+    "manualArtifacts": {
+      "prd": {
+        "version": "1.0.1",
+        "source": "手动编辑",
+        "matchesSavedBody": true,
+        "sha256": "631a2ec79722fc9139281754325141c5ab344f2531ddaddb39b0606b740ce2c5"
+      },
+      "ad": {
+        "version": "1.0.3",
+        "source": "手动编辑",
+        "matchesSavedBody": true,
+        "sha256": "4e3b95ebc371e84335fc398ebda8376ea32f202990f2a63236aa08929c0b1b46"
+      },
+      "at": {
+        "version": "1.0.4",
+        "source": "手动编辑",
+        "matchesSavedBody": true,
+        "sha256": "87993d5f98c6d8dc43c3226596b3cc652d10293f03db1119bb316a61c801180b"
+      }
+    },
+    "machineTests": {
+      "commit": "1.0.2",
+      "pass": 5,
+      "total": 5,
+      "at": "2026-11-27T03:18:16Z",
+      "by": "x-qa"
+    },
+    "checks": [
+      {
+        "id": "AT-01",
+        "state": "todo"
+      },
+      {
+        "id": "AT-02",
+        "state": "todo"
+      },
+      {
+        "id": "AT-03",
+        "state": "todo"
+      },
+      {
+        "id": "AT-04",
+        "state": "todo"
+      },
+      {
+        "id": "AT-05",
+        "state": "todo"
+      }
+    ],
+    "businessEndpointsFound": false
+  },
+  "technicalTag": {
+    "tag": "v1.0.0",
+    "commit": "1.0.1",
+    "test": {
+      "commit": "1.0.1",
+      "pass": 5,
+      "total": 5,
+      "at": "2026-11-27T03:19:28Z",
+      "by": "x-qa"
+    },
+    "checks": [
+      {
+        "id": "AT-01",
+        "n": "构建证据",
+        "g": "当前交付已完成构建",
+        "w": "打开机器自检",
+        "t": "当前提交 5 条机器测试全部通过且存在 SHA-256 构建摘要",
+        "st": "pass"
+      }
+    ],
+    "evidence": [
+      {
+        "type": "check.decided",
+        "actor": "BA"
+      },
+      {
+        "type": "gate.evaluated",
+        "actor": "SA"
+      },
+      {
+        "type": "tag.created",
+        "actor": "SA"
+      }
+    ]
+  },
+  "sit": {
+    "batch": "REL-20261127-02",
+    "httpStatus": 200
+  }
+}

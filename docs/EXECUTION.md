@@ -19,6 +19,13 @@
 | 测试 | ✅ 真 | `go test -count=1 -v ./...` 的真实输出；不过就阻断链路（`test.run` 事实带 `failures`） |
 | 构建 | ✅ 真 | `go build -trimpath` 出二进制；digest = **二进制字节的 sha256**（内容寻址），不是树摘要拼的 |
 | 部署（发布批次） | ✅ 真 | v3.2 起单元自己不再部署：打 tag 进池后，由项目级批次发布起构建产物为进程，等 `GET /healthz` 返回 200 才记 `deploy.succeeded`；批次只能整批回滚，回滚时把进程一并收掉 |
+
+### PBC 人工方案与验收
+
+在方案页保存的人工 PRD、AD、AT 随工作流提交。生成保持人工正文，收敛只更新过期引用。
+在 AT 中逐条写 `- AT-01 标题。Given 前提，When 操作，Then 预期。`，也可用 `AC-01` 编号并分行填写。
+提交会固化一份待判定清单。BA 在验证页按当前提交逐条判定。清单为空、缺项、编号重复、属于旧提交，或任一条待判定或不通过时，SA 无法打 tag。
+新提交重新验收，已打 tag 的历史判定仍可回放。
 | Agent 试跑 / 对话验收 | ✅ 真（本地判定） | `internal/agentexec` 按编排图逐节点执行：读会话、检索知识库、跑合规规则、判分支、转人工；**输入变了结论就变** |
 | pub/sub | ✅ 真（收发闭环） | 声明式订阅 `components/subscription.yaml` → sidecar 建 consumer group → 事件回到 `/api/events/{topic}` → 落 `event.received` 事实；workflow 的**每一步**都发 `item.changed` |
 | 种子数据 | ⚠️ 演示数据（已标注） | actor 写作 `seed`，页面上标「演示数据」；真跑出来的事实 actor 是 `x-fe`/`x-qa`/`x-ops`/`SA` |
