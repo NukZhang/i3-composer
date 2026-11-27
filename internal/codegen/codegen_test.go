@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/zhangkun/i3-composer/internal/domain"
 )
 
 // 生成的代码必须真的能编译、真的能跑过测试。
@@ -14,14 +16,16 @@ func TestGeneratedCodeCompilesAndTestsPass(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("环境里没有 go，跳过")
 	}
-	spec := Spec{
-		UnitID:   "fee",
-		UnitName: "收费缴费",
-		Kind:     "pbc",
-		Title:    "批量生成缴费单",
-		Change:   "feature",
-		At:       "11-24 10:00",
+	for _, spec := range []Spec{
+		{UnitID: "fee", UnitName: "收费缴费", Kind: "pbc", Title: "批量生成缴费单", Change: "feature", At: "11-24 10:00"},
+		{UnitID: "inbound-regression", UnitName: "材料入库", Kind: "pbc", Profile: domain.ProfileMaterialInbound},
+	} {
+		t.Run(spec.UnitID, func(t *testing.T) { assertGeneratedCode(t, spec) })
 	}
+}
+
+func assertGeneratedCode(t *testing.T, spec Spec) {
+	t.Helper()
 	dir := t.TempDir()
 	for _, f := range Files(spec) {
 		p := filepath.Join(dir, f.Path)

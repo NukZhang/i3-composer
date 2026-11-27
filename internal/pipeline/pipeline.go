@@ -79,6 +79,7 @@ func (p *Pipeline) specOf(ctx context.Context, u wf.UnitInfo, title, change stri
 		UnitID:   u.ID,
 		UnitName: name,
 		Kind:     u.Kind,
+		Profile:  u.Profile,
 		Title:    title,
 		Change:   change,
 		At:       stamp(),
@@ -259,11 +260,23 @@ func (p *Pipeline) Deploy(ctx context.Context, pbc, env, commit, digest string, 
 	if err != nil {
 		return wf.DeployResult{}, err
 	}
-	path := filepath.Join(dir, "app.bin")
-	if err := os.WriteFile(path, bin, 0o755); err != nil {
+	// 预览与 SIT 可同时运行同一提交。每次使用独立可执行文件，避免重写正在执行的文件。
+	f, err := os.CreateTemp(dir, "app-*.bin")
+	if err != nil {
 		return wf.DeployResult{}, err
 	}
-	inst, err := p.Dep.Deploy(ctx, pbc, env, commit, digest, path)
+	defer os.Remove(f.Name())
+	err = f.Chmod(0o755)
+	if err == nil {
+		_, err = f.Write(bin)
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return wf.DeployResult{}, err
+	}
+	inst, err := p.Dep.Deploy(ctx, pbc, env, commit, digest, f.Name())
 	if err != nil {
 		return wf.DeployResult{}, err
 	}

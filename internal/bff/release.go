@@ -364,6 +364,9 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 			return fail("部署 " + l.Name + " 失败：" + err.Error())
 		}
 		l.URL, l.Status = out.URL, "deployed"
+		if in.Env == "SIT" && byID[l.ID].Profile == domain.ProfileMaterialInbound {
+			l.BrowserURL = materialURL(l.ID, in.Env) + "?commit=" + l.Commit
+		}
 		done = append(done, l.ID)
 		// 部署事实落在单元自己的账本里：这条线的「谁在哪个环境、部署了哪个字节」可查。
 		d := store.Deploy{ID: "release", Tag: l.Tag, Commit: l.Commit, URL: out.URL,

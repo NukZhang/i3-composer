@@ -43,8 +43,9 @@ type Server struct {
 	// Pubsub 是启动时算出的投递地址校验结果，/api/health 原样带出。
 	Pubsub map[string]any
 
-	mu   sync.Mutex
-	subs map[chan string]struct{} // SSE 订阅者（进程内即可：断线重连是常态）
+	mu                sync.Mutex
+	subs              map[chan string]struct{} // SSE 订阅者（进程内即可：断线重连是常态）
+	materialPreviewMu sync.Mutex
 }
 
 func NewServer(log *store.Store, d *dapr.Client, sess *Sessions, comp string) *Server {
@@ -116,6 +117,9 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/workspaces/join", s.wrap(s.joinWorkspace))
 	// v3.2：单元把 tag 打进「发布编排」池；发布是项目级动作，批次只能整批回滚。
 	m.HandleFunc("POST /api/units/{id}/tag", s.wrap(s.tagUnit))
+	m.HandleFunc("POST /api/units/{id}/material-preview", s.wrap(s.startMaterialPreview))
+	m.HandleFunc("GET /pbc/{id}/{env}/{rest...}", s.wrap(s.materialRuntime))
+	m.HandleFunc("POST /pbc/{id}/{env}/api/inbounds", s.wrap(s.materialRuntime))
 	// 只读回放：按 tag.created 的时点重算当时的投影，回答「凭什么能发」。
 	m.HandleFunc("GET /api/units/{id}/replay", s.wrap(s.replay))
 	m.HandleFunc("GET /api/projects/{id}/orch", s.wrap(s.orch))

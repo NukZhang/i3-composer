@@ -3,7 +3,8 @@ import { computed, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import AgentStudio from '../components/AgentStudio.vue';
 import QualityReport from '../components/QualityReport.vue';
-import { S, unitKind, currentAgent, toast, refresh, pushRuntime } from '../store.js';
+import MaterialRuntime from '../components/MaterialRuntime.vue';
+import { S, unitKind, currentAgent, currentUnit, toast, refresh, pushRuntime } from '../store.js';
 import { api } from '../api.js';
 import { icon } from '../icons.js';
 import { latest, kindCls, kindText, ART, WORKER_NAME } from '../derive.js';
@@ -11,6 +12,7 @@ import { md2html } from '../md.js';
 
 const versions = computed(() => (S.state && S.state.versions) || {});
 const kind = computed(() => unitKind());
+const material = computed(() => currentUnit()?.profile === 'material-inbound');
 const hasSvc = computed(() => kind.value !== 'agent');
 const isAgent = computed(() => kind.value !== 'pbc');
 const agent = computed(() => currentAgent());
@@ -225,25 +227,15 @@ function ownerText(o) {
   <!-- 质量报告（机器自检） -->
   <template v-else-if="tab === 'quality'">
     <div class="small muted" style="margin-bottom: 8px">
-      机器自检 · {{ kind === 'pbc' ? '代码 ' + (code.v || '—') : kind === 'hybrid' ? '服务 ' + svc.pass + '/' + svc.total + ' · Agent ' + (agent ? agent.eval[0] : 0) + '/' + (agent ? agent.eval[1] : 0) : (agent ? agent.eval[0] : 0) + '/' + (agent ? agent.eval[1] : 0) }} · 判定归验证阶段的人
+      机器自检 · {{ kind === 'pbc' ? (material ? '材料入库业务测试 · 代码 ' : '通用示例测试 · 代码 ') + (code.v || '—') : kind === 'hybrid' ? '服务 ' + svc.pass + '/' + svc.total + ' · Agent ' + (agent ? agent.eval[0] : 0) + '/' + (agent ? agent.eval[1] : 0) : (agent ? agent.eval[0] : 0) + '/' + (agent ? agent.eval[1] : 0) }} · 判定归验证阶段的人
     </div>
     <QualityReport :kind="kind" :gates="gates" :agent="agent" :head="head" :svc="svc" :test="test" :builds="builds" />
   </template>
 
   <!-- 启动预览 -->
   <template v-else-if="tab === 'preview'">
-    <div class="urlbar">
-      <span class="dotok" /><span class="u">http://localhost:18080/bills</span>
-      <span class="spacer" style="flex: 1" />
-      <span class="small">服务已启动 · 健康检查 200 · 代码 {{ code.v || '—' }}</span>
-      <button class="btn small" @click="toast('已重启服务（示例）', 'ok')">重启</button>
-    </div>
-    <div class="ifr-lg" style="border-radius: 0 0 9px 9px; border-top: 0">
-      <div class="empty" style="padding: 60px 0; color: var(--tx-11)">
-        预览页需要真跑起来的服务；本仓库只到「构建产物 + digest」这一层。
-      </div>
-    </div>
-    <div class="small muted" style="margin: 8px 0 11px">这是代码跑起来之后的真实页面，不是线框图。接 CI 时这里换成真实地址。</div>
+    <MaterialRuntime v-if="material" />
+    <div v-else class="card empty">通用示例未配置可操作的业务预览。</div>
   </template>
 
   <!-- 源码与流水线 -->

@@ -207,6 +207,7 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		Kind    string `json:"kind"`
 		AgentID string `json:"agentId"`
 		Proj    string `json:"proj"`
+		Profile string `json:"profile"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
 		return fmt.Errorf("%w：%v", errBadRequest, err)
@@ -229,6 +230,9 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 	}
 	if in.Kind != "" && !k.Valid() {
 		return fmt.Errorf("%w：kind 只能是 pbc / agent", errBadRequest)
+	}
+	if in.Profile != "" && (k != domain.KindPBC || in.Profile != domain.ProfileMaterialInbound) {
+		return fmt.Errorf("%w：业务实现类型无效", errBadRequest)
 	}
 	if k != domain.KindPBC && in.AgentID == "" {
 		return fmt.Errorf("%w：agent 单元必须指定 agentId（交付的 Agent 产物）", errBadRequest)
@@ -275,19 +279,19 @@ func (s *Server) createUnit(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		code = "PBC-" + strings.ToUpper(in.ID)
 	}
 	if _, err := s.Log.Append(r.Context(), unitsLog, store.FactUnitCreated, c.Role.String(), map[string]any{
-		"id": in.ID, "name": in.Name, "code": code, "kind": k.String(), "agentId": in.AgentID, "proj": in.Proj,
+		"id": in.ID, "name": in.Name, "code": code, "kind": k.String(), "agentId": in.AgentID, "proj": in.Proj, "profile": in.Profile,
 	}); err != nil {
 		return err
 	}
 	// 单元自己的日志也要有 unit.created：/api/state 的 kind / name / agentId 由此而来。
 	// 同一条写入同时落两处（注册表 + 单元日志），两者都是投影的输出，不会分叉。
 	if _, err := s.Log.Append(r.Context(), in.ID, store.FactUnitCreated, c.Role.String(), map[string]any{
-		"name": in.Name, "kind": k.String(), "agentId": in.AgentID,
+		"name": in.Name, "kind": k.String(), "agentId": in.AgentID, "profile": in.Profile,
 	}); err != nil {
 		return err
 	}
 	s.publish(in.ID, "unit.created", map[string]any{"id": in.ID})
-	writeJSON(w, http.StatusCreated, map[string]any{"id": in.ID, "kind": k.String(), "proj": in.Proj})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": in.ID, "kind": k.String(), "proj": in.Proj, "profile": in.Profile})
 	return nil
 }
 

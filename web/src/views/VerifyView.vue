@@ -7,6 +7,7 @@
 import { computed, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import AcceptTerminal from '../components/AcceptTerminal.vue';
+import MaterialRuntime from '../components/MaterialRuntime.vue';
 import { S, unitKind, currentAgent, currentUnit, toast, refresh } from '../store.js';
 import { api } from '../api.js';
 import { icon } from '../icons.js';
@@ -14,6 +15,7 @@ import { kindCls, kindText } from '../derive.js';
 
 const kind = computed(() => unitKind());
 const unit = computed(() => currentUnit() || {});
+const material = computed(() => unit.value.profile === 'material-inbound');
 const agent = computed(() => currentAgent());
 const defects = computed(() => (S.state && S.state.defects) || []);
 const chats = computed(() => (S.state && S.state.chats) || []);
@@ -185,8 +187,10 @@ function pushDefect(d) {
     <span class="small muted">以 {{ S.roleName || S.role }} 身份验收</span>
     <span class="small muted">· 会话 s-{{ S.pbcId }}-0924</span>
     <span class="spacer" style="flex: 1" />
-    <span class="small muted">你的每一步操作都会记进复现步骤</span>
+    <span v-if="!material" class="small muted">你的每一步操作都会记进复现步骤</span>
   </div>
+
+  <MaterialRuntime v-if="material" />
 
   <div v-if="!checks.length" class="card">
     <div v-if="kind !== 'agent'" class="empty">请提交有明确验收项的人工 AT。每项使用 AT-01 或 AC-01 等编号，写齐 Given、When、Then。BA 按当前提交逐条验收后方可打 tag。</div>
@@ -208,8 +212,8 @@ function pushDefect(d) {
       </div>
     </div>
 
-    <div style="display: grid; grid-template-columns: 1fr 234px; gap: 9px; align-items: start">
-      <AcceptTerminal ref="terminal" :kind="kind" :unit="S.pbcId" :agent="agent" :chats="chats" />
+    <div :style="{ display: 'grid', gridTemplateColumns: material ? '1fr' : '1fr 234px', gap: '9px', alignItems: 'start' }">
+      <AcceptTerminal v-if="!material" ref="terminal" :kind="kind" :unit="S.pbcId" :agent="agent" :chats="chats" />
 
       <div class="card" style="margin: 0">
         <div class="ch" style="padding: 8px 10px">
@@ -232,7 +236,7 @@ function pushDefect(d) {
               <span v-html="icon('alert', 11)" /> 不提过
             </button>
           </div>
-          <div class="small muted" style="margin-top: 7px; line-height: 1.6">不通过就提 bug：复现步骤会把你刚才的操作带进去，不用手写。</div>
+          <div class="small muted" style="margin-top: 7px; line-height: 1.6">{{ material ? '不通过时记录操作、单号和实际结果。' : '不通过就提 bug：复现步骤会把你刚才的操作带进去，不用手写。' }}</div>
 
           <div v-if="S.vBugOpen" style="margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--line-i)">
             <div class="small muted" style="margin-bottom: 4px">bug 标题</div>
@@ -241,7 +245,7 @@ function pushDefect(d) {
             <select v-model="bugSev" class="bug-sev" style="font-size: 11px; margin-bottom: 8px; width: 100%">
               <option>阻塞</option><option>严重</option><option>一般</option><option>建议</option>
             </select>
-            <div class="small muted" style="margin-bottom: 4px">复现步骤（自动带入）</div>
+            <div class="small muted" style="margin-bottom: 4px">{{ material ? '复现步骤' : '复现步骤（自动带入）' }}</div>
             <textarea v-model="bugSteps" class="bug-steps" style="font-size: 10.5px; height: 56px; width: 100%; margin-bottom: 8px" />
             <div class="row" style="gap: 5px">
               <button class="btn small primary" style="flex: 1" @click="submitBug">提交</button>
@@ -256,7 +260,7 @@ function pushDefect(d) {
       <div class="ch"><span v-html="icon('alert')" /><h3>本轮提的 bug</h3><span class="spacer" />
         <span class="small muted">{{ defects.length }} 条 · 会进 backlog 由 X 修</span>
       </div>
-      <div v-if="!defects.length" class="small muted">还没有提 bug。不通过时点「不提过」，复现步骤自动带入。</div>
+      <div v-if="!defects.length" class="small muted">{{ material ? '暂无缺陷。' : '还没有提 bug。不通过时点「不提过」，复现步骤自动带入。' }}</div>
       <div
         v-for="d in defects"
         :key="d.id"

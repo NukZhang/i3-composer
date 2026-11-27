@@ -1,0 +1,124 @@
+{
+  "unit": "material-inbound",
+  "workItem": "US-05",
+  "commit": "1.0.2",
+  "digest": "sha256:e85dd428806a53429b7f66d686205e73252b95836cd4ecc76b6e3a22f164ffc4",
+  "tag": "v1.0.0",
+  "checks": [
+    {
+      "id": "AT-01",
+      "st": "pass"
+    },
+    {
+      "id": "AT-02",
+      "st": "pass"
+    },
+    {
+      "id": "AT-03",
+      "st": "pass"
+    },
+    {
+      "id": "AT-04",
+      "st": "pass"
+    },
+    {
+      "id": "AT-05",
+      "st": "pass"
+    }
+  ],
+  "machineTests": {
+    "commit": "1.0.2",
+    "pass": 5,
+    "total": 5,
+    "at": "2026-11-27T03:47:40Z",
+    "by": "x-qa"
+  },
+  "facts": [
+    {
+      "seq": 36,
+      "type": "test.run",
+      "actor": "x-qa"
+    },
+    {
+      "seq": 38,
+      "type": "build.succeeded",
+      "actor": "x-ops"
+    },
+    {
+      "seq": 41,
+      "type": "material.preview.started",
+      "actor": "BA"
+    },
+    {
+      "seq": 42,
+      "type": "check.decided",
+      "actor": "BA"
+    },
+    {
+      "seq": 43,
+      "type": "check.decided",
+      "actor": "BA"
+    },
+    {
+      "seq": 44,
+      "type": "check.decided",
+      "actor": "BA"
+    },
+    {
+      "seq": 45,
+      "type": "check.decided",
+      "actor": "BA"
+    },
+    {
+      "seq": 46,
+      "type": "check.decided",
+      "actor": "BA"
+    },
+    {
+      "seq": 47,
+      "type": "gate.evaluated",
+      "actor": "SA"
+    },
+    {
+      "seq": 48,
+      "type": "tag.created",
+      "actor": "SA"
+    }
+  ],
+  "confirmedReceipt": {
+    "receiptNo": "RK-000001",
+    "type": "RKT-01",
+    "sourceNo": "CG-TEST-001",
+    "sourceLabel": "采购合同",
+    "materialCode": "MAT-STEEL",
+    "materialName": "钢材",
+    "warehouseId": "WH-01",
+    "warehouseName": "材料库房",
+    "quantity": "80.400",
+    "unit": "吨",
+    "assetOwner": "公司资产",
+    "financeTag": "一次性进成本",
+    "remainingQty": "39.600"
+  },
+  "batch": {
+    "id": "REL-20261127-01",
+    "env": "SIT",
+    "status": "active",
+    "by": "SA"
+  },
+  "testHealth": {
+    "httpStatus": 200,
+    "commit": "1.0.2",
+    "environment": "test",
+    "ok": true,
+    "unit": "material-inbound"
+  },
+  "sitHealth": {
+    "httpStatus": 200,
+    "commit": "1.0.2",
+    "environment": "SIT",
+    "ok": true,
+    "unit": "material-inbound",
+    "receiptCount": 0
+  }
+}
