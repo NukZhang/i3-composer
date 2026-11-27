@@ -150,6 +150,13 @@ async function requireSeedLedger() {
     health = r.status;
   }
   check('3 部署地址 /healthz 真的 200', health === 200, health);
+  const verifyPath = `/api/projects/p1/releases/${batch.id}/units/${pbcUnit?.id}/health`;
+  const proof = await api(verifyPath);
+  check('3 同源核对入口返回批次锁定的单元与版本',
+    pbcUnit?.healthUrl === verifyPath && !agUnit?.healthUrl && proof.code === 200 &&
+      proof.body.ok === true && proof.body.unit === pbcUnit.id && proof.body.commit === pbcUnit.commit &&
+      proof.body.tag === pbcUnit.tag && proof.body.digest === pbcUnit.digest && proof.body.batch === batch.id,
+    { path: pbcUnit?.healthUrl, code: proof.code, proof: proof.body });
   // 批次是账本外的东西：靠 /api/health 之外的一条「有变化」通知驱动重拉，
   // 给它几秒，而不是写死 400ms。
   const seen = await waitFor(
@@ -157,6 +164,8 @@ async function requireSeedLedger() {
     8000, 400,
   );
   check('3 页面历史批次里出现该批次', !!seen, batch.id);
+  const link = page.locator(`.stage a[href="${verifyPath}"]`);
+  check('3 发布页提供宿主机可访问的同源核对入口', await link.count() === 1, await link.count());
   await shot('批次发布后');
 
   // ---- 4. 整批回滚：进程真的停了 ----
@@ -165,6 +174,8 @@ async function requireSeedLedger() {
     body: JSON.stringify({ id: batch.id, note: '验收回滚' }),
   });
   check('4 整批回滚返回 200', rb.code === 200 && rb.body.status === 'rolledback', rb.body);
+  const revoked = await fetch(new URL(verifyPath, BASE));
+  check('4 回滚后同源核对入口失效', revoked.status === 404, await revoked.json());
   if (pbcUnit && pbcUnit.url) {
     await new Promise((r) => setTimeout(r, 600));
     let after = null;

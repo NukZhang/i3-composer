@@ -12,6 +12,7 @@ import (
 	"github.com/zhangkun/i3-composer/internal/domain"
 	"github.com/zhangkun/i3-composer/internal/pipeline"
 	"github.com/zhangkun/i3-composer/internal/store"
+	"github.com/zhangkun/i3-composer/internal/wf"
 )
 
 // 账本说「这个提交构建过、digest 是 X」，仓库里却没有 X 的字节——
@@ -68,6 +69,112 @@ func TestReleaseNamesDigestSourceWhenBlobMissing(t *testing.T) {
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("错误信息应包含 %q，实际：%s", want, msg)
+		}
+	}
+}
+
+func TestReleaseHealthEndpointAllowsOnlyLocalRuntime(t *testing.T) {
+	for address, expected := range map[string]string{
+		"http://127.0.0.1:32001":       "http://127.0.0.1:32001/healthz",
+		"http://[::1]:32001/":          "http://[::1]:32001/healthz",
+		"http://192.0.2.1:32001":       "",
+		"http://localhost:32001":       "",
+		"http://user@127.0.0.1:32001":  "",
+		"http://127.0.0.1:32001/admin": "",
+		"http://127.0.0.1:32001?a=b":   "",
+	} {
+		if actual := releaseHealthEndpoint(address); actual != expected {
+			t.Errorf("releaseHealthEndpoint(%q) = %q, want %q", address, actual, expected)
+		}
+	}
+}
+
+func TestRecordReleaseBatchAllocatesDistinctIDs(t *testing.T) {
+	h := newHarness(t)
+	server := NewServer(h.st, dapr.New(h.ds.URL), NewSessions([]byte("test-key")), "dapr")
+	type result struct {
+		id  string
+		err error
+	}
+	out := make(chan result, 8)
+	for range cap(out) {
+		go func() {
+			batch := store.ReleaseBatch{
+				Proj: "p1", Env: "SIT", By: "SA", Units: []store.ReleaseUnit{{ID: "qa"}},
+			}
+			err := server.recordReleaseBatch(t.Context(), &batch)
+			out <- result{id: batch.ID, err: err}
+		}()
+	}
+	seen := map[string]bool{}
+	for range cap(out) {
+		res := <-out
+		if res.err != nil || res.id == "" || seen[res.id] {
+			t.Errorf("并发发布必须得到不同的批次号，实际 %q，%v", res.id, res.err)
+		}
+		seen[res.id] = true
+	}
+}
+
+func TestReleaseRuntimeIgnoresOutOfOrderBatchRecords(t *testing.T) {
+	h := newHarness(t)
+	pipe, err := pipeline.New(h.st, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipe.Store = artifacts.New(t.TempDir())
+	t.Cleanup(pipe.StopAll)
+	server := NewServer(h.st, dapr.New(h.ds.URL), NewSessions([]byte("test-key")), "dapr")
+	server.Pipe = pipe
+	api := httptest.NewServer(server.Handler())
+	t.Cleanup(api.Close)
+
+	ctx := t.Context()
+	const unitID, env, commit = "dun", "SIT", "1.0.1"
+	files, err := pipe.Code(ctx, wf.UnitInfo{ID: unitID, Kind: "pbc"}, "批次核对", "new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := pipe.Build(ctx, unitID, commit, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployBatch := func() store.ReleaseBatch {
+		t.Helper()
+		out, err := pipe.Deploy(ctx, unitID, env, commit, build.Digest, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store.ReleaseBatch{Proj: "p1", Env: env, By: "SA", Status: "active", Units: []store.ReleaseUnit{{
+			ID: unitID, Binary: true, Commit: commit, Tag: "v1.0.0", Digest: build.Digest, URL: out.URL, RuntimeID: out.RuntimeID,
+		}}}
+	}
+	old, current := deployBatch(), deployBatch()
+	// 复现早启动的请求晚落链。批次的账本顺序不能代替进程身份。
+	for _, batch := range []*store.ReleaseBatch{&current, &old} {
+		if err := server.recordReleaseBatch(ctx, batch); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, check := range []struct {
+		batchID string
+		status  int
+	}{{current.ID, http.StatusOK}, {old.ID, http.StatusNotFound}} {
+		path := "/api/projects/p1/releases/" + check.batchID + "/units/" + unitID + "/health"
+		response, proof := h.doOn(t, api, http.MethodGet, path, nil, RoleSA)
+		if response.StatusCode != check.status || (check.status == http.StatusOK && proof["batch"] != current.ID) {
+			t.Errorf("批次 %s 核对返回 %d %v，期望状态 %d", check.batchID, response.StatusCode, proof, check.status)
+		}
+	}
+
+	for _, batch := range []store.ReleaseBatch{old, current} {
+		response, body := h.doOn(t, api, http.MethodPost, "/api/projects/p1/orch/rollback", map[string]any{"id": batch.ID}, RoleSA)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("批次 %s 回滚返回 %d %v", batch.ID, response.StatusCode, body)
+		}
+		if alive := pipe.Alive(unitID, env); alive != (batch.ID == old.ID) {
+			t.Errorf("回滚 %s 后进程存活 = %v", batch.ID, alive)
 		}
 	}
 }

@@ -63,3 +63,20 @@ func TestProjectReleasesEmpty(t *testing.T) {
 		t.Fatalf("不应有批次：%+v", v.Batches)
 	}
 }
+
+func TestProjectReleasesRollbackIsScopedToProject(t *testing.T) {
+	var facts []Fact
+	for _, project := range []string{"p1", "p2"} {
+		facts = append(facts, releaseFact(t, FactReleaseBatch, ReleaseBatch{
+			ID: "REL-1", Proj: project, Env: "SIT", Units: []ReleaseUnit{{ID: project + "-unit"}},
+		}))
+	}
+	facts = append(facts, releaseFact(t, FactReleaseRollback, map[string]any{"id": "REL-1", "proj": "p1"}))
+	view, err := ProjectReleases(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Batches[0].Status != "active" || view.Batches[1].Status != "rolledback" {
+		t.Fatalf("只应回滚项目 p1 的批次，实际 %+v", view.Batches)
+	}
+}

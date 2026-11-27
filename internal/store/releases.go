@@ -25,6 +25,7 @@ type ReleaseUnit struct {
 	Binary     bool   `json:"binary"`
 	URL        string `json:"url,omitempty"` // Agent 产物没有进程，就是空
 	BrowserURL string `json:"browserUrl,omitempty"`
+	RuntimeID  string `json:"runtimeId,omitempty"`
 	Status     string `json:"status"` // deployed | activated
 }
 
@@ -67,15 +68,16 @@ func ProjectReleases(facts []Fact) (*ReleasesView, error) {
 			v.Batches = append([]ReleaseBatch{b}, v.Batches...)
 		case FactReleaseRollback:
 			var p struct {
-				ID string `json:"id"`
-				By string `json:"by"`
-				At string `json:"at"`
+				ID   string `json:"id"`
+				Proj string `json:"proj"`
+				By   string `json:"by"`
+				At   string `json:"at"`
 			}
 			if err := json.Unmarshal(f.Payload, &p); err != nil {
 				return nil, fmt.Errorf("重放 %s 失败：%w", f, err)
 			}
 			for i := range v.Batches {
-				if v.Batches[i].ID == p.ID {
+				if v.Batches[i].ID == p.ID && (p.Proj == "" || v.Batches[i].Proj == p.Proj) {
 					v.Batches[i].Status = "rolledback"
 					v.Batches[i].RollbackAt = p.At
 					v.Batches[i].RollbackBy = p.By

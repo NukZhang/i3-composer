@@ -15,6 +15,7 @@ package deployer
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net/http"
 	"os"
@@ -28,14 +29,15 @@ import (
 
 // Instance 是一个正在跑的部署。
 type Instance struct {
-	PBC     string `json:"pbc"`
-	Env     string `json:"env"`
-	Commit  string `json:"commit"`
-	Digest  string `json:"digest"`
-	URL     string `json:"url"`
-	Health  string `json:"health"`
-	PID     int    `json:"pid"`
-	Started string `json:"started"`
+	RuntimeID string `json:"-"`
+	PBC       string `json:"pbc"`
+	Env       string `json:"env"`
+	Commit    string `json:"commit"`
+	Digest    string `json:"digest"`
+	URL       string `json:"url"`
+	Health    string `json:"health"`
+	PID       int    `json:"pid"`
+	Started   string `json:"started"`
 }
 
 // Deployer 管理本机上的部署实例：同 (pbc, env) 只有一个活着的。
@@ -109,7 +111,7 @@ func (d *Deployer) Deploy(ctx context.Context, pbc, env, commit, digest, binary 
 	}
 
 	inst := &Instance{
-		PBC: pbc, Env: env, Commit: commit, Digest: digest,
+		RuntimeID: rand.Text(), PBC: pbc, Env: env, Commit: commit, Digest: digest,
 		URL: "http://" + addr, PID: cmd.Process.Pid,
 		Started: time.Now().Format("01-02 15:04:05"),
 	}
@@ -217,6 +219,23 @@ func (d *Deployer) Stop(pbc, env string) {
 	delete(d.running, k)
 	d.mu.Unlock()
 	stopProc(p)
+}
+
+func (d *Deployer) StopRuntime(pbc, env, runtimeID string) bool {
+	if runtimeID == "" {
+		return false
+	}
+	k := key(pbc, env)
+	d.mu.Lock()
+	p := d.running[k]
+	if p == nil || p.inst.RuntimeID != runtimeID {
+		d.mu.Unlock()
+		return false
+	}
+	delete(d.running, k)
+	d.mu.Unlock()
+	stopProc(p)
+	return true
 }
 
 // StopAll 停掉所有还在跑的部署。

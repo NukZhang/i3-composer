@@ -284,7 +284,7 @@ func (p *Pipeline) Deploy(ctx context.Context, pbc, env, commit, digest string, 
 	if err != nil {
 		return wf.DeployResult{}, err
 	}
-	return wf.DeployResult{URL: inst.URL, PID: inst.PID, Health: inst.Health}, nil
+	return wf.DeployResult{RuntimeID: inst.RuntimeID, URL: inst.URL, PID: inst.PID, Health: inst.Health}, nil
 }
 
 // Stop 停掉某个部署（回滚用）。
