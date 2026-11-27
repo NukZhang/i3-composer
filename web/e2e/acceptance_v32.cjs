@@ -208,6 +208,14 @@ async function waitFor(fn, ms, step) {
   check('4 重复回滚被拒（批次已经回滚过）', rb2.code === 400, rb2.body);
 
   // ---- 5. 未打 tag 的单元进不了批次 ----
+  // #23：灰度还没接，接口必须拒绝——不能再「收下但行为与全量一样」。
+  {
+    const gray = await api('/api/projects/p1/orch/release', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ env: 'SIT', mode: 'gray', units: [pbcUnit && pbcUnit.id] }),
+    });
+    check('4.2 灰度放量未开放：mode=gray 被拒绝且点名', gray.code === 400 && /灰度/.test(gray.body.error), gray.body);
+  }
   const relFee = await api('/api/projects/p1/orch/release', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ env: 'SIT', mode: 'full', units: ['fee'] }),

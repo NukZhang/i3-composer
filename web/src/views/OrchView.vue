@@ -208,9 +208,11 @@ async function rollback(b) {
           <span class="small muted" style="width: 34px">方式</span>
           <select v-model="mode" class="bug-sev" style="flex: 1; font-size: 11px">
             <option value="full">全量</option>
-            <option value="gray">灰度 10-50-100</option>
+            <!-- 灰度还没接（#23）：标成不可选并写明原因，别让人以为自己选了一个有区别的方式。 -->
+            <option value="gray" disabled>灰度（还没接，请用全量）</option>
           </select>
         </div>
+        <div class="small muted" style="margin: -3px 0 9px 40px">灰度按比例分批放量还没实现，现在只有全量。</div>
         <div v-for="u in selected" :key="'r-' + u.id" class="small" style="padding: 3px 0">
           <span :style="{ color: u.ready ? 'var(--ok)' : 'var(--err)' }">{{ u.ready ? '✓' : '✕' }}</span>
           {{ u.name }}
@@ -237,7 +239,7 @@ async function rollback(b) {
       <div v-for="b in data.batches || []" :key="b.id" class="row wrap" style="padding: 7px 0; border-bottom: 1px solid var(--line-e); gap: 8px; align-items: center">
         <span class="mono small">{{ b.id }}</span>
         <span class="tag t-info" style="font-size: 9px">{{ b.env }}</span>
-        <span class="tag t-gray" style="font-size: 9px">{{ b.mode === 'gray' ? '灰度' : '全量' }}</span>
+        <span class="tag t-gray" style="font-size: 9px" :title="b.mode === 'gray' ? '这是早期批次留下的记录：当时灰度没有真正分批放量' : ''">{{ b.mode === 'gray' ? '灰度（未开放）' : '全量' }}</span>
         <span class="small" style="flex: 1">{{ b.units.map((u) => u.name + ' ' + u.tag + (u.url ? ' · ' + u.url : ' · 定义')).join('；') }}</span>
         <!-- 状态只说账本里的结论；进程在不在由 live 单独说（#29：以前旧批次明明已经死了还写「已上线」） -->
         <span class="tag" :class="batchCls(b)" style="font-size: 9px">{{ batchText(b) }}</span>

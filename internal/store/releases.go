@@ -32,7 +32,7 @@ type ReleaseBatch struct {
 	ID     string        `json:"id"`
 	Proj   string        `json:"proj"`
 	Env    string        `json:"env"`
-	Mode   string        `json:"mode"` // full | gray
+	Mode   string        `json:"mode"` // full（gray 自 #23 起不开放：早期批次里可能还有这个值，读出来照实显示）
 	Units  []ReleaseUnit `json:"units"`
 	By     string        `json:"by"`
 	At     string        `json:"at"`

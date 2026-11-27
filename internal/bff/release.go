@@ -350,8 +350,14 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if in.Mode == "" {
 		in.Mode = "full"
 	}
-	if in.Mode != "full" && in.Mode != "gray" {
-		return fmt.Errorf("%w：方式只能是 full（全量）或 gray（灰度）", errBadRequest)
+	// 灰度放量还没接（#23）：以前 gray 只是存进批次、行为与全量一模一样——
+	// 「选了灰度」的人以为自己在控制风险，其实什么都没变。判不了就不装作能判：
+	// 这里直接拒绝，等真的做了分批放量再放开。
+	if in.Mode == "gray" {
+		return fmt.Errorf("%w：灰度放量还没接，请用全量（mode=full）；按比例分批起进程还没实现", errBadRequest)
+	}
+	if in.Mode != "full" {
+		return fmt.Errorf("%w：方式只能是 full（全量）", errBadRequest)
 	}
 	if len(in.Units) == 0 {
 		return fmt.Errorf("%w：至少勾选一个单元", errBadRequest)

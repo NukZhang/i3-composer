@@ -170,3 +170,30 @@ func TestSameUnitTwoEnvsBothLive(t *testing.T) {
 		t.Fatal("回滚 SIT 把 UAT 的进程一起收掉了")
 	}
 }
+
+// 灰度还没接（#23）：mode=gray 必须拒绝，不能再「收下但行为与全量一样」。
+func TestReleaseRefusesGrayMode(t *testing.T) {
+	h := newHarness(t)
+	registerUnit(t, h.st, "g1")
+	b := NewServer(h.st, dapr.New(h.ds.URL), NewSessions([]byte("test-key")), "dapr")
+	s := httptest.NewServer(b.Handler())
+	t.Cleanup(s.Close)
+	resp, out := h.doOn(t, s, http.MethodPost, "/api/projects/p1/orch/release", map[string]any{
+		"env": "UAT", "mode": "gray", "units": []string{"g1"},
+	}, RoleSA)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("gray 应被拒绝，实际 %d：%v", resp.StatusCode, out)
+	}
+	msg, _ := out["error"].(string)
+	if !containsAll(msg, "灰度") {
+		t.Fatalf("拒绝原因应点名灰度：%s", msg)
+	}
+	// 拒绝要发生在写批次之前：账本里不能留下一个 gray 批次。
+	rv, err := b.loadReleases(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rv.Batches) != 0 {
+		t.Fatalf("被拒绝的 gray 不应落批次：%+v", rv.Batches)
+	}
+}
