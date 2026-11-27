@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>材料入库管理</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="frame masthead">
+      <a class="brand" href="./">材料入库管理</a>
+      <nav aria-label="材料入库导航">
+        <a href="#receiving">新建入库</a>
+        <a href="#ledger">收发存明细</a>
+      </nav>
+      <span id="environment" class="environment" hidden></span>
+    </div>
+  </header>
+
+  <main class="frame">
+    <section id="receiving" aria-labelledby="receiving-title">
+      <div class="section-heading">
+        <h1 id="receiving-title">新建入库</h1>
+      </div>
+      <p id="options-status" role="status" class="message" data-tone="neutral">正在读取入库选项…</p>
+      <button id="reload-options" class="button reload" type="button" hidden>重试读取选项</button>
+
+      <div class="receiving-grid">
+        <form id="receiving-form" class="panel">
+          <fieldset id="receiving-fields" disabled>
+            <legend>入库单信息</legend>
+            <div class="fields">
+              <div class="field">
+                <label for="inbound-type">入库类型</label>
+                <select id="inbound-type" name="type" required></select>
+              </div>
+              <div class="field">
+                <label for="source-no">来源单号</label>
+                <select id="source-no" name="sourceNo" aria-describedby="source-help" required></select>
+                <small id="source-help">选择入库类型后可选来源单据</small>
+              </div>
+              <div class="field">
+                <label for="material">材料</label>
+                <select id="material" name="materialCode" required></select>
+              </div>
+              <div class="field">
+                <label for="warehouse">库房</label>
+                <select id="warehouse" name="warehouseId" required></select>
+              </div>
+              <div class="field quantity-field">
+                <label for="quantity">入库数量</label>
+                <div class="quantity-input">
+                  <input id="quantity" name="quantity" inputmode="decimal" autocomplete="off" placeholder="请输入数量" required>
+                  <output id="quantity-unit" for="material" aria-label="数量单位">—</output>
+                </div>
+              </div>
+            </div>
+          </fieldset>
+          <div class="form-footer">
+            <button id="submit-inbound" class="button primary" type="submit" disabled>确认入库</button>
+            <button id="save-draft" class="button" type="button" disabled>保存本机草稿</button>
+          </div>
+          <p id="form-status" role="status" class="message" hidden></p>
+        </form>
+
+        <aside class="panel plan" aria-labelledby="plan-title">
+          <h2 id="plan-title">本次入库核对</h2>
+          <div class="plan-balance">
+            <span class="muted" id="plan-material">选择材料后查看计划余量</span>
+            <dl>
+              <div>
+                <dt>计划剩余量</dt>
+                <dd id="plan-remaining">—</dd>
+              </div>
+              <div>
+                <dt>本次入库量</dt>
+                <dd id="plan-quantity">—</dd>
+              </div>
+            </dl>
+          </div>
+          <dl id="inbound-defaults" class="facts" aria-live="polite">
+            <div><dt>来源类型</dt><dd id="source-type">—</dd></div>
+            <div><dt>资产归属</dt><dd id="asset-owner">—</dd></div>
+            <div><dt>财务口径</dt><dd id="finance-tag">—</dd></div>
+          </dl>
+        </aside>
+      </div>
+    </section>
+
+    <section id="ledger" aria-labelledby="ledger-title">
+      <div class="section-heading">
+        <h2 id="ledger-title">库房收发存明细</h2>
+        <p id="receipt-count" class="muted">已确认入库单数 —</p>
+      </div>
+      <div class="panel ledger-panel">
+        <form id="ledger-form" class="ledger-form" role="search" aria-label="入库单查询">
+          <div class="field">
+            <label for="receipt-no">入库单号</label>
+            <input id="receipt-no" name="receiptNo" autocomplete="off" placeholder="留空可查询全部入库单">
+          </div>
+          <button id="query-ledger" type="submit" class="button">查询台账</button>
+        </form>
+        <p id="ledger-status" role="status" class="message" data-tone="neutral">正在读取台账…</p>
+        <div id="ledger-table" class="table-scroll" tabindex="0" role="region" aria-label="入库台账查询结果" hidden>
+          <table aria-label="已确认入库单">
+            <thead>
+              <tr>
+                <th scope="col">入库单号</th>
+                <th scope="col">入库类型</th>
+                <th scope="col">来源单号</th>
+                <th scope="col">材料</th>
+                <th scope="col">库房</th>
+                <th scope="col" class="numeric">入库数量</th>
+                <th scope="col">资产归属</th>
+                <th scope="col">财务口径</th>
+              </tr>
+            </thead>
+            <tbody id="receipts"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <footer class="service-check" aria-label="部署服务">
+      <button id="check-health" type="button" class="button">检查服务健康</button>
+      <p id="health-status" role="status" class="message" hidden></p>
+    </footer>
+  </main>
+</body>
+</html>
