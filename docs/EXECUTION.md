@@ -145,7 +145,7 @@ sha256sum .i3-artifacts/blobs/sha256/<hex>   # 与事实里的 digest 一致
 
 按仓库约定新建独立 Compose 项目，使用新 Redis 与制品卷，确认 sidecar、应用端口和 `BASE` 都属于本轮环境；不要让验收脚本写入现有开发或生产账本。
 有工作区 `../docker-local/compose.yml` 时沿用它和当前启用的附加配置，用唯一的 `docker compose -p` 项目名及空闲宿主机端口隔离。换 `RUN_TAG` 不会清空账本。
-[报告](selftest-v32/自测报告.md#可复核的基线复跑)记录了一次实际的容器配置、Chromium 准备方法和结果。
+[隔离容器复跑命令](selftest-v32/隔离容器复跑.md)给出实际使用的 Compose 覆盖和 Chromium 准备步骤。它从同一个归档构建应用并运行脚本，不使用工作区 Compose 默认指向的主 checkout。
 
 ```bash
 # 1. 构建前端（容器方式可在构建镜像时完成）
