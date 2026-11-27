@@ -1,0 +1,25 @@
+#40 · 2026-11-27 · i3-issue-40-release · 作废和复登事实摘录
+基线 e27b8681984a3b3950055887036f04026edc7b77
+本轮 ID retiredissue40release
+宿主 127.0.0.1:20042，Pub/Sub checked=true、ok=true
+
+PASS 12 PA 登记后侧栏显示该单元 :: 201
+PASS 12 DA 作废返回 403 且注册表无新事实 :: 403
+PASS 12 作废后侧栏消失、详情 404、只追加 PA 的 unit.removed :: {"removed":200,"missing":404,"fact":{"actor":"PA","at":"2026-11-27T12:48:43Z","seq":10,"type":"unit.removed"}}
+PASS 12 同 ID 复登后侧栏和详情更新，原登记事实仍在 :: {"registered":201,"read":200,"id":"retiredissue40release","audit":[{"actor":"PA","at":"2026-11-27T12:48:43Z","seq":2,"type":"unit.created"},{"actor":"PA","at":"2026-11-27T12:48:42Z","seq":1,"type":"unit.created"}]}
+PASS 12 旧登记的作废请求返回 409，复登不受影响 :: 409
+
+acceptance_v32.cjs  SUMMARY 59/59 passed
+acceptance_exec.cjs SUMMARY 28/28 passed
+acceptance_flow.cjs SUMMARY 33/33 passed
+acceptance_full.cjs SUMMARY 20/20 passed
+acceptance_v26.cjs  SUMMARY 70/70 passed
+
+五套回归后追加的种子重启核对
+PA 作废 fee → 200 {"id":"fee","status":"removed"}
+{"actor":"PA","at":"2026-11-27T12:50:21Z","seq":15,"type":"unit.removed"}
+追加 65 条单元登记后，注册表最新事实
+{"actor":"PA","at":"2026-11-27T12:50:22Z","seq":80,"type":"unit.created"}
+Compose down 后保留 Redis 卷，用原项目配置重新 up。Pub/Sub 自检通过。
+GET /api/units → 200 {"units":73,"feeListed":false}
+GET /api/state?pbc=fee → 404 {"error":"不存在：单元 fee 不存在"}

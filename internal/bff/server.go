@@ -50,6 +50,7 @@ type Server struct {
 	subs              map[chan string]struct{} // SSE 订阅者（进程内即可：断线重连是常态）
 	materialPreviewMu sync.Mutex
 	releaseMu         sync.Mutex
+	unitRegistryMu    sync.Mutex
 }
 
 func NewServer(log *store.Store, d *dapr.Client, sess *Sessions, comp string) *Server {
@@ -109,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	// v2.3：交付单元 / BRD / Agent / 服务验收 / 批注
 	m.HandleFunc("GET /api/units", s.wrap(s.units))
 	m.HandleFunc("POST /api/units", s.wrap(s.createUnit))
+	m.HandleFunc("DELETE /api/units/{id}", s.wrap(s.removeUnit))
 	m.HandleFunc("POST /api/units/{id}/svcverify", s.wrap(s.svcVerify))
 	m.HandleFunc("GET /api/brd", s.wrap(s.brd))
 	m.HandleFunc("POST /api/brd", s.wrap(s.saveBRD))
@@ -393,6 +395,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, c reqCtx) er
 
 	// 编号在全项目范围内取：需求池是各单元工作项合起来看的，
 	// 各单元各自从 US-01 开始会出现两个 US-01，谁也说不清指哪一条。
+	s.unitRegistryMu.Lock()
+	defer s.unitRegistryMu.Unlock()
 	id, err := s.nextGlobalItemID(r, c.PBC)
 	if err != nil {
 		return err
@@ -510,6 +514,15 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if err := Require(c.Role, ActBuild); err != nil {
 		return err
 	}
+	s.unitRegistryMu.Lock()
+	defer s.unitRegistryMu.Unlock()
+	units, err := s.loadUnits(r.Context())
+	if err != nil {
+		return err
+	}
+	if _, removed := units.Removed[c.PBC]; removed {
+		return fmt.Errorf("%w：单元 %s 已作废", errNotFound, c.PBC)
+	}
 	v, err := s.load(r, c.PBC)
 	if err != nil {
 		return err
@@ -557,7 +570,13 @@ func (s *Server) runItem(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	// Ledger 跟着工作项走：工作项落到哪个进程执行是 Dapr 决定的，
 	// 账本前缀必须由发起方带过去，不能由执行方自己猜。
 	in := wf.Input{ItemID: it.ID, PBC: it.PBC, Title: it.Title, Type: it.Type, Env: it.Env, Mode: it.Mode,
-		Ledger: s.Log.Prefix()}
+		Ledger: s.Log.Prefix(), Unit: &wf.UnitInfo{ID: it.PBC, Name: it.PBC, Kind: string(domain.KindPBC)}}
+	for _, unit := range units.Units {
+		if unit.ID == in.PBC {
+			in.Unit = &wf.UnitInfo{ID: unit.ID, Name: unit.Name, Kind: unit.Kind, AgentID: unit.AgentID, Profile: unit.Profile}
+			break
+		}
+	}
 	// 实例号 = 账本前缀 + 单元 + 工作项。单元必须进来：不同单元下
 	// 各有一份 US-01 是常态，只带工作项号会让两份工作项抢同一个实例。
 	inst := s.instanceID(c.PBC + "_" + it.ID)

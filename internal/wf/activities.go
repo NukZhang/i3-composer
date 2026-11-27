@@ -252,6 +252,9 @@ func manualPlan(v domain.Version) bool {
 // 它从「工作项该去的那本账」里读：同一个交付单元在不同账本里是不同东西
 // （名字、构成、Agent 关联都可能不同）。
 func (a *Activities) unitOf(ctx context.Context, in Input) UnitInfo {
+	if in.Unit != nil {
+		return *in.Unit
+	}
 	u := UnitInfo{ID: in.PBC, Name: in.PBC, Kind: string(domain.KindPBC)}
 	facts, err := a.logOf(in).Load(ctx, "units")
 	if err != nil {
@@ -261,14 +264,16 @@ func (a *Activities) unitOf(ctx context.Context, in Input) UnitInfo {
 	if err != nil {
 		return u
 	}
+	// 已经发起的工作流继续使用原单元定义；作废只撤销面向新请求的登记。
+	unit := uv.Removed[in.PBC]
 	for _, x := range uv.Units {
 		if x.ID == in.PBC {
-			u.Name = x.Name
-			u.Kind = x.Kind
-			u.AgentID = x.AgentID
-			u.Profile = x.Profile
+			unit = x
 			break
 		}
+	}
+	if unit.ID != "" {
+		u.Name, u.Kind, u.AgentID, u.Profile = unit.Name, unit.Kind, unit.AgentID, unit.Profile
 	}
 	return u
 }

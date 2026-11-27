@@ -394,7 +394,49 @@ async function requireSeedLedger() {
   }
   await shot('回放');
 
-  // ---- 12. 健康度 ----
+  // ---- 12. 作废与复登：PA 管登记，单元自己的事实链始终保留（#40） ----
+  const retiredID = 'retired' + RUN;
+  const retiredRow = page.locator(`.sidebar [data-unit="${retiredID}"]`);
+  const register = (name) => api('/api/units', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: retiredID, name, kind: 'pbc', proj: 'p1' }),
+  });
+  const registryFacts = async () => (await api('/api/facts?pbc=units')).body.facts;
+  await role('PA');
+  const original = await register('作废复登验收单元');
+  await retiredRow.waitFor({ timeout: 6000 }).catch(() => {});
+  check('12 PA 登记后侧栏显示该单元', original.code === 201 && await retiredRow.count() === 1, original.code);
+  const beforeRemoval = await registryFacts();
+  const removalPath = '/api/units/' + retiredID + '?createdSeq=' + original.body?.registrySeq;
+  await role('DA');
+  const denied = await page.request.delete(BASE + removalPath);
+  check('12 DA 作废返回 403 且注册表无新事实',
+    denied.status() === 403 && (await registryFacts())[0].seq === beforeRemoval[0].seq, denied.status());
+  await role('PA');
+  const removed = await api(removalPath, { method: 'DELETE' });
+  await retiredRow.waitFor({ state: 'detached', timeout: 6000 }).catch(() => {});
+  const missing = await page.request.get(BASE + '/api/state?pbc=' + retiredID);
+  const afterRemoval = (await registryFacts())[0];
+  check('12 作废后侧栏消失、详情 404、只追加 PA 的 unit.removed',
+    removed.code === 200 && await retiredRow.count() === 0 && missing.status() === 404 &&
+    afterRemoval.seq === beforeRemoval[0].seq + 1 && afterRemoval.type === 'unit.removed' && afterRemoval.actor === 'PA',
+    { removed: removed.code, missing: missing.status(), fact: afterRemoval });
+  await shot('单元作废后');
+  const registered = await register('同 ID 复登验收单元');
+  await retiredRow.filter({ hasText: '同 ID 复登验收单元' }).waitFor({ timeout: 6000 }).catch(() => {});
+  const reopened = await api('/api/state?pbc=' + retiredID);
+  const audit = (await api('/api/facts?pbc=' + retiredID)).body.facts;
+  check('12 同 ID 复登后侧栏和详情更新，原登记事实仍在',
+    registered.code === 201 && await retiredRow.filter({ hasText: '同 ID 复登验收单元' }).count() === 1 &&
+    reopened.code === 200 && reopened.body.name === '同 ID 复登验收单元' &&
+    audit.length === 2 && audit.every((f) => f.type === 'unit.created'),
+    { registered: registered.code, read: reopened.code, id: retiredID, audit });
+  const staleRemoval = await page.request.delete(BASE + removalPath);
+  check('12 旧登记的作废请求返回 409，复登不受影响',
+    staleRemoval.status() === 409 && (await registryFacts())[0].seq === registered.body?.registrySeq, staleRemoval.status());
+  await shot('单元复登后');
+
+  // ---- 13. 健康度 ----
   const realErrors = pageErrors.filter((e) => !/Failed to load resource/.test(e));
   check('页面无 JS 异常', realErrors.length === 0, realErrors.slice(0, 3));
   const unexpected = httpErrors.filter((e) => !e.endsWith('/favicon.ico') && !/events\//.test(e)
