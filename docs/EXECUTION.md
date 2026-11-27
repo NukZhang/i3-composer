@@ -126,6 +126,23 @@ sha256sum .i3-artifacts/blobs/sha256/<hex>   # 与事实里的 digest 一致
 
 ## 三、怎么自己验一遍
 
+复测前在构建应用、编译前端和运行脚本的同一工作树执行：
+
+```bash
+(
+  set -e
+  git rev-parse HEAD
+  worktree_status=$(git status --porcelain)
+  if [ -n "$worktree_status" ]; then
+    printf '%s\n' '工作树含未提交改动，结果不代表任何提交。' "$worktree_status" >&2
+    exit 1
+  fi
+  printf '%s\n' 'git status --porcelain: 空'
+)
+```
+
+检查通过再构建与运行。归档时保留完整 SHA、工作树状态、账本和运行日志。若特意在开发工作树试验，也必须记录改动并标注结果不代表任何提交。
+
 ```bash
 # 1. 起环境
 docker compose up -d
