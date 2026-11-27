@@ -215,3 +215,66 @@ func TestProjectAgentsLastLoadedTrialSurvivesEmptyTrial(t *testing.T) {
 		t.Fatalf("lastLoadedTrial 必须带着当轮装配：%+v", a.LastLoadedTrial.Assemblies)
 	}
 }
+
+// TestTrialPreciseTimeOrdersSameMinute：同一分钟内连跑两轮（先真召回、后被白名单拦掉），
+// 分钟粒度的 at 分不出先后；trial.atExact 必须能把「最近一次检索」钉在真召回的那一轮（#47）。
+func TestTrialPreciseTimeOrdersSameMinute(t *testing.T) {
+	loaded := &domain.Trial{In: "x", Assemblies: []domain.ContextAssembly{
+		{Node: "n3", Query: "退款时效", Loaded: []domain.LoadedChunk{{Doc: "a.md", Score: 9}}, Budget: domain.BudgetInfo{Total: 1}},
+	}}
+	empty := &domain.Trial{In: "x", Assemblies: []domain.ContextAssembly{{Node: "n3", Query: "", Budget: domain.BudgetInfo{Total: 1}}}}
+	loaded.AtExact = "2026-11-27T08:35:01.000000001Z"
+	empty.AtExact = "2026-11-27T08:35:30.000000002Z"
+	facts := agentFacts(9, 10)
+	facts = append(facts,
+		Fact{Type: FactAgentTrial, Payload: mustJSON(map[string]any{"agentId": "x-fe", "trial": loaded, "at": "08:35", "by": "DA"})},
+		Fact{Type: FactAgentTrial, Payload: mustJSON(map[string]any{"agentId": "x-fe", "trial": empty, "at": "08:35", "by": "DA"})},
+	)
+	v, err := ProjectAgents(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := v.Agents["x-fe"]
+	if a.TrialRunAt != empty.AtExact {
+		t.Fatalf("TrialRunAt 应是最后一轮的精确时间，实际 %q", a.TrialRunAt)
+	}
+	if a.LastLoadedTrial == nil || a.LastLoadedTrial.AtExact != loaded.AtExact {
+		t.Fatalf("lastLoadedTrial 应停在真召回的那一轮，实际 %+v", a.LastLoadedTrial)
+	}
+	// 被拦的一轮（08:35:30）之后没有新的召回：不能反着说「已重新载入」。
+	if v.LoadedSinceTrial(a, empty.AtExact, "08:35") {
+		t.Fatal("被拦一轮之后没有真召回，LoadedSinceTrial 不应为真")
+	}
+	// 真召回一轮（08:35:01）之后有新的召回（就是它自己之后的那轮不算，这里反向验证）：
+	if !v.LoadedSinceTrial(a, loaded.AtExact, "08:35") {
+		t.Fatal("真召回一轮落地后最近一次召回就是它自己，LoadedSinceTrial 应为真")
+	}
+}
+
+// TestTrialWithEmptyQueryDoesNotPinLastLoaded：query 非空、却被白名单挡到一篇没进（note 归因
+// 「没读到输入」）的一轮不算「最近一次检索」；真·没召回（query 有、note「没召回」）是真检索过。
+func TestTrialWithEmptyQueryDoesNotPinLastLoaded(t *testing.T) {
+	loaded := &domain.Trial{Assemblies: []domain.ContextAssembly{
+		{Node: "n3", Query: "退款时效", Loaded: []domain.LoadedChunk{{Doc: "a.md", Score: 9}}},
+	}}
+	blocked := &domain.Trial{Assemblies: []domain.ContextAssembly{{
+		Node: "n3", Query: "退款时效", Note: "没读到输入：这一轮 kb 节点拿到的 query 是空的，不是知识库没召回",
+	}}}
+	missed := &domain.Trial{Assemblies: []domain.ContextAssembly{{
+		Node: "n3", Query: "退款时效", Note: "没召回：query 读到了，但没有一篇文档命中阈值，该进知识库补文档或调阈值",
+	}}}
+	facts := agentFacts(9, 10)
+	facts = append(facts,
+		Fact{Type: FactAgentTrial, Payload: mustJSON(map[string]any{"agentId": "x-fe", "trial": loaded, "at": "08:00"})},
+		Fact{Type: FactAgentTrial, Payload: mustJSON(map[string]any{"agentId": "x-fe", "trial": blocked, "at": "08:01"})},
+	)
+	v, _ := ProjectAgents(facts)
+	if a := v.Agents["x-fe"]; a.LastLoadedTrial == nil || a.LastLoadedAt != "08:00" {
+		t.Fatalf("被挡的一轮不应改写 lastLoadedTrial，实际 at=%q", a.LastLoadedAt)
+	}
+	facts = append(facts, Fact{Type: FactAgentTrial, Payload: mustJSON(map[string]any{"agentId": "x-fe", "trial": missed, "at": "08:02"})})
+	v, _ = ProjectAgents(facts)
+	if a := v.Agents["x-fe"]; a.LastLoadedAt != "08:02" {
+		t.Fatalf("真·没召回的一轮是查过了的，应更新 lastLoadedTrial，实际 at=%q", a.LastLoadedAt)
+	}
+}

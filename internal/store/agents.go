@@ -3,6 +3,8 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/zhangkun/i3-composer/internal/domain"
 )
@@ -324,12 +326,13 @@ func ProjectAgents(facts []Fact) (*AgentsView, error) {
 			}
 			if a := v.Agents[p.AgentID]; a != nil && p.Trial != nil {
 				a.TrialRun = p.Trial
-				a.TrialAt, a.TrialBy = p.At, p.By
+				a.TrialAt, a.TrialBy = trialStamp(p.At, p.Trial.AtExact), p.By
+				a.TrialRunAt = p.Trial.AtExact
 				// 只有真载入了知识的那一轮才更新 lastLoadedTrial：被工具白名单拦掉的一轮
 				// kb 拿到的 query 是空的、loaded=0，它不是「最近一次检索的结果」（#33）。
 				if trialRetrieved(p.Trial) {
 					a.LastLoadedTrial = p.Trial
-					a.LastLoadedAt = p.At
+					a.LastLoadedAt = trialStamp(p.At, p.Trial.AtExact)
 				}
 			}
 
@@ -380,13 +383,62 @@ func ProjectAgents(facts []Fact) (*AgentsView, error) {
 // trialRetrieved 判定这一轮试跑是否真的检索过并载入了知识：
 // 至少一条装配有 query、且载入数 > 0。被工具白名单拦掉的一轮，kb 的输入没进来，
 // query 空、loaded 0——它是证据，但不是「最近一次检索的结果」。
+// LoadedSinceTrial 回答：「这一轮（按它落地时的 atExact / at）之后，有没有再真召回一轮？」
+//
+// 为什么需要精确时间：同一分钟内连跑两轮（4b 的试跑接着 10 的被拦一轮）时按分钟比较
+// 永远相等，调用方就分不出「最近一次检索」是这一轮之前的还是之后的（#47）。
+// 老账本里的事实没有 atExact：那时退回分钟粒度比较，相等就按 true 处理——
+// 宁可说「之后已重召回」，也不把真召回误报成没载入。
+func (v *AgentsView) LoadedSinceTrial(a *domain.Agent, atExact, at string) bool {
+	if a == nil || a.LastLoadedTrial == nil {
+		return false
+	}
+	if atExact != "" && a.TrialRunAt != "" {
+		return atExact < a.TrialRunAt
+	}
+	return at == "" || at <= a.LastLoadedAt
+}
+
+// trialStamp 是给人看的试跑时间戳：事实里的 at 只有分钟，同一分钟内连跑两轮时
+// 「最近一次检索」与「本轮」会显示成同一时刻，分不出先后（#47）。有精确时间就带上
+// 秒（「11-27 08:48:12」），老账本没有就保持原样（「11-27 08:48」）。
+//
+// 精确到秒而不是全部精度：用户看的是「哪一轮更新」，纳秒没有意义；同一秒内的两轮
+// 仍会相等，但 e2e 的试跑每轮要跑几秒，实际不会撞上。
+func trialStamp(at, exact string) string {
+	if at == "" || exact == "" {
+		return at
+	}
+	t, err := time.Parse(time.RFC3339Nano, exact)
+	if err != nil {
+		return at
+	}
+	return t.Local().Format("01-02 15:04:05")
+}
+
 func trialRetrieved(t *domain.Trial) bool {
 	for _, a := range t.Assemblies {
-		if a.Query != "" && len(a.Loaded) > 0 {
+		if retrieved(a) {
 			return true
 		}
 	}
 	return false
+}
+
+// retrieved 判断一条装配是不是「真检索了」：有 query、确实进了文档、而且不是因为没用的
+// 原因被全部挡掉。只看 query 非空不够——被工具白名单拦掉的那一轮，kb 节点照样带着
+// 非空 query 去查，但载入全被挡掉，它既不是「最近一次检索的结果」，也不该把
+// lastLoadedTrial 钉到自己身上（#47：4b 之后的这一轮把 10 的断言弄挂）。
+//
+// 注意不能用 omitted.count 判：省略计数在载入之后才省，它 > 0 恰恰说明真检索过。
+// 「被挡掉」的标志只有 note 以「没读到输入」开头（服务端算出来的归因，见 #32）。
+// 不能用「note 非空」判：读到 query 但一片没命中时 note 是「没召回」，那是真查过了。
+func retrieved(a domain.ContextAssembly) bool {
+	if a.Query == "" || strings.HasPrefix(a.Note, "没读到输入") {
+		return false
+	}
+	// 读到 query 却没命中（note「没召回」）也是真检索过：它回答的就是「该不该补文档」。
+	return true
 }
 
 func validRollout(p int) bool { return p == 10 || p == 50 || p == 100 }

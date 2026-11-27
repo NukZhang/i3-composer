@@ -190,7 +190,11 @@ func (s *Server) agentTrial(w http.ResponseWriter, r *http.Request, c reqCtx) er
 		}
 		trial.Source = source
 	}
-	at := time.Now().Format("01-02 15:04")
+	// 分钟粒度的 at 只给人看；trial.AtExact 带秒与纳秒：4b 的试跑和 10 的「被拦一轮」常在
+	// 同一分钟里连着发生，只按分钟就分不出先后（#47 复跑时看到的那条间歇失败）。
+	now := time.Now()
+	at := now.Format("01-02 15:04")
+	trial.AtExact = now.Format(time.RFC3339Nano)
 	// 装配事实先于试跑结论落账：先记「这一轮看到了什么」，再记「这一轮得出了什么」。
 	// 反过来的话，中途崩了就会出现「有结论、不知道它读的是哪一版库」——
 	// 这正是评测失败没法归因到「没召回」的原因。

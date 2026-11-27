@@ -246,6 +246,10 @@ type Trial struct {
 	// 存在 Trial 上、随 agent.trial.run 落账：失败用例点开能看到「当轮装配」，
 	// 而不是去查最新一轮——最新一轮常常已经不是失败的那条了。
 	Assemblies []ContextAssembly `json:"assemblies,omitempty"`
+	// AtExact 是这一轮落地的精确时间（带秒与纳秒），只由服务端写。
+	// 给人看的 at 是分钟粒度，同一分钟内连跑两轮时它分不出先后——「这一轮之后
+	// 有没有再真召回一轮」就只能靠运气判断（#47）。
+	AtExact string `json:"atExact,omitempty"`
 }
 
 // ContextAssembly 是一次 kb 检索的装配结果：进了哪些文档、省了多少、预算用了多少。

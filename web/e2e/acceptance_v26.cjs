@@ -17,6 +17,7 @@ function seedFlow(agentId) {
 const SEED_QA_FLOW = seedFlow('qa-agent');
 
 const results = [];
+const trialAsmDbg = [];
 function check(name, ok, detail) {
   results.push({ name, ok: !!ok, detail });
   console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail === undefined ? '' : ' :: ' + JSON.stringify(detail)));
@@ -172,7 +173,9 @@ function check(name, ok, detail) {
     // 被白名单拦掉的空轮分开，e2e 不再自己挑、也不写「找不到就退回第一轮」的兜底——
     // 兜底会把这个字段缺失这件事掩盖成一个假绿。
     const t = a.lastLoadedTrial || {};
-    return { assemblies: t.assemblies || [] };
+    // 这一页刚点完「试跑这一条」：最新一轮就是本套件 4b 跑的那次，记下它的精确落地时间，
+    // 后面 10 段核对「最近一次检索」仍旧钉在这一轮上（#47）。
+    return { assemblies: t.assemblies || [], lastAtExact: t.atExact || '', trialAtExact: (a.trialRun || {}).atExact || '' };
   }, BASE);
   const asm0 = (trialAsm.assemblies || []).find((a) => a.query && a.loaded && a.loaded.length > 0);
   check('4b 试跑结果带当轮装配（载入清单 + 省略 + 预算）',
@@ -190,14 +193,23 @@ function check(name, ok, detail) {
   });
   check('4b 编排里有 kb 节点可选', kbAssembled);
   // 等 kb 节点的配置面板真的渲染出来（节点刚被点选时面板还在上一次选择的内容上）。
-  await page.waitForFunction(() => /当轮装配/.test((document.querySelector('.as-cfg') || {}).textContent || ''), null, { timeout: 5000 }).catch(() => {});
+  // 点错节点时这里永远等不到，5 秒后下面两条断言会把「面板渲染的是谁」报出来（#47）。
+  await page.waitForFunction((node) => {
+    const mark = document.querySelector('.as-cfg [data-node]');
+    return !!mark && mark.getAttribute('data-node') === node;
+  }, (asm0 && asm0.node) || '', { timeout: 5000 }).catch(() => {});
   const kbPanel = await page.evaluate(() => {
     const el = document.querySelector('.as-cfg');
-    return el ? el.textContent : '';
+    const mark = document.querySelector('.as-cfg [data-node]');
+    return { text: el ? el.textContent : '', node: mark ? mark.getAttribute('data-node') : null };
   });
+  // 面板以选中节点为 key（data-node）：点完之后只凭文案判断，分不清「面板还是上一个节点」
+  // 与「这个节点载入 0 篇」（#47）。所以先核对面板渲染的确实是本轮装配的那个 kb 节点。
+  check('4b 面板渲染的是 kb 节点本身（不是上一个选中的节点）',
+    !!asm0 && kbPanel.node === asm0.node, { node: kbPanel.node, assembleNode: asm0 && asm0.node });
   check('4b kb 节点展开显示载入篇数、省略数与原因',
-    /当轮装配/.test(kbPanel) && /载入 \d+ 篇/.test(kbPanel) && /省略 \d+ 篇/.test(kbPanel)
-      && /没有省略|省略原因/.test(kbPanel) && /预算占用/.test(kbPanel), kbPanel.slice(0, 200));
+    /当轮装配/.test(kbPanel.text) && /载入 \d+ 篇/.test(kbPanel.text) && /省略 \d+ 篇/.test(kbPanel.text)
+      && /没有省略|省略原因/.test(kbPanel.text) && /预算占用/.test(kbPanel.text), kbPanel.text.slice(0, 200));
 
   await page.click('.as-dbg-r button:has-text("沉淀为评测用例")');
   await page.waitForTimeout(1200);
@@ -442,26 +454,50 @@ function check(name, ok, detail) {
     const a = await fetch(base + '/api/agents/qa-agent').then((r) => r.json());
     const asms = (a.trialRun || {}).assemblies || [];
     const empty = asms.find((x) => !x.query && (!x.loaded || x.loaded.length === 0));
-    // #33：这一轮被拦了，但它不能污染「最近一次检索的结果」。上一段 4b 的试跑真载入过，
-    // 所以 lastLoadedTrial 必须停那一轮（query 非空、有载入），而不是跟着最新的空轮走。
+    // #33：这一轮被拦了，但它不能污染「最近一次检索的结果」。这一套件里真召回的那一轮是
+    // 4b（trialRunAt 记的是本套件刚跑的那次），所以 lastLoadedTrial 必须正是 4b 那一轮
+    // （query 非空、有载入），而不是跟着最新的空轮走。
+    //
+    // 以前这里看的是「lastLoadedTrial 的 at ≠ 本轮 at」：在同一本账上连跑多轮时（#45），
+    // lastLoadedTrial 停在**更早**某轮的召回上，at 也不等于本轮，于是断言过了——空轮
+    // 把 lastLoadedTrial 顶掉那一刻恰好撞上同一分钟，它才显形（#47 的间歇失败）。
+    // 现在直接比对「是不是 4b 那一轮」：4b 的精确落地时间落在 lastLoadedTrial 上才算对。
     const last = a.lastLoadedTrial || null;
     const lastAsm = last ? ((last.assemblies || [])[0] || null) : null;
     return {
       note: empty && empty.note, query: empty && empty.query, loaded: empty ? (empty.loaded || []).length : null,
       pinned: !!lastAsm && !!lastAsm.query && (lastAsm.loaded || []).length > 0,
       lastAt: a.lastLoadedAt || '', trialAt: a.trialAt || '',
+      lastExact: last ? last.atExact || '' : '', trialExact: (a.trialRun || {}).atExact || '',
     };
   }, BASE);
   check('10 没读到输入时装配归因写「没读到输入」而不是「没召回」',
     !!blockedAsm && /^没读到输入/.test(blockedAsm.note || '') && /query 是空/.test(blockedAsm.note || ''),
     blockedAsm);
   // 失败时分清两种情况：本轮自己没被拦（pinned=false），或本轮被拦了但「最近一轮」读了空轮。
-  // 「最近一轮试跑」在同一本 agents 日志上是全局的，多实例共用时这里会是别人的一轮（#61）。
+  // 「最近一轮试跑」在同一本 agents 日志上是全局的，多实例共用时这里会是别人的一轮（#61）；
+  // 同一本账上连跑多轮时（#45），lastLoadedTrial 往往停在本轮 4b 那一回的真召回上——
+  // 本轮只试跑了一次、之后没有新召回，它在被拦轮之前，同样没有「空轮混进最近一次检索」。
+  //
+  // 分这几种情况报出来：只看一句布尔，会把人引到错的排查方向（#61 多实例 vs #45 多轮）。
+  // 时间戳带秒（trialStamp）：同一分钟内连跑两轮时按分钟比永远相等，分不出先后（#47）。
+  const after = blockedAsm.lastAt > blockedAsm.trialAt; // "MM-DD HH:MM:SS" 字面序即时间序
+  const pinnedToRun4b = !!trialAsm.lastAtExact && blockedAsm.lastExact === trialAsm.lastAtExact;
+  const recallState = !blockedAsm.pinned ? 'unpinned' : after || pinnedToRun4b ? 'ok' : 'stale';
+  // 判「最近一次检索没有被空轮顶掉」两种说法都对：
+  //   · 被拦轮之后又有新召回（lastAt > trialAt）——本账上还跑过别的试跑；
+  //   · lastLoadedTrial 仍是 4b 那一轮（精确落地时间一致）——本轮只召回了一次，之后没有新召回，
+  //     它当然早于被拦轮，而这恰恰是对的。以前只认第一种，同一本账连跑多轮时（#45）必挂（#47）。
   check('10 被白名单拦掉的一轮不进 lastLoadedTrial（最近一次检索仍钉在真召回那轮）',
-    blockedAsm.pinned && blockedAsm.lastAt !== '' && blockedAsm.lastAt !== blockedAsm.trialAt,
+    blockedAsm.pinned && blockedAsm.lastAt !== '' && (trialAsm.lastAtExact ? pinnedToRun4b : after),
     {
-      lastAt: blockedAsm.lastAt, trialAt: blockedAsm.trialAt, pinned: blockedAsm.pinned,
-      reason: blockedAsm.pinned ? '' : '本轮被拦的一轮没被标成拦下，或「最近一轮」不是本轮（同一本 agents 日志上多实例同时试跑，见 #61）',
+      lastAt: blockedAsm.lastAt, trialAt: blockedAsm.trialAt, pinned: blockedAsm.pinned, recallState,
+      lastExact: blockedAsm.lastExact, run4bExact: trialAsm.lastAtExact,
+      reason: recallState === 'unpinned'
+        ? '本轮被拦的一轮没被标成拦下，或「最近一轮」不是本轮（同一本 agents 日志上多实例同时试跑，见 #61）'
+        : recallState === 'stale'
+          ? '最近一次召回既不是本套件 4b 那一轮，也不在被拦轮之后：空轮混进了「最近一次检索」（见 #47）'
+          : '',
     });
 
   // 对话验收不能拿一轮被拦下的执行拼回复：拒绝，且一条对话事实都不落。

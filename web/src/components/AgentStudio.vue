@@ -296,6 +296,9 @@ const curAssembly = computed(() => {
 
     <div class="as-bottom">
       <div class="as-cfg">
+        <!-- data-node 标明这块面板此刻渲染的是哪个节点：切换选中时面板内容跟着换，
+             e2e 与排查时能当场看出「读到的不是以为的那个节点」（#47）。 -->
+        <div v-if="cur" :data-node="cur.id" data-testid="as-cfg-node" />
         <div class="row" style="gap: 6px; align-items: center; margin-bottom: 8px">
           <span style="font-size: 12px; font-weight: 600; color: var(--tx-1)">{{ cur ? cur.n : '—' }}</span>
           <span class="tag t-gray" style="font-size: 9px; margin-left: auto">{{ cur ? nodeType(cur.t).n : '' }}</span>

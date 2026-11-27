@@ -136,7 +136,10 @@ type Agent struct {
 	Trial    *Trial `json:"trial,omitempty"`
 	TrialRun *Trial `json:"trialRun,omitempty"`
 	TrialAt  string `json:"trialAt,omitempty"`
-	TrialBy  string `json:"trialBy,omitempty"`
+	// TrialRunAt 是「最近一轮试跑」的精确落地时间（事实里的 atExact），
+	// 同一分钟内连跑两轮时靠它分先后；老账本里没有这条时为空（#47）。
+	TrialRunAt string `json:"trialRunAt,omitempty"`
+	TrialBy    string `json:"trialBy,omitempty"`
 	// LastLoadedTrial 是**最近一次真的载入了知识**的试跑（任一 kb 节点 loaded>0），
 	// 连同当轮 assemblies 一起。TrialRun 只记最后一次，而最后一次可能是被白名单
 	// 拦掉的一轮（kb 的 query 为空、loaded=0）——「上一次检索到底召回没召回」这类
