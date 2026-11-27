@@ -44,6 +44,8 @@ const (
 	StSuperseded = "superseded"
 )
 
+const SourceManual = "手动编辑"
+
 // Ref 是一条「衍生自」引用：本制品这一版是基于上游哪个版本生成的。
 type Ref struct {
 	T Artifact `json:"t"`

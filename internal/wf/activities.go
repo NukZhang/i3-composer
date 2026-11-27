@@ -200,6 +200,9 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 	n := 0
 	for _, t := range Complete(Affected(in.Type), have) {
 		cur := latest(t)
+		if ver, ok := domain.Find(v.Versions, t, cur); ok && manualPlan(ver) {
+			continue
+		}
 		nv, err := domain.NextVersion(cur)
 		if err != nil {
 			return StepResult{}, err
@@ -237,6 +240,11 @@ func (a *Activities) GenArtifacts(ctx context.Context, in StepInput) (StepResult
 		n++
 	}
 	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, Detail: fmt.Sprintf("%d 个制品草稿", n)})
+}
+
+// 人工方案由负责角色编辑。流水线收敛时只重接这些制品的引用。
+func manualPlan(v domain.Version) bool {
+	return v.Source == domain.SourceManual && (v.T == domain.PRD || v.T == domain.AD || v.T == domain.AT)
 }
 
 // unitOf 读这个工作项所属交付单元的登记信息。
@@ -311,7 +319,10 @@ func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, er
 			}
 			// 重算也要带真内容：否则重算出来的制品是空壳，
 			// 收敛之后的工作区反而比收敛前更假。
-			if a.D.Exec != nil {
+			if prev, ok := domain.Find(v.Versions, s.T, s.V); ok && manualPlan(prev) {
+				ver.MD, ver.By, ver.Source = prev.MD, prev.By, prev.Source
+				ver.Note = "保留人工正文，按上游最新版本更新引用"
+			} else if a.D.Exec != nil {
 				if s.T == domain.Code {
 					files, err := a.D.Exec.Code(ctx, unit, in.Title, in.Type)
 					if err != nil {
@@ -372,8 +383,13 @@ func (a *Activities) Commit(ctx context.Context, in StepInput) (StepResult, erro
 		Type:    in.Type,
 		TreeSHA: domain.TreeSHA(tree),
 	}
+	payload := store.CommitCreated{Commit: c}
+	if at, ok := domain.Find(v.Versions, domain.AT, tree[domain.AT]); ok && manualPlan(at) &&
+		domain.ParseKind(a.unitOf(ctx, in.Input).Kind) != domain.KindAgent {
+		payload.Checks = domain.ChecksFromAT(at.MD)
+	}
 	if _, err := a.logOf(in.Input).AppendOp(ctx, pbc, in.OpID+"/commit",
-		store.FactCommitCreated, "i3-pipeline", c); err != nil {
+		store.FactCommitCreated, "i3-pipeline", payload); err != nil {
 		return StepResult{}, err
 	}
 	return a.done(ctx, in, StepResult{OK: true, Step: in.Step, CommitNo: no, Detail: "已提交 " + no})

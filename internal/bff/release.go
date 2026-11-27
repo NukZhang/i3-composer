@@ -61,7 +61,7 @@ func (s *Server) unitGates(ctx context.Context, v *store.View, u store.Unit) []d
 }
 
 // checkSummary 统计验收清单在打 tag 那一刻的分布。
-// 只存计数不存全文：清单本身在 check.defined / check.decided 里，不重复记。
+// 只存计数：提交事实（或历史 check.defined）记录清单，check.decided 记录判定。
 func checkSummary(cs []domain.Check) store.CheckSummary {
 	s := store.CheckSummary{Total: len(cs)}
 	for _, c := range cs {
@@ -81,10 +81,11 @@ func checkSummary(cs []domain.Check) store.CheckSummary {
 
 // tagUnit 是人在验证页按下的「打 tag 固化交付物」。
 //
-// 三层前提，缺一不可：
+// 打 tag 前核对构建、测试、人工验收与交付闸门：
 //  1. HEAD 有真构建的 digest；
 //  2. 最近一次测试针对 HEAD 且全过；
-//  3. 闸门全过（判不了的不挡，但也不当成通过）。
+//  3. PBC 有当前提交的人工验收清单且全过；
+//  4. 闸门全过（判不了的不挡，但也不当成通过）。
 func (s *Server) tagUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	if err := Require(c.Role, ActTag); err != nil {
 		return err
@@ -124,8 +125,10 @@ func (s *Server) tagUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if v.Test.Pass != v.Test.Total {
 		return fmt.Errorf("%w：测试未全过（%d/%d），不能打 tag", errBadRequest, v.Test.Pass, v.Test.Total)
 	}
-	// 验收清单存在时，它必须先全过：人验过的才算数。
-	// 没有清单的单元（新拆出来的）以机器测试与闸门为准——但页面会说清这件事。
+	if domain.ParseKind(u.Kind) != domain.KindAgent && (len(v.Checks) == 0 || v.CheckCommit != head.No) {
+		return fmt.Errorf("%w：HEAD %s 没有对应的人工验收清单，须提交带验收项的 AT 并由 BA 判定", errBadRequest, head.No)
+	}
+	// Agent 仍按既有口径检查已有清单和评测闸。
 	if len(v.Checks) > 0 {
 		left, pass := 0, 0
 		for _, c := range v.Checks {

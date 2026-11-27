@@ -748,7 +748,7 @@ func (s *Server) saveDraft(w http.ResponseWriter, r *http.Request, c reqCtx) err
 	// 同制品已有草稿时，新草稿取代它（superseded 由投影处理）。
 	ver := domain.Version{
 		T: t, V: nv, At: time.Now().Format("01-02 15:04"), By: workerFor(t),
-		Source: "手动编辑", DF: domain.DeriveRefs(t, latest), St: domain.StDraft,
+		Source: domain.SourceManual, DF: domain.DeriveRefs(t, latest), St: domain.StDraft,
 		Note: strings.TrimSpace(in.Note),
 	}
 	if ver.Note == "" {

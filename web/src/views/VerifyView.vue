@@ -15,10 +15,15 @@ import { kindCls, kindText } from '../derive.js';
 const kind = computed(() => unitKind());
 const unit = computed(() => currentUnit() || {});
 const agent = computed(() => currentAgent());
-const checks = computed(() => (S.state && S.state.checks) || []);
 const defects = computed(() => (S.state && S.state.defects) || []);
 const chats = computed(() => (S.state && S.state.chats) || []);
 const can = (a) => (S.acts || []).includes(a);
+const head = computed(() => (S.state && S.state.commits && S.state.commits[0]) || null);
+const checkCommit = computed(() => S.state?.checkCommit || '');
+const checks = computed(() => {
+  if (kind.value !== 'agent' && head.value && checkCommit.value !== head.value.no) return [];
+  return S.state?.checks || [];
+});
 
 const idx = computed(() => Math.min(S.vIdx || 0, Math.max(0, checks.value.length - 1)));
 const cur = computed(() => checks.value[idx.value] || null);
@@ -32,7 +37,6 @@ const bugSteps = ref('');
 
 // v3.2：打 tag 挪到验证页末尾。tag 是发布编排唯一认的东西——
 // 没有 tag 的单元不会出现在批次里，也不会被「顺手带上」。
-const head = computed(() => (S.state && S.state.commits && S.state.commits[0]) || null);
 const unitTag = computed(() => (head.value && head.value.tag) || '');
 const testsOK = computed(() => {
   const t = S.state && S.state.test;
@@ -42,14 +46,13 @@ const gatesOK = computed(() => {
   const gs = (S.state && S.state.gates && S.state.gates.all) || [];
   return gs.length > 0 && gs.every((g) => g.ok || g.unknown);
 });
-const checksPass = computed(() => checks.value.length > 0 && checks.value.every((c) => c.st === 'pass'));
 const remainAccept = computed(() => checks.value.filter((c) => c.st !== 'pass').length);
-// 没有验收清单时以机器测试与闸门为准——但页面要说清这件事，不假装「全过」。
 const tagReason = computed(() => {
   if (!head.value) return '还没有提交';
   if (!head.value.digest) return 'HEAD 还没构建';
   if (!testsOK.value) return '机器测试未全过';
   if (!gatesOK.value) return '闸门未过';
+  if (kind.value !== 'agent' && !checks.value.length) return '当前提交缺少人工验收清单';
   if (remainAccept.value) return '还差 ' + remainAccept.value + ' 条验收未通过';
   return '';
 });
@@ -113,7 +116,7 @@ async function pass() {
   const c = cur.value;
   if (!c) return;
   try {
-    await api.checkDecide(c.id, { st: 'pass' }, S.pbcId);
+    await api.checkDecide(c.id, { st: 'pass', commit: checkCommit.value }, S.pbcId);
     toast(c.id + ' 判定：通过', 'ok');
   } catch (e) {
     toast(e.message, 'err');
@@ -142,7 +145,7 @@ async function submitBug() {
   try {
     const j = await api.checkDecide(
       c.id,
-      { st: 'fail', title: t, sev: bugSev.value, steps: bugSteps.value },
+      { st: 'fail', commit: checkCommit.value, title: t, sev: bugSev.value, steps: bugSteps.value },
       S.pbcId,
     );
     S.vBugOpen = false;
@@ -186,7 +189,8 @@ function pushDefect(d) {
   </div>
 
   <div v-if="!checks.length" class="card">
-    <div class="empty">这个单元还没有验收清单。清单随 AT 制品进账本，没有清单就没有「验过」这回事。</div>
+    <div v-if="kind !== 'agent'" class="empty">请提交有明确验收项的人工 AT。每项使用 AT-01 或 AC-01 等编号，写齐 Given、When、Then。BA 按当前提交逐条验收后方可打 tag。</div>
+    <div v-else class="empty">本单元尚无人工验收清单，交付检查按 Agent 评测闸执行。</div>
   </div>
 
   <template v-else>
@@ -264,7 +268,9 @@ function pushDefect(d) {
         <span class="small muted mono">{{ d.ac }}</span>
         <span class="tag" :class="d.sev === '阻塞' ? 't-err' : d.sev === '严重' ? 't-warn' : 't-gray'" style="font-size: 9px">{{ d.sev }}</span>
       </div>
-      <div class="small muted" style="margin-top: 8px">验收不通过 ≠ 打回重做。bug 进 backlog，修完这一条重验，其它条不受影响。</div>
+      <div class="small muted" style="margin-top: 8px">
+        {{ kind === 'agent' ? '缺陷进入 backlog。修复后可以重新判定这条验收。' : '缺陷进入 backlog。修复并创建新提交后，BA 按新提交的清单重新验收。' }}
+      </div>
     </div>
 
 
@@ -286,8 +292,7 @@ function pushDefect(d) {
       <template v-else>
         <div class="row" style="gap: 8px; align-items: center">
           <span v-if="tagReason" class="tag t-warn" style="font-size: 9px">{{ tagReason }}</span>
-          <span v-else class="tag t-ok" style="font-size: 9px">验收全过，可以打 tag</span>
-          <span v-if="!checks.length" class="small muted">这个单元还没有验收清单，打 tag 以机器测试与闸门为准。</span>
+          <span v-else class="tag t-ok" style="font-size: 9px">{{ checks.length ? '验收全过，可以打 tag' : 'Agent 评测闸已通过，可以打 tag' }}</span>
           <span class="spacer" style="flex: 1" />
           <button class="btn small primary" :disabled="!canTag || !can('tag')" @click="doTag">
             <span v-html="icon('tag', 11)" /> 打 tag 固化交付物

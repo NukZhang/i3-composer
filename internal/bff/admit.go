@@ -60,7 +60,7 @@ func (s *Server) admitInput(v *store.View, it *store.Item) domain.AdmitInput {
 func manualText(versions map[domain.Artifact][]domain.Version, t domain.Artifact) (string, bool) {
 	vs := versions[t]
 	for i := len(vs) - 1; i >= 0; i-- {
-		if vs[i].Source == "手动编辑" {
+		if vs[i].Source == domain.SourceManual {
 			if md := strings.TrimSpace(vs[i].MD); md != "" {
 				return md, true
 			}

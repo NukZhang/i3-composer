@@ -375,10 +375,11 @@ func (s *Server) checkDecide(w http.ResponseWriter, r *http.Request, c reqCtx) e
 		return err
 	}
 	var in struct {
-		ST    string `json:"st"`
-		Title string `json:"title"`
-		Sev   string `json:"sev"`
-		Steps string `json:"steps"`
+		ST     string `json:"st"`
+		Commit string `json:"commit"`
+		Title  string `json:"title"`
+		Sev    string `json:"sev"`
+		Steps  string `json:"steps"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 		return fmt.Errorf("%w：%v", errBadRequest, err)
@@ -405,6 +406,27 @@ func (s *Server) checkDecide(w http.ResponseWriter, r *http.Request, c reqCtx) e
 	if err != nil {
 		return err
 	}
+	commit := ""
+	if len(v.Commits) > 0 {
+		// 老单元的构成可能只在登记表里，与验证页和打 tag 一样以登记为准。
+		kind := domain.ParseKind(v.Kind)
+		units, err := s.loadUnits(r.Context())
+		if err != nil {
+			return err
+		}
+		for _, u := range units.Units {
+			if u.ID == c.PBC {
+				kind = domain.ParseKind(u.Kind)
+				break
+			}
+		}
+		if kind != domain.KindAgent {
+			commit = v.Commits[0].No
+			if in.Commit != commit || v.CheckCommit != commit {
+				return fmt.Errorf("%w：验收项不属于当前提交 %s，请刷新验收清单", errBadRequest, commit)
+			}
+		}
+	}
 	var cur *domain.Check
 	for i := range v.Checks {
 		if v.Checks[i].ID == c.ItemID {
@@ -416,7 +438,7 @@ func (s *Server) checkDecide(w http.ResponseWriter, r *http.Request, c reqCtx) e
 	}
 	now := time.Now().Format("01-02 15:04")
 	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactCheckDecided, c.Role.String(), map[string]any{
-		"id": cur.ID, "st": in.ST, "at": now, "by": c.Role.String(),
+		"id": cur.ID, "st": in.ST, "commit": commit, "at": now, "by": c.Role.String(),
 	}); err != nil {
 		return err
 	}
