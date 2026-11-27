@@ -74,9 +74,10 @@ type TestOut struct {
 
 // DeployResult 是部署的真实结果。
 type DeployResult struct {
-	URL    string `json:"url"`
-	PID    int    `json:"pid,omitempty"`
-	Health string `json:"health,omitempty"`
+	RuntimeID string `json:"runtimeId,omitempty"`
+	URL       string `json:"url"`
+	PID       int    `json:"pid,omitempty"`
+	Health    string `json:"health,omitempty"`
 	// Skipped 为真表示这个产物没有独立进程可部署（如 Agent 定义本身）。
 	Skipped bool   `json:"skipped,omitempty"`
 	Detail  string `json:"detail,omitempty"`

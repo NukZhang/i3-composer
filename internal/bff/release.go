@@ -196,10 +196,10 @@ type orchUnit struct {
 }
 
 type orchView struct {
-	Proj    string               `json:"proj"`
-	Units   []orchUnit           `json:"units"`
-	Batches []store.ReleaseBatch `json:"batches"`
-	Envs    []string             `json:"envs"`
+	Proj    string             `json:"proj"`
+	Units   []orchUnit         `json:"units"`
+	Batches []releaseBatchView `json:"batches"`
+	Envs    []string           `json:"envs"`
 }
 
 // orch 是项目级发布编排的读接口：编排链上的单元 + 就绪判断 + 历史批次。
@@ -258,7 +258,7 @@ func (s *Server) orch(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	}
 	for _, b := range rv.Batches {
 		if b.Proj == proj {
-			out.Batches = append(out.Batches, b)
+			out.Batches = append(out.Batches, s.releaseBatchView(b))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -368,10 +368,10 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 		return fmt.Errorf("执行侧未接入，无法发布")
 	}
 	// 真部署：PBC 产物起进程并等 /healthz；Agent 产物没有进程，如实标 activated。
-	var done []string
+	var done []store.ReleaseUnit
 	fail := func(reason string) error {
-		for _, id := range done {
-			s.Pipe.Stop(id, in.Env)
+		for _, unit := range done {
+			s.Pipe.Dep.StopRuntime(unit.ID, in.Env, unit.RuntimeID)
 		}
 		return fmt.Errorf("%w：%s", errBadRequest, reason)
 	}
@@ -394,11 +394,11 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 			}
 			return fail("部署 " + l.Name + "（" + l.Commit + "）失败：" + err.Error() + "；" + where)
 		}
-		l.URL, l.Status = out.URL, "deployed"
+		l.URL, l.RuntimeID, l.Status = out.URL, out.RuntimeID, "deployed"
 		if in.Env == "SIT" && byID[l.ID].Profile == domain.ProfileMaterialInbound {
 			l.BrowserURL = materialURL(l.ID, in.Env) + "?commit=" + l.Commit
 		}
-		done = append(done, l.ID)
+		done = append(done, *l)
 		// 部署事实落在单元自己的账本里：这条线的「谁在哪个环境、部署了哪个字节」可查。
 		d := store.Deploy{ID: "release", Tag: l.Tag, Commit: l.Commit, URL: out.URL,
 			At: stampNow(), By: string(c.Role), Status: "success"}
@@ -407,19 +407,18 @@ func (s *Server) release(w http.ResponseWriter, r *http.Request, c reqCtx) error
 		}
 	}
 
-	id := s.nextBatchID(r.Context(), proj)
 	b := store.ReleaseBatch{
-		ID: id, Proj: proj, Env: in.Env, Mode: in.Mode, Units: locked,
+		Proj: proj, Env: in.Env, Mode: in.Mode, Units: locked,
 		By: string(c.Role), At: stampNow(), Status: "active",
 	}
-	if err := s.Log.Ensure(r.Context(), releasesLog); err != nil {
+	if err := s.recordReleaseBatch(r.Context(), &b); err != nil {
+		for _, unit := range done {
+			s.Pipe.Dep.StopRuntime(unit.ID, in.Env, unit.RuntimeID)
+		}
 		return err
 	}
-	if _, err := s.Log.Append(r.Context(), releasesLog, store.FactReleaseBatch, string(c.Role), b); err != nil {
-		return err
-	}
-	s.publish("releases", "release.batch.created", map[string]any{"id": id, "proj": proj})
-	writeJSON(w, http.StatusCreated, b)
+	s.publish("releases", "release.batch.created", map[string]any{"id": b.ID, "proj": proj})
+	writeJSON(w, http.StatusCreated, s.releaseBatchView(b))
 	return nil
 }
 
@@ -452,15 +451,13 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, c reqCtx) erro
 	if b.Status == "rolledback" {
 		return fmt.Errorf("%w：批次 %s 已经回滚过", errBadRequest, in.ID)
 	}
-	if s.Pipe != nil {
-		for _, u := range b.Units {
-			if u.URL != "" {
-				s.Pipe.Stop(u.ID, b.Env)
-			}
+	for _, unit := range b.Units {
+		if instance, ok := s.releaseUnitInstance(*b, unit); ok {
+			s.Pipe.Dep.StopRuntime(unit.ID, b.Env, instance.RuntimeID)
 		}
 	}
 	if _, err := s.Log.Append(r.Context(), releasesLog, store.FactReleaseRollback, string(c.Role),
-		map[string]any{"id": b.ID, "by": string(c.Role), "at": stampNow(), "note": in.Note}); err != nil {
+		map[string]any{"id": b.ID, "proj": b.Proj, "by": string(c.Role), "at": stampNow(), "note": in.Note}); err != nil {
 		return err
 	}
 	s.publish("releases", "release.batch.rolledback", map[string]any{"id": b.ID})
@@ -468,19 +465,26 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, c reqCtx) erro
 	return nil
 }
 
-// nextBatchID 生成 REL-YYYYMMDD-NN：同一项目当天按顺序编号。
-func (s *Server) nextBatchID(ctx context.Context, proj string) string {
+func (s *Server) recordReleaseBatch(ctx context.Context, batch *store.ReleaseBatch) error {
+	s.releaseMu.Lock()
+	defer s.releaseMu.Unlock()
+	if err := s.Log.Ensure(ctx, releasesLog); err != nil {
+		return err
+	}
 	day := time.Now().Format("20060102")
 	rv, err := s.loadReleases(ctx)
+	if err != nil {
+		return err
+	}
 	n := 0
-	if err == nil {
-		for _, b := range rv.Batches {
-			if b.Proj == proj && strings.Contains(b.ID, day) {
-				n++
-			}
+	for _, previous := range rv.Batches {
+		if previous.Proj == batch.Proj && strings.Contains(previous.ID, day) {
+			n++
 		}
 	}
-	return fmt.Sprintf("REL-%s-%02d", day, n+1)
+	batch.ID = fmt.Sprintf("REL-%s-%02d", day, n+1)
+	_, err = s.Log.Append(ctx, releasesLog, store.FactReleaseBatch, batch.By, *batch)
+	return err
 }
 
 func stampNow() string { return time.Now().Format("01-02 15:04") }

@@ -1,0 +1,34 @@
+#38 · 2026-11-27 · i3-issue-38-runtime · 真实 Docker 宿主访问与账本摘录
+基线 86c2fa67d3ffeb74993c76d66b2c9f348533a796
+宿主访问 http://127.0.0.1:20039
+GET /api/health → pubsub.checked=true，pubsub.ok=true
+
+acceptance_v32.cjs  SUMMARY 54/54 passed
+acceptance_exec.cjs SUMMARY 28/28 passed
+acceptance_flow.cjs SUMMARY 33/33 passed
+acceptance_full.cjs SUMMARY 20/20 passed
+acceptance_v26.cjs  SUMMARY 66/66 passed
+
+v32 截图批次 REL-20261127-01
+PASS 3 发布页提供宿主机可访问的同源核对入口 :: 1
+PASS 4 回滚后同源核对入口失效 :: {"error":"不存在：该批次的 PBC 进程未运行或已替换"}
+
+五套回归后，在同一轮隔离环境中从宿主机连续发两批
+GET /api/projects/p1/releases/REL-20261127-04/units/dun/health → 200
+{"batch":"REL-20261127-04","commit":"1.0.1","digest":"sha256:dbadba720de852dcc0793f4faa6b51db012d648e32956c5e2cab9738db808669","environment":"SIT","ok":true,"project":"p1","tag":"v2.0.0","unit":"dun"}
+GET /api/projects/p1/releases/REL-20261127-05/units/dun/health → 200
+{"batch":"REL-20261127-05","commit":"1.0.1","digest":"sha256:dbadba720de852dcc0793f4faa6b51db012d648e32956c5e2cab9738db808669","environment":"SIT","ok":true,"project":"p1","tag":"v2.0.0","unit":"dun"}
+重发后 GET 旧批次入口 → 404，编排投影的旧批次省略 healthUrl。
+POST /api/projects/p1/orch/rollback {"id":"REL-20261127-04"} → 200，status=rolledback
+回滚旧批次后 GET 新批次入口 → 200，与首次核对的响应逐字节一致。
+POST /api/projects/p1/orch/rollback {"id":"REL-20261127-05"} → 200，status=rolledback
+回滚新批次后 GET 新批次入口 → 404
+
+GET /api/facts?pbc=releases&limit=4
+seq=6 release.batch.created actor=SA
+seq=7 release.batch.created actor=SA
+seq=8 release.batch.rolledback actor=SA
+seq=9 release.batch.rolledback actor=SA
+GET /api/facts?pbc=dun&limit=5（宿主两次重发）
+seq=22 deploy.succeeded actor=SA
+seq=23 deploy.succeeded actor=SA

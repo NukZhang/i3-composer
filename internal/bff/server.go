@@ -49,6 +49,7 @@ type Server struct {
 	mu                sync.Mutex
 	subs              map[chan string]struct{} // SSE 订阅者（进程内即可：断线重连是常态）
 	materialPreviewMu sync.Mutex
+	releaseMu         sync.Mutex
 }
 
 func NewServer(log *store.Store, d *dapr.Client, sess *Sessions, comp string) *Server {
@@ -126,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 	// 只读回放：按 tag.created 的时点重算当时的投影，回答「凭什么能发」。
 	m.HandleFunc("GET /api/units/{id}/replay", s.wrap(s.replay))
 	m.HandleFunc("GET /api/projects/{id}/orch", s.wrap(s.orch))
+	m.HandleFunc("GET /api/projects/{id}/releases/{batchID}/units/{unitID}/health", s.wrap(s.releaseUnitHealth))
 	m.HandleFunc("POST /api/projects/{id}/orch/release", s.wrap(s.release))
 	m.HandleFunc("POST /api/projects/{id}/orch/rollback", s.wrap(s.rollback))
 	m.HandleFunc("GET /api/agents", s.wrap(s.agents))
