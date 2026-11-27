@@ -128,11 +128,37 @@ async function healthPre(BASE) {
 
   const id = created.id;
 
-  // 刷新后仍在 = 来自事实日志
+  // 刷新后仍在 = 来自事实日志。
+  //
+  // 以前 reload 后固定等 1200ms 再读一次：测的其实是「1200ms 够不够」，而不只是
+  // 「刷新后事实还在」——慢一点的机器上一次红一次绿（#58）。现在轮询到出现为止（10s 上限），
+  // 并把「页面能从零渲染出这一项」也一起核对：只读接口的话，换个数据来源也能过。
+  // /api/facts 只给「谁在何时写了哪类事实」，不带 payload，没法按 id 定位那一条；
+  // 于是用「状态快照 + 事实条数」两样来核对「刷新前后读的是同一本账」。
+  const beforeState = ((((await api(page, `/api/state?pbc=${unit}`)).body || {}).items || {})[id]) || null;
+  const beforeFactCount = ((((await api(page, `/api/facts?pbc=${unit}`)).body || {}).facts) || []).length;
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(1200);
-  const persisted = ((((await api(page, '/api/inbox')).body || {}).items) || []).some((x) => x.id === id);
-  check('1 刷新后仍在（事实日志而非前端内存）', persisted);
+  const persisted = await waitFor(async () => {
+    const items = ((((await api(page, '/api/inbox')).body || {}).items) || []);
+    const it = items.find((x) => x.id === id);
+    const st = ((((await api(page, `/api/state?pbc=${unit}`)).body || {}).items || {})[id]) || {};
+    // 页面侧：刷新后从零渲染，侧栏与主区里都能读到本项目（页面不是在读前端内存）。
+    const shown = await page.evaluate(() => {
+      const sidebar = Array.from(document.querySelectorAll('.sidebar .trow')).some((x) => /收费与工单数字化/.test(x.textContent));
+      return sidebar && /收费与工单数字化/.test((document.querySelector('#app') || {}).textContent || '');
+    });
+    return it && st && Object.keys(st).length && shown ? { it, st } : null;
+  }, 10000, 400);
+  check('1 刷新后仍在（事实日志而非前端内存）', !!persisted,
+    persisted ? undefined : { reason: '10s 内 /api/inbox 没有这一项，或页面渲染不出本项目', id, unit });
+  // 状态快照与事实条数都和刷新前一致：数据来自同一本事实日志，不是前端另存了一份，
+  // 刷新也没有凭空多写事实（#58 建议的第二条）。
+  const afterState = ((((await api(page, `/api/state?pbc=${unit}`)).body || {}).items || {})[id]) || null;
+  const afterFactCount = ((((await api(page, `/api/facts?pbc=${unit}`)).body || {}).facts) || []).length;
+  check('1 刷新前后状态一致且没有多写事实（读的是同一本账）',
+    !!beforeState && JSON.stringify(beforeState) === JSON.stringify(afterState) && beforeFactCount === afterFactCount,
+    { stSame: JSON.stringify(beforeState) === JSON.stringify(afterState), beforeFactCount, afterFactCount,
+      before: beforeState && { run: beforeState.run, st: beforeState.st }, after: afterState && { run: afterState.run, st: afterState.st } });
 
   // ---- 2. BA 发起被 403（build 是 DA 的权限）----
   const denied = await api(page, `/api/items/${id}/run?pbc=${unit}`, { method: 'POST' });
