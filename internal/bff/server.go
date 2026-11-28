@@ -144,6 +144,9 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/prototype-imports", s.wrap(s.uploadPrototypeImport))
 	m.HandleFunc("GET /api/prototype-imports/{seq}", s.wrap(s.readPrototypeImport))
 	m.HandleFunc("GET /api/prototype-imports/{seq}/snapshot", s.wrap(s.readPrototypeSnapshot))
+	m.HandleFunc("POST /api/prototype-imports/{seq}/interactive", s.wrap(s.prototypeInteractive))
+	m.HandleFunc("POST /api/prototype-imports/{seq}/interactive/{prototypeSession}", s.wrap(s.prototypeInteractive))
+	m.HandleFunc("DELETE /api/prototype-imports/{seq}/interactive/{prototypeSession}", s.wrap(s.prototypeInteractive))
 	m.HandleFunc("POST /api/annotations", s.wrap(s.addAnnotation))
 	m.HandleFunc("POST /api/artifacts", s.wrap(s.saveDraft))
 	m.HandleFunc("GET /api/facts", s.wrap(s.facts))
@@ -200,12 +203,16 @@ func (s *Server) wrap(h handler) http.HandlerFunc {
 				code = http.StatusRequestEntityTooLarge
 			} else if errors.Is(err, errUnitRegistrationChanged) {
 				code = http.StatusConflict
-			} else if errors.Is(err, errPrototypeRendererUnavailable) {
+			} else if errors.Is(err, errPrototypeRendererUnavailable) || errors.Is(err, errPrototypeInteractiveUnavailable) {
 				code = http.StatusServiceUnavailable
-			} else if errors.Is(err, errPrototypeSnapshotFailed) {
+			} else if errors.Is(err, errPrototypeSnapshotFailed) || errors.Is(err, errPrototypeInteractiveFailed) {
 				code = http.StatusUnprocessableEntity
 			}
-			slog.Warn("bff", "path", r.URL.Path, "role", role, "err", err)
+			path := r.URL.Path
+			if r.PathValue("prototypeSession") != "" {
+				path = "/api/prototype-imports/{seq}/interactive/{prototypeSession}"
+			}
+			slog.Warn("bff", "path", path, "role", role, "err", err)
 			writeJSON(w, code, map[string]any{"error": err.Error()})
 		}
 	}

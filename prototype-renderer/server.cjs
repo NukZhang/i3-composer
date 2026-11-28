@@ -1,28 +1,13 @@
 const { chmodSync, lstatSync, unlinkSync } = require('node:fs');
 const http = require('node:http');
-const { chromium } = require('playwright');
+const { renderHTML, shutdownBrowser } = require('./browser.cjs');
+const { applyAction, closeSession, getSession, openSession, validAction } = require('./interactive.cjs');
 
 const socket = process.env.PROTOTYPE_RENDER_SOCKET || '/run/prototype-renderer/render.sock';
-const origin = 'http://prototype.invalid/';
-const viewport = { width: 1200, height: 480 };
-const maxHeight = 8192;
 const maxHTMLBytes = 20 * 1024 * 1024;
-const renderTimeout = 8000;
+const maxActionBytes = 16 * 1024;
+const maxActiveRequests = 3;
 const decoder = new TextDecoder('utf-8', { fatal: true });
-
-// 允许原型自己的内联脚本、样式和数据资源，并用无法被页面移除的响应头沙箱阻止弹窗。
-const contentPolicy = [
-  "default-src 'none'",
-  "script-src 'unsafe-inline'",
-  "style-src 'unsafe-inline'",
-  'img-src data: blob:',
-  'font-src data: blob:',
-  'media-src data: blob:',
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'",
-  'sandbox allow-scripts allow-same-origin',
-].join('; ');
 
 class InputError extends Error {
   constructor(status, code) {
@@ -31,9 +16,9 @@ class InputError extends Error {
   }
 }
 
-function readHTML(request) {
-  if (Number(request.headers['content-length']) > maxHTMLBytes) {
-    throw new InputError(413, 'html_too_large');
+function readBody(request, maxBytes, tooLarge) {
+  if (Number(request.headers['content-length']) > maxBytes) {
+    throw new InputError(413, tooLarge);
   }
 
   return new Promise((resolve, reject) => {
@@ -49,8 +34,8 @@ function readHTML(request) {
 
     request.on('data', (chunk) => {
       size += chunk.length;
-      if (size > maxHTMLBytes) {
-        fail(413, 'html_too_large');
+      if (size > maxBytes) {
+        fail(413, tooLarge);
         return;
       }
       chunks.push(chunk);
@@ -70,101 +55,6 @@ function readHTML(request) {
   });
 }
 
-// 只用当前截图范围内可见的文本和图像作为完成标记，跳过加载失败的图片、隐藏内容和空壳页面。
-function renderedHeight({ width, height, limit }) {
-  if (!document.body) return false;
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
-  const range = document.createRange();
-  const intersects = (rect) => rect.width > 0 && rect.height > 0 &&
-    rect.right > 0 && rect.bottom > 0 && rect.left < width && rect.top < limit;
-  const visible = (element) => element.checkVisibility({ opacityProperty: true, visibilityProperty: true });
-  let marker;
-
-  while ((marker = walker.nextNode())) {
-    if (marker.nodeType === Node.TEXT_NODE) {
-      if (!marker.textContent.trim() || !visible(marker.parentElement)) continue;
-      range.selectNodeContents(marker);
-      if ([...range.getClientRects()].some(intersects)) break;
-    } else if (marker.matches('img, svg, canvas, video') && visible(marker)) {
-      if (marker.tagName === 'IMG' && !marker.naturalWidth) continue;
-      if (intersects(marker.getBoundingClientRect())) break;
-    }
-  }
-
-  if (!marker) return false;
-  return Math.min(limit, Math.max(height, document.body.scrollHeight, document.documentElement.scrollHeight));
-}
-
-async function renderHTML(html) {
-  const deadline = Date.now() + renderTimeout;
-  const remaining = () => Math.max(1, deadline - Date.now());
-  // 若 Chromium 失去响应且回收超时，则由 Compose 重启容器清理进程和临时空间。
-  const cleanupDeadline = setTimeout(() => {
-    console.error('prototype renderer exceeded cleanup deadline');
-    process.exit(1);
-  }, renderTimeout + 2000);
-
-  let browser;
-  let closing;
-  let timer;
-  const closeBrowser = () => closing ??= browser.close().catch(() => {});
-  try {
-    browser = await chromium.launch({
-      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
-      // 默认 Docker seccomp 禁止 Chromium 建立自己的命名空间。隔离由无网、非 root 容器承担。
-      chromiumSandbox: false,
-      timeout: Math.min(3500, remaining()),
-    });
-    timer = setTimeout(closeBrowser, remaining());
-    const context = await browser.newContext({
-      viewport,
-      locale: 'zh-CN',
-      offline: true,
-      serviceWorkers: 'block',
-      acceptDownloads: false,
-    });
-    const page = await context.newPage();
-    context.on('page', (child) => void child.close().catch(() => {}));
-    await context.routeWebSocket('**/*', (route) => route.close());
-
-    let served = false;
-    await context.route('**/*', async (route) => {
-      const request = route.request();
-      if (!served && request.isNavigationRequest() && request.url() === origin &&
-          request.method() === 'GET' && request.frame() === page.mainFrame()) {
-        served = true;
-        await route.fulfill({
-          headers: {
-            'content-type': 'text/html; charset=utf-8',
-            'content-security-policy': contentPolicy,
-            'x-content-type-options': 'nosniff',
-          },
-          body: html,
-        });
-        return;
-      }
-      await route.abort('blockedbyclient');
-    });
-
-    await page.goto(origin, { waitUntil: 'load', timeout: remaining() });
-    const marker = await page.waitForFunction(renderedHeight, { ...viewport, limit: maxHeight }, {
-      timeout: Math.min(2500, remaining()),
-    });
-    const height = await marker.jsonValue();
-    return await page.screenshot({
-      type: 'png',
-      fullPage: true,
-      clip: { x: 0, y: 0, width: viewport.width, height },
-      animations: 'disabled',
-      timeout: remaining(),
-    });
-  } finally {
-    clearTimeout(timer);
-    if (browser) await closeBrowser();
-    clearTimeout(cleanupDeadline);
-  }
-}
-
 function reply(response, status, type, body) {
   response.writeHead(status, {
     'connection': 'close',
@@ -180,29 +70,67 @@ function error(response, status, code) {
   reply(response, status, 'application/json', JSON.stringify({ error: code }));
 }
 
-let busy = false;
+let active = 0;
+let rendering = false;
 const server = http.createServer({
   requestTimeout: 6000,
   headersTimeout: 3000,
   connectionsCheckingInterval: 1000,
   maxHeaderSize: 8192,
 }, async (request, response) => {
-  if (request.url !== '/render') return error(response, 404, 'not_found');
+  const isSnapshot = request.url === '/render';
+  const isOpen = request.url === '/interactive';
+  const id = /^\/interactive\/([0-9a-f]{32})$/.exec(request.url)?.[1];
+  if (!isSnapshot && !isOpen && !id) return error(response, 404, 'not_found');
+  if (id && request.method === 'DELETE') {
+    await closeSession(id);
+    if (response.destroyed) return;
+    response.writeHead(204, { 'connection': 'close', 'cache-control': 'no-store' });
+    return response.end();
+  }
   if (request.method !== 'POST') {
-    response.setHeader('allow', 'POST');
+    response.setHeader('allow', id ? 'POST, DELETE' : 'POST');
     return error(response, 405, 'method_not_allowed');
   }
   const mediaType = request.headers['content-type']?.split(';', 1)[0].trim().toLowerCase();
   const encoding = request.headers['content-encoding']?.trim().toLowerCase();
-  if (mediaType !== 'text/html' || (encoding && encoding !== 'identity')) {
-    return error(response, 415, 'html_required');
+  if (mediaType !== (id ? 'application/json' : 'text/html') || (encoding && encoding !== 'identity')) {
+    return error(response, 415, id ? 'json_required' : 'html_required');
   }
-  if (busy) return error(response, 503, 'renderer_busy');
 
-  // 读取正文时也占用渲染位，避免并发上传累积内存。
-  busy = true;
+  const session = id && getSession(id);
+  if (id && !session) return error(response, 404, 'session_not_found');
+  if (active >= maxActiveRequests || (isSnapshot && rendering) || session?.busy) {
+    return error(response, 503, 'renderer_busy');
+  }
+
+  // 读取正文也占用渲染位，避免并发上传和动作积压。
+  active++;
+  if (isSnapshot) rendering = true;
+  if (session) session.busy = true;
   try {
-    const html = await readHTML(request);
+    if (session) {
+      const raw = await readBody(request, maxActionBytes, 'action_too_large');
+      let action;
+      try {
+        action = JSON.parse(raw.toString('utf8'));
+      } catch {
+        throw new InputError(400, 'invalid_action');
+      }
+      if (!validAction(action)) throw new InputError(400, 'invalid_action');
+      if (!getSession(id)) throw new InputError(404, 'session_not_found');
+      const png = await applyAction(session, action);
+      if (!response.destroyed) reply(response, 200, 'image/png', png);
+      return;
+    }
+    if (isOpen) {
+      const opened = await openSession(() => readBody(request, maxHTMLBytes, 'html_too_large'));
+      if (!opened) return error(response, 503, 'renderer_busy');
+      if (response.destroyed) return closeSession(opened.id);
+      response.setHeader('x-prototype-session', opened.id);
+      return reply(response, 201, 'image/png', opened.png);
+    }
+    const html = await readBody(request, maxHTMLBytes, 'html_too_large');
     if (response.destroyed) return;
     const png = await renderHTML(html);
     if (!response.destroyed) reply(response, 200, 'image/png', png);
@@ -211,13 +139,15 @@ const server = http.createServer({
     if (failure instanceof InputError) error(response, failure.status, failure.message);
     else error(response, 422, 'render_failed');
   } finally {
-    busy = false;
+    active--;
+    if (isSnapshot) rendering = false;
+    if (session) session.busy = false;
   }
 });
 
 server.maxConnections = 8;
 // 客户端中途停止接收 PNG 时也要释放连接。
-server.setTimeout(15000);
+server.setTimeout(20000);
 server.on('clientError', (failure, client) => {
   if (!client.writable) return client.destroy();
   const timedOut = failure.code === 'ERR_HTTP_REQUEST_TIMEOUT';
@@ -235,4 +165,10 @@ if (lstatSync(socket, { throwIfNoEntry: false })?.isSocket()) unlinkSync(socket)
 server.listen({ path: socket }, () => {
   chmodSync(socket, 0o660);
   console.log('prototype renderer listening');
+});
+
+process.once('SIGTERM', () => {
+  server.close();
+  server.closeAllConnections();
+  void shutdownBrowser().finally(() => process.exit(0));
 });

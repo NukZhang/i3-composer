@@ -331,7 +331,7 @@ function near(actual, expected, tolerance = 0.014) {
       const image = page.getByTestId('prototype-import-snapshot');
       const snapshot = (seq) => importPath + '/' + seq + '/snapshot?pbc=' + otherUnit;
       const waitImage = async () => {
-        await image.waitFor();
+        await image.waitFor({ timeout: 24000 });
         await page.waitForFunction(() => document.querySelector('[data-testid="prototype-import-snapshot"]')?.naturalWidth === 1200);
         assert.equal(await preview.locator('iframe').count(), 0);
       };

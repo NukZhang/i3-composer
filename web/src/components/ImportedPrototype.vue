@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import PrototypeImportPreview from './PrototypeImportPreview.vue';
+import PrototypeInteractivePreview from './PrototypeInteractivePreview.vue';
 import { api, MAX_PROTOTYPE_IMPORT_BYTES } from '../api.js';
 import { S, currentUnit, refresh, toast } from '../store.js';
 
@@ -26,6 +27,7 @@ const uploading = ref(false);
 const saving = ref(false);
 const uploadError = ref('');
 const saveError = ref('');
+const interactive = ref(false);
 
 const drawing = ref(false);
 const draft = ref(null);
@@ -54,10 +56,14 @@ watch(() => selected.value?.seq, (seq) => {
   lastSeq.value = seq ?? null;
   selectionRevision++;
   previewReady.value = false;
+  interactive.value = false;
   resetDrawing();
 }, { immediate: true, flush: 'sync' });
 watch(() => props.canWrite, (allowed) => {
   if (!allowed) resetDrawing();
+});
+watch(() => S.role, () => {
+  interactive.value = false;
 });
 
 function updatePreviewStatus(seq, ready) {
@@ -249,7 +255,7 @@ async function save() {
   <section v-if="canWrite || selected" aria-labelledby="prototype-import-heading" class="card imported-prototype">
     <div class="ch import-toolbar">
       <h3 id="prototype-import-heading">导入原型评审</h3>
-      <span v-if="selected" class="tag">只读 · 导入</span>
+      <span v-if="selected" class="tag">{{ interactive ? '隔离 · 交互' : '只读 · 导入' }}</span>
       <span class="spacer" />
       <template v-if="canWrite">
         <input ref="fileInput" data-testid="prototype-import-input" type="file" hidden
@@ -272,46 +278,52 @@ async function save() {
             </option>
           </select>
         </label>
-        <button v-if="canWrite" ref="drawButton" type="button" class="btn small" :class="{ primary: drawing }"
+        <button v-if="canWrite" v-show="!interactive" ref="drawButton" type="button" class="btn small" :class="{ primary: drawing }"
           :disabled="!previewReady || saving" :aria-pressed="drawing" @click="toggleDrawing">画线批注</button>
+        <button v-if="selected.mediaType === 'text/html'" type="button" class="btn small"
+          :data-testid="interactive ? 'prototype-interactive-close' : 'prototype-interactive-toggle'"
+          @click="interactive = !interactive">{{ interactive ? '返回只读预览' : '交互预览' }}</button>
       </div>
       <div class="small muted import-meta">
         <span>导入者 {{ selected.by === 'PA' ? 'PA 产品' : selected.by }}</span>
         <span>导入时间 {{ selected.at }}</span>
         <span v-if="selected.mediaType === 'application/pdf'">PDF 首页</span>
       </div>
-      <p v-if="drawing" id="prototype-import-draw-help" class="small muted import-message">
+      <p v-if="drawing && !interactive" id="prototype-import-draw-help" class="small muted import-message">
         拖动画线，或用方向键移动光标、按 Enter 分别确定起点和终点。按 Esc 取消。
       </p>
 
-      <PrototypeImportPreview :key="selected.seq" :unit="unit" :artifact="selected" @status="updatePreviewStatus"
-        v-slot="{ top, bottom }">
-        <svg
-          ref="overlay"
-          data-testid="prototype-import-lines"
-          class="import-lines"
-          :class="{ 'is-drawing': drawing }"
-          viewBox="0 0 1 1"
-          preserveAspectRatio="none"
-          :tabindex="drawing ? 0 : undefined"
-          :role="drawing ? 'application' : undefined"
-          :aria-hidden="drawing ? undefined : true"
-          :aria-label="drawing ? '画线批注区域' : undefined"
-          :aria-describedby="drawing ? 'prototype-import-draw-help' : undefined"
-          @pointerdown="pointerDown"
-          @pointermove="pointerMove"
-          @pointerup="pointerUp"
-          @pointercancel="cancelPointer"
-          @lostpointercapture="cancelPointer"
-          @keydown="drawWithKeyboard($event, top, bottom)"
-        >
-          <line v-for="(annotation, i) in lines" :key="i" v-bind="annotation.line" vector-effect="non-scaling-stroke" />
-          <line v-if="draft" v-bind="draft" class="draft-line" vector-effect="non-scaling-stroke" />
-          <path v-if="cursor" :d="'M ' + cursor.x + ' 0 V 1 M 0 ' + cursor.y + ' H 1'" vector-effect="non-scaling-stroke" />
-        </svg>
-      </PrototypeImportPreview>
+      <PrototypeInteractivePreview v-if="interactive" :key="selected.seq" :unit="unit" :artifact="selected" />
+      <div v-show="!interactive" class="import-readonly">
+        <PrototypeImportPreview :key="selected.seq" :unit="unit" :artifact="selected" @status="updatePreviewStatus"
+          v-slot="{ top, bottom }">
+          <svg
+            ref="overlay"
+            data-testid="prototype-import-lines"
+            class="import-lines"
+            :class="{ 'is-drawing': drawing }"
+            viewBox="0 0 1 1"
+            preserveAspectRatio="none"
+            :tabindex="drawing ? 0 : undefined"
+            :role="drawing ? 'application' : undefined"
+            :aria-hidden="drawing ? undefined : true"
+            :aria-label="drawing ? '画线批注区域' : undefined"
+            :aria-describedby="drawing ? 'prototype-import-draw-help' : undefined"
+            @pointerdown="pointerDown"
+            @pointermove="pointerMove"
+            @pointerup="pointerUp"
+            @pointercancel="cancelPointer"
+            @lostpointercapture="cancelPointer"
+            @keydown="drawWithKeyboard($event, top, bottom)"
+          >
+            <line v-for="(annotation, i) in lines" :key="i" v-bind="annotation.line" vector-effect="non-scaling-stroke" />
+            <line v-if="draft" v-bind="draft" class="draft-line" vector-effect="non-scaling-stroke" />
+            <path v-if="cursor" :d="'M ' + cursor.x + ' 0 V 1 M 0 ' + cursor.y + ' H 1'" vector-effect="non-scaling-stroke" />
+          </svg>
+        </PrototypeImportPreview>
+      </div>
 
-      <form v-if="canWrite && draft && !drawing" class="import-form" @submit.prevent="save">
+      <form v-if="canWrite && draft && !drawing" v-show="!interactive" class="import-form" @submit.prevent="save">
         <div class="field">
           <label for="prototype-import-note">批注意见</label>
           <textarea id="prototype-import-note" ref="note" v-model="text" required :disabled="saving" />
@@ -323,7 +335,7 @@ async function save() {
         </div>
       </form>
 
-      <ul v-if="lines.length" class="import-annotations" aria-label="导入原型批注">
+      <ul v-if="lines.length" v-show="!interactive" class="import-annotations" aria-label="导入原型批注">
         <li v-for="(annotation, i) in lines" :key="i" class="anno-item">
           <span>{{ annotation.text }}</span>
           <span class="small muted">{{ annotation.by }} · {{ annotation.at }}</span>
@@ -340,6 +352,7 @@ async function save() {
 .import-history { width: min(100%, 340px); }
 .import-history select { display: block; margin-top: 3px; }
 .import-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; }
+.import-readonly { display: contents; }
 .import-message { margin: 0; }
 .import-error { color: var(--err-3); }
 .import-lines {

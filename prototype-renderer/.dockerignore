@@ -2,4 +2,6 @@
 !Dockerfile
 !package.json
 !package-lock.json
+!browser.cjs
+!interactive.cjs
 !server.cjs
