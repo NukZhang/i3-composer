@@ -207,6 +207,8 @@ internal/
 ├── wf/                   Dapr workflow：五步交付、打 tag 前置、发布闸
 ├── pipeline/             执行侧：生成、测试、构建、部署
 ├── codegen/ builder/ artifacts/ deployer/   真执行链的四个环节
+│   └── codegen：机制真（真落文件、真能编译测试），内容是按标题选术语 + 填骨架，
+│       不是按 spec 生成——边界见 docs/EXECUTION.md 第三节
 ├── agentexec/            Agent 试跑与对话验收（规则实现，可替换）
 └── seed/                 演示起点（actor=seed，可识别）
 web/

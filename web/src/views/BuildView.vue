@@ -107,6 +107,105 @@ async function saveCode() {
 function ownerText(o) {
   return WORKER_NAME[o] || o || '待派';
 }
+
+// ---- 生成说明 / AC ↔ 测试 / 本次 vs 上一版（#96） ----
+//
+// 这一页能审的只有「生成器真的产出了什么」。所以三件事写清楚：
+//   1. 当前生成器只产出 Go 单文件骨架，术语按工作项标题选（#93）；
+//      规格 / 方案 / 任务三层视图要等 #90 产出真数据，这里不摆假占位。
+//   2. 代码里的每一条 AC 落在哪个测试用例——对照的是真文件内容，不是清单文案。
+//   3. 本次生成与上一版逐行差了什么——用的是账本里已有的版本历史，不新增事实。
+const codeVers = computed(() => (versions.value && versions.value.code) || []);
+const prevVer = computed(() => {
+  const arr = codeVers.value;
+  return arr.length >= 2 ? arr[arr.length - 2] : null;
+});
+const curFiles = computed(() => code.value.files || {});
+const prevFiles = computed(() => (prevVer.value && prevVer.value.files) || {});
+const diffPaths = computed(() => {
+  const out = [];
+  const seen = new Set();
+  for (const p of [...Object.keys(prevFiles.value), ...Object.keys(curFiles.value)]) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    const a = prevFiles.value[p];
+    const b = curFiles.value[p];
+    if (a !== b) out.push(p);
+  }
+  return out;
+});
+const diffOpen = ref(false);
+// 逐行 LCS：文件不大（骨架三份），慢不了；只为显示，不影响任何判定。
+function lineDiff(a, b) {
+  const A = String(a == null ? '' : a).split('\n');
+  const B = String(b == null ? '' : b).split('\n');
+  const n = A.length;
+  const m = B.length;
+  const L = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) {
+      out.push({ t: ' ', s: A[i] });
+      i++;
+      j++;
+    } else if (L[i + 1][j] >= L[i][j + 1]) {
+      out.push({ t: '-', s: A[i] });
+      i++;
+    } else {
+      out.push({ t: '+', s: B[j] });
+      j++;
+    }
+  }
+  while (i < n) out.push({ t: '-', s: A[i++] });
+  while (j < m) out.push({ t: '+', s: B[j++] });
+  return out;
+}
+const diffs = computed(() =>
+  diffPaths.value.map((p) => ({
+    path: p,
+    lines: lineDiff(prevFiles.value[p], curFiles.value[p]),
+    added: lineDiff(prevFiles.value[p], curFiles.value[p]).filter((l) => l.t === '+').length,
+    removed: lineDiff(prevFiles.value[p], curFiles.value[p]).filter((l) => l.t === '-').length,
+  })),
+);
+
+// AC 清单的取法有讲究：必须取「这一版代码自己依存的 AT」。
+//
+// 不能直接拿 S.state.checks 去对测试注释：种子单元的 checks 是旧清单，
+// 它的 AC-1 是「账期按自然月生成」，而代码里的 AC-1 是「健康检查可用」——
+// id 撞了、语义不同，硬对会把两条不相干的东西配成一对，看着像验过了。
+// 所以先按 code.df 里记的 at 版本取那一版 AT 的 AC（这才是代码的依据），
+// 取不到才退回验收清单，再取不到就只列代码里真的断言了的 AC。
+const acList = computed(() => {
+  const arr = (versions.value && versions.value.at) || [];
+  const df = (code.value.df || []).find((d) => d.t === 'at');
+  const at = (df && arr.find((v) => v.v === df.v)) || arr[arr.length - 1] || null;
+  if (at && at.md) {
+    const rows = [...String(at.md).matchAll(/^###\s*(AC-\d+)\s+(.+)$/gm)].map((m) => ({ id: m[1], n: m[2].trim() }));
+    if (rows.length) return { src: 'at', v: at.v, rows, stale: !!(df && at.v !== df.v) };
+  }
+  const list = (S.state && S.state.checks) || [];
+  if (list.length) return { src: 'checks', v: '', rows: list.map((c) => ({ id: c.id, n: c.n })), stale: false };
+  return { src: 'code', v: '', rows: [], stale: false };
+});
+
+// AC 在代码里的落点：测试文件里按「// TestXxx：AC-n」的注释对齐。
+// 没有对应用例就如实显示「没找到」——那说明这条 AC 没被验。
+const acMap = computed(() => {
+  const tests = curFiles.value['main_test.go'] || '';
+  const decls = [...tests.matchAll(/\/\/\s*(\w+)：\s*(AC-\d+)/g)].map((m) => ({ fn: m[1], ac: m[2] }));
+  const rows = acList.value.rows.length
+    ? acList.value.rows
+    : [...new Set(decls.map((d) => d.ac))].sort().map((id) => ({ id, n: '' }));
+  return rows.map((a) => ({ id: a.id, n: a.n, fn: (decls.find((d) => d.ac === a.id) || {}).fn || '' }));
+});
 </script>
 
 <template>
@@ -252,6 +351,82 @@ function ownerText(o) {
       <div class="ws-h"><span v-html="icon(dirty ? 'alert' : 'check')" /> {{ dirty ? '有未保存的代码改动' : '源码与账本一致' }}</div>
       <div class="small muted">保存为草稿才算一次版本变化；未保存的内容不会进入构建。</div>
     </div>
+
+    <!-- 生成说明（#96）：先把「这是什么生成的、边界在哪」摆出来，
+         再让人看文件。不这样的话，第一眼就是三个 Go 文件，人会以为
+         这是按自己的工作项定制的实现。 -->
+    <div class="card gennote">
+      <div class="ch">
+        <span v-html="icon('cpu', 11)" /><h3>这一版代码是怎么来的</h3>
+        <span class="spacer" />
+        <span class="tag t-warn" style="font-size: 9px">生成器能力有限</span>
+      </div>
+      <div class="small" style="line-height: 1.75">
+        当前生成器产出的是 <b>Go 单文件骨架</b>：记录结构、进程内存储、健康检查，以及列表 / 统计 / 生成三个接口；
+        资源名与字段按工作项标题选（例如标题里的「缴费单」→ <code>invoices</code>、「工单」→ <code>tickets</code>），
+        认不出来就用通用记录。它<b>不是</b>按本单元的规格实现的代码——
+        「规格 / 方案 / 任务」三层视图要等 spec 环节接上（#90）才有真数据，这里不摆假占位。
+      </div>
+      <div class="row wrap" style="gap: 5px; margin-top: 8px">
+        <span class="tag t-gray" style="font-size: 9px">语言：只有 Go（#91）</span>
+        <span class="tag t-gray" style="font-size: 9px">模板：单一骨架，无增量（#92 / #94）</span>
+        <span class="tag t-gray" style="font-size: 9px">口径：不写死业务费率与种子数据（#93）</span>
+        <span class="tag t-gray" style="font-size: 9px">质量闸：未覆盖「按规格实现」（#95）</span>
+      </div>
+    </div>
+
+    <!-- AC ↔ 测试：每条验收落在哪个用例。对不上就如实说，不假装验过。 -->
+    <div v-if="acMap.length" class="card">
+      <div class="ch">
+        <span v-html="icon('check', 11)" /><h3>验收落点</h3>
+        <span class="spacer" />
+        <span class="small muted">{{ acMap.filter((a) => a.fn).length }}/{{ acMap.length }} 条有对应用例</span>
+      </div>
+      <div class="acmap">
+        <div v-for="a in acMap" :key="a.id" class="acmap-row">
+          <span class="mono small" :class="a.fn ? 'ok' : 'miss'">{{ a.id }}</span>
+          <span class="small" style="flex: 1">{{ a.n || '—' }}</span>
+          <button v-if="a.fn" class="btn small" @click="path = 'main_test.go'">
+            <span class="mono" style="font-size: 10px">{{ a.fn }}</span>
+          </button>
+          <span v-else class="tag t-warn" style="font-size: 9px">代码里没有对应用例</span>
+        </div>
+      </div>
+      <div class="small muted" style="margin-top: 7px">
+        清单取自这一版代码依存的 <code>AT {{ acList.v || '—' }}</code>，落点按测试文件里的
+        <code>// TestXxx：AC-n</code> 注释对齐——验的是文件内容，不是验收页的文案。
+        <template v-if="acList.src === 'checks'">（没找到那一版 AT，退回验收清单，编号可能对不上，慎读。）</template>
+        <template v-if="acList.src === 'code'">（没有清单，只列代码里真的断言了的 AC。）</template>
+      </div>
+    </div>
+
+    <!-- 本次 vs 上一版：用账本里已有的版本历史算，不新增事实。 -->
+    <div v-if="prevVer" class="card">
+      <div class="ch">
+        <span v-html="icon('layers', 11)" /><h3>本次生成改了什么</h3>
+        <span class="spacer" />
+        <span class="small muted">{{ code.v }} vs {{ prevVer.v }} · {{ diffPaths.length }} 个文件有变化</span>
+        <button class="btn small" style="margin-left: 8px" @click="diffOpen = !diffOpen">
+          {{ diffOpen ? '收起 diff' : '看 diff' }}
+        </button>
+      </div>
+      <div v-if="!diffPaths.length" class="small muted">这一版与上一版逐字节相同（重新生成不会改内容：生成是确定性的）。</div>
+      <template v-else>
+        <div class="row wrap" style="gap: 5px">
+          <span v-for="d in diffs" :key="d.path" class="tag t-gray mono" style="font-size: 9px">
+            {{ d.path }} <span style="color: var(--ok)">+{{ d.added }}</span> <span style="color: var(--err)">-{{ d.removed }}</span>
+          </span>
+        </div>
+        <div v-if="diffOpen" class="diffbox">
+          <template v-for="d in diffs" :key="'b' + d.path">
+            <div class="diff-h mono">{{ d.path }}</div>
+            <div v-for="(l, i) in d.lines" :key="i" class="diff-l" :class="l.t === '+' ? 'add' : l.t === '-' ? 'del' : ''">
+              <span class="sign">{{ l.t }}</span><span class="code">{{ l.s || ' ' }}</span>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
     <div v-if="!fileList.length" class="card"><div class="empty">代码制品还没有文件内容。Agent 生成或人工保存草稿后会显示在这里。</div></div>
     <div v-else class="bwrap">
       <div class="ftree">
@@ -289,3 +464,22 @@ function ownerText(o) {
     </div>
   </template>
 </template>
+
+<style scoped>
+/* #96：生成说明 / AC 落点 / diff 三块的样式。跟页面既有卡片同口径，
+   只用已有的色变量，不引入新主题。 */
+.gennote .small code { font-family: var(--mono, ui-monospace); font-size: 10.5px; padding: 0 3px; background: var(--bg-panel); border-radius: 3px; }
+.acmap { display: flex; flex-direction: column; gap: 4px; }
+.acmap-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line-e); }
+.acmap-row:last-child { border-bottom: 0; }
+.acmap-row .ok { color: var(--ok); }
+.acmap-row .miss { color: var(--warn); }
+.diffbox { margin-top: 8px; border: 1px solid var(--line-e); border-radius: 6px; overflow: auto; max-height: 320px; background: var(--bg-panel); }
+.diff-h { position: sticky; top: 0; padding: 4px 8px; background: var(--bg-panel); border-bottom: 1px solid var(--line-e); font-size: 10px; color: var(--tx-11); }
+.diff-l { display: flex; gap: 8px; padding: 1px 8px; font-family: var(--mono, ui-monospace); font-size: 10.5px; white-space: pre; }
+.diff-l .sign { width: 8px; color: var(--tx-11); }
+.diff-l.add { background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.diff-l.add .sign { color: var(--ok); }
+.diff-l.del { background: color-mix(in srgb, var(--err) 10%, transparent); }
+.diff-l.del .sign { color: var(--err); }
+</style>
