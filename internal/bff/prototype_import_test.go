@@ -589,3 +589,38 @@ func TestPrototypeImportPDFStructure(t *testing.T) {
 		reviewStatus(t, uploadPrototypeFixture(t, handler, "?pbc=fee", "page.pdf", prototypePDFPage(stream), RolePA), 201)
 	}
 }
+
+func TestNativeHTMLPreviewKeepsOriginalAndScopesScriptPermission(t *testing.T) {
+	_, _, handler, _ := prototypeReviewFixture(t)
+	source := []byte(`<!doctype html><p id="page">首页</p><script>document.getElementById('page').textContent = '列表'</script>`)
+	reviewStatus(t, uploadPrototypeFixture(t, handler, "?pbc=fee", "native.html", source, RolePA), http.StatusCreated)
+	read := func(path string, headers map[string]string) *httptest.ResponseRecorder {
+		return prototypeReviewRequest(handler, "GET", path, nil, "", RoleBA, headers)
+	}
+	const route = "/api/prototype-imports/1/native"
+	frame := map[string]string{"Sec-Fetch-Dest": "iframe", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "same-origin"}
+	reviewStatus(t, read(route, frame), http.StatusBadRequest)
+	reviewStatus(t, read(route+"?pbc=another", frame), http.StatusNotFound)
+	native := read(route+"?pbc=fee", frame)
+	reviewStatus(t, native, http.StatusOK)
+	if !bytes.Equal(native.Body.Bytes(), source) ||
+		!strings.HasPrefix(native.Header().Get("Content-Disposition"), "inline") ||
+		native.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("交互预览必须提供无缓存的原件")
+	}
+	csp := native.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "sandbox allow-scripts allow-forms") || strings.Contains(csp, "allow-same-origin") ||
+		!strings.Contains(csp, "script-src 'unsafe-inline'") || !strings.Contains(csp, "form-action 'none'") {
+		t.Fatalf("交互沙箱允许本地脚本和表单事件，保持独立页权限：%s", csp)
+	}
+	top := read(route+"?pbc=fee", map[string]string{"Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none"})
+	reviewStatus(t, top, http.StatusOK)
+	if !strings.HasPrefix(top.Header().Get("Content-Disposition"), "attachment") {
+		t.Fatal("单独访问应按原件下载处理")
+	}
+	snapshotSource := read("/api/prototype-imports/1?pbc=fee", frame)
+	reviewStatus(t, snapshotSource, http.StatusOK)
+	if !bytes.Equal(snapshotSource.Body.Bytes(), source) || !strings.Contains(snapshotSource.Header().Get("Content-Security-Policy"), "script-src 'none'") {
+		t.Fatal("评审原件仍走禁用脚本的路径")
+	}
+}

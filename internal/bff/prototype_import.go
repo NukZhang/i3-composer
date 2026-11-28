@@ -36,6 +36,9 @@ const (
 	prototypeMaxPixels = 16 << 20
 	prototypeHTMLCSP   = "sandbox allow-same-origin; default-src 'none'; base-uri 'none'; script-src 'none'; " +
 		"style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'; frame-ancestors 'self'"
+	// 预览允许页面内联脚本和表单事件，嵌入文档使用独立源权限。
+	prototypeNativeCSP = "sandbox allow-scripts allow-forms; default-src 'none'; base-uri 'none'; script-src 'unsafe-inline' data: blob:; " +
+		"style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; media-src data: blob:; form-action 'none'; frame-ancestors 'self'"
 )
 
 var errUnitRegistrationChanged = errors.New("单元登记已变化，请刷新后重新上传")
@@ -317,9 +320,20 @@ func (s *Server) prototypeImportForRequest(r *http.Request, c reqCtx) (store.Pro
 }
 
 func (s *Server) readPrototypeImport(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	return s.servePrototypeImport(w, r, c, false)
+}
+
+func (s *Server) readNativePrototypeImport(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	return s.servePrototypeImport(w, r, c, true)
+}
+
+func (s *Server) servePrototypeImport(w http.ResponseWriter, r *http.Request, c reqCtx, nativeHTML bool) error {
 	meta, err := s.prototypeImportForRequest(r, c)
 	if err != nil {
 		return err
+	}
+	if nativeHTML && meta.MediaType != "text/html" {
+		return fmt.Errorf("%w：交互预览只支持 HTML 文件", errBadRequest)
 	}
 	if s.Pipe == nil || s.Pipe.Store == nil {
 		return errors.New("原件制品仓库未配置")
@@ -342,7 +356,11 @@ func (s *Server) readPrototypeImport(w http.ResponseWriter, r *http.Request, c r
 		disposition = "inline"
 	case "text/html":
 		mediaType += "; charset=utf-8"
-		h.Set("Content-Security-Policy", prototypeHTMLCSP)
+		policy := prototypeHTMLCSP
+		if nativeHTML {
+			policy = prototypeNativeCSP
+		}
+		h.Set("Content-Security-Policy", policy)
 		h.Set("X-Frame-Options", "SAMEORIGIN")
 		h.Set("X-DNS-Prefetch-Control", "off")
 		h.Set("Referrer-Policy", "no-referrer")
@@ -350,7 +368,7 @@ func (s *Server) readPrototypeImport(w http.ResponseWriter, r *http.Request, c r
 		dest := r.Header.Get("Sec-Fetch-Dest")
 		mode := r.Header.Get("Sec-Fetch-Mode")
 		site := r.Header.Get("Sec-Fetch-Site")
-		// 内网 HTTP 可能没有 Fetch Metadata；两种内联路径共用同一套沙箱。
+		// 内网 HTTP 可能没有 Fetch Metadata；响应头沙箱在内联路径上继续生效。
 		if (dest == "" && mode == "" && site == "") ||
 			(dest == "iframe" && mode == "navigate" && site == "same-origin") {
 			disposition = "inline"

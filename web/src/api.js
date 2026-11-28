@@ -41,6 +41,7 @@ export const api = {
   // 读
   state: (pbc) => request('/api/state' + q(pbc)),
   prototypeImportURL,
+  nativePrototypeURL: (pbc, seq) => '/api/prototype-imports/' + encodeURIComponent(seq) + '/native' + q(pbc),
   async prototypeImportFile(pbc, seq, signal) {
     const response = await fetch(prototypeImportURL(pbc, seq), { signal });
     if (!response.ok) throw new ApiError('原型文件读取失败（HTTP ' + response.status + '）', response.status);

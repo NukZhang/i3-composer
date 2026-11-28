@@ -1,0 +1,25 @@
+原型专项（i3-prototype-105-final，真实 Dapr Pub/Sub）
+PASS PNG 预览、权限来源和横线批注
+PASS JPEG 预览、批注隔离和高精度坐标的真实账本回放
+PASS PDF 首页绘制、批注刷新和窗口缩放
+PASS HTML 样式、页尾滚动、批注回放，以及脚本和外部请求隔离
+PASS 历史导入保留对应批注，换单元后文件及批注隔离
+PASS 超限、错误格式、非法坐标及越权请求不落账，原型还原维持「判不了」
+PASS 动态 HTML 渲染出脚本生成的画面，工作台仅加载图片
+PASS 快照、原导入与批注坐标刷新后保持一致
+DYNAMIC EVIDENCE {"unit":"proto-issue105","importSeq":3,"annotationSeq":4,"line":{"x1":0.23,"y1":0.24,"x2":0.45,"y2":0.26},"pngBytes":96434}
+PASS 原生 HTML 在 iframe 内直接切换菜单、筛选、打开弹窗和填写表单
+PASS 退出原生预览后恢复原快照与批注，预览期间账本一致
+SUMMARY 10/10 pass, 0 fail
+
+平台五套回归（独立干净账本）
+--- acceptance_v32.cjs ---
+SUMMARY 70/70 passed
+--- acceptance_exec.cjs ---
+SUMMARY 38/38 passed
+--- acceptance_flow.cjs ---
+SUMMARY 33/33 passed
+--- acceptance_full.cjs ---
+SUMMARY 20/20 passed
+--- acceptance_v26.cjs ---
+SUMMARY 76/76 passed
