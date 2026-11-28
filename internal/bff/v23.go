@@ -906,6 +906,7 @@ func (s *Server) addAnnotation(w http.ResponseWriter, r *http.Request, c reqCtx)
 		store.Anno
 		ImportSeq json.RawMessage `json:"importSeq"`
 		Line      json.RawMessage `json:"line"`
+		Preview   json.RawMessage `json:"preview"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
 	if err := dec.Decode(&body); err != nil {
@@ -918,21 +919,43 @@ func (s *Server) addAnnotation(w http.ResponseWriter, r *http.Request, c reqCtx)
 	if strings.TrimSpace(in.Text) == "" {
 		return fmt.Errorf("%w：批注内容不能为空", errBadRequest)
 	}
-	if body.ImportSeq != nil || body.Line != nil {
+	if body.ImportSeq != nil || body.Line != nil || body.Preview != nil {
 		if err := json.Unmarshal(body.ImportSeq, &in.ImportSeq); err != nil || in.ImportSeq <= 0 {
 			return fmt.Errorf("%w：批注需要正整数导入序号", errBadRequest)
 		}
-		line, err := decodePrototypeLine(body.Line)
+		imported := store.Anno{ImportSeq: in.ImportSeq, Text: in.Text}
+		if body.Line != nil {
+			if body.Preview != nil {
+				return fmt.Errorf("%w：交互预览批注需要矩形", errBadRequest)
+			}
+			line, err := decodePrototypeLine(body.Line)
+			if err != nil {
+				return err
+			}
+			imported.Line = line
+		} else {
+			if err := setPrototypeBox(&imported, in); err != nil {
+				return err
+			}
+			if body.Preview != nil {
+				preview, err := decodePrototypeBoxScope(body.Preview)
+				if err != nil {
+					return err
+				}
+				imported.Preview = preview
+			}
+		}
+		// 作废和落链要按同一把锁排序；普通原型框选继续走原有入口。
+		s.unitRegistryMu.Lock()
+		defer s.unitRegistryMu.Unlock()
+		meta, err := s.scopedPrototypeImport(r, c.PBC, imported.ImportSeq)
 		if err != nil {
 			return err
 		}
-		in = store.Anno{ImportSeq: in.ImportSeq, Line: line, Text: in.Text}
-		// 作废和落链要按同一把锁排序；旧框选继续走原有入口。
-		s.unitRegistryMu.Lock()
-		defer s.unitRegistryMu.Unlock()
-		if _, err := s.scopedPrototypeImport(r, c.PBC, in.ImportSeq); err != nil {
-			return err
+		if imported.Preview != nil && meta.MediaType != "text/html" {
+			return fmt.Errorf("%w：交互页批注需要 HTML 导入", errBadRequest)
 		}
+		in = imported
 	}
 	in.By, in.At = c.Role.String(), time.Now().Format("01-02 15:04")
 	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactAnnotationAdded, c.Role.String(), in); err != nil {

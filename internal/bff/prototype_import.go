@@ -372,6 +372,9 @@ func (s *Server) servePrototypeImport(w http.ResponseWriter, r *http.Request, c 
 		if (dest == "" && mode == "" && site == "") ||
 			(dest == "iframe" && mode == "navigate" && site == "same-origin") {
 			disposition = "inline"
+			if nativeHTML {
+				data = nativeHTMLWithAnnotations(data)
+			}
 		}
 	case "application/pdf":
 		// 在线评审由 PDF.js 读取字节，直接导航保留原件下载。
