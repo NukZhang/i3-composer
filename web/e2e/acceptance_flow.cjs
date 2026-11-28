@@ -4,7 +4,7 @@
 // 权限边界不变：发起是 DA 的活，打 tag 是 SA 的活；
 // 越权时账本不能有任何变化（不做乐观更新）。
 //
-// 断言数：35。依赖顺序：在 v32 之后跑；自己带 RUN_TAG 建单元，可与 v26 / plan / exec 任意顺序。
+// 断言数：37。依赖顺序：在 v32 之后跑；自己带 RUN_TAG 建单元，可与 v26 / plan / exec 任意顺序。
 const { chromium } = require('playwright');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const RUN = process.env.RUN_TAG || String(Date.now()).slice(-6);
@@ -277,6 +277,23 @@ async function healthPre(BASE) {
   check('4 DA 打 tag 被 403 拒绝', deny.code === 403 && /权限不足/.test((deny.body || {}).error), deny);
   const afterDeny = (await api(page, `/api/state?pbc=${unit}`)).body.commits[0];
   check('4 越权后账本状态没变（无 tag）', !afterDeny.tag && afterDeny.no === before.no, { before: before.tag, after: afterDeny.tag });
+
+  // ---- 4b. 验收：清单从 AT 进账本，人逐条判定（#70）----
+  // 没有清单、没验完、验的是旧提交，`tagUnit` 一律拒绝——201 不能凭空拿到。
+  const st1 = (await api(page, `/api/state?pbc=${unit}`)).body || {};
+  const cs = st1.checks || [];
+  const headNo = ((st1.commits || [])[0] || {}).no;
+  check('4b 交付后账本里有验收清单，并绑在 HEAD 上',
+    cs.length >= 5 && cs.every((c) => c.commit === headNo), { total: cs.length, head: headNo, st: cs.map((c) => c.st) });
+  await page.click('.rolebtn:has-text("BA")');
+  await page.waitForTimeout(500);
+  const ds = [];
+  for (const c of cs) {
+    ds.push((await api(page, `/api/checks/${c.id}/decide?pbc=${unit}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ st: 'pass' }),
+    })).code);
+  }
+  check('4b BA 逐条判定通过', ds.length === cs.length && ds.every((x) => x === 200 || x === 201), ds);
 
   // ---- 5. SA 打 tag → 进「发布编排」池 ----
   await page.click('.rolebtn:has-text("SA")');

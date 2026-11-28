@@ -8,7 +8,7 @@
 //
 // 用法：BASE=http://127.0.0.1:8080 RUN_TAG=v32 node acceptance_v32.cjs
 //
-// 断言数：53。依赖顺序：必须第一棒——第 2 段断言项目下只有 4 个种子单元，
+// 断言数：57。依赖顺序：必须第一棒——第 2 段断言项目下只有 4 个种子单元，
 // 别的套件建过单元之后再跑必红（不是产品缺陷，是这条脚本的前提）。
 const { chromium } = require('playwright');
 const fs = require('fs');
@@ -81,6 +81,10 @@ async function waitFor(fn, ms, step) {
     const r = await fetch(x, o || {});
     return { code: r.status, body: await r.json().catch(() => null) };
   }, [p, opts]);
+  // postJSON 带请求体：checkDecide 读 body 里的判定结论，没有 body 会 400。
+  const postJSON = (p, body) => api(p, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
   const role = async (r) => {
     await page.click('.rolebtn:has-text("' + r + '")');
     await page.waitForTimeout(400);
@@ -314,6 +318,33 @@ async function waitFor(fn, ms, step) {
   await page.evaluate(() => { const s = Array.from(document.querySelectorAll('.sidebar .trow.sub2')).find((x) => x.textContent.trim().startsWith('验证')); if (s) s.click(); });
   await page.waitForTimeout(900);
   await shot('打tag前');
+
+  // 验收清单必须真的进账本、绑在这一版提交上（#70）。以前这里什么都不查：
+  // AT 正文写着 AC-1..AC-5，账本里 checks 是 null，tag 闸整段被跳过。
+  const stBefore = (await api(`/api/state?pbc=${unitID}`)).body || {};
+  const checks70 = stBefore.checks || [];
+  const headNo70 = ((stBefore.commits || [])[0] || {}).no;
+  check('7 交付后账本里有验收清单（AT 的 AC 落成 check.defined）',
+    checks70.length >= 5 && checks70.every((c) => c.st === 'todo'),
+    { total: checks70.length, st: checks70.map((c) => c.st) });
+  check('7 清单绑定在 HEAD 这个提交上',
+    !!headNo70 && checks70.every((c) => c.commit === headNo70),
+    { head: headNo70, commits: checks70.map((c) => c.commit) });
+  // 拿 SA 身份试打 tag：权限是对的，挡它的是「还没验」。
+  await role('SA');
+  const early = await api(`/api/units/${unitID}/tag`, { method: 'POST' });
+  check('7 清单还没验就点打 tag → 400 点名还差几条',
+    early.code === 400 && /还差 \d+ 条验收/.test((early.body || {}).error || ''), early.body);
+
+  // BA 逐条验过（人验的，机器代替不了）：清单从 todo 走到 pass。
+  await role('BA');
+  const decided = [];
+  for (const c of checks70) {
+    const one = await postJSON(`/api/checks/${c.id}/decide?pbc=${unitID}`, { st: 'pass' });
+    decided.push({ id: c.id, code: one.code });
+  }
+  check('7 BA 逐条判定通过（AC-1..AC-5）',
+    decided.length === checks70.length && decided.every((d) => d.code === 200 || d.code === 201), decided);
 
   await role('SA');
   const tag = await api(`/api/units/${unitID}/tag`, { method: 'POST' });

@@ -4,7 +4,7 @@
 
 一份 BRD → 拆成若干交付单元（PBC / Agent）→ 每个单元走完「方案 · 原型 · 构建 · 验证」并打 tag → 项目级发布编排按批次上环境、按批次回滚。整个过程写在一条只追加、可回放的事实账本里。
 
-`Go` · `Dapr` · `Redis` · `Vue 3.5` · `Vite 6` · 五套自动化验收 **200/200**、方案页布局 12/12 · [MIT](./LICENSE)
+`Go` · `Dapr` · `Redis` · `Vue 3.5` · `Vite 6` · 五套自动化验收 **210/210**、方案页布局 12/12 · [MIT](./LICENSE)
 
 ---
 
@@ -168,15 +168,15 @@ cd web && npm run build
 
 # 行为验收（先用干净账本；v32 必须第一棒）
 cd web/e2e
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs    # 53 项
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs   # 26 项
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs   # 35 项
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs    # 57 项
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs   # 28 项
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs   # 37 项
 BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v26.cjs    # 68 项
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs   # 18 项
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs   # 20 项
 BASE=http://127.0.0.1:8080 node acceptance_plan.cjs               # 12 项（只读布局，不写账本）
 ```
 
-合计 **212/212**。断言查的是账本事实，不是页面文案。
+合计 **222/222**。断言查的是账本事实，不是页面文案。
 
 「五套」指前五条（各自 `SUMMARY n/n passed` 收尾、都走 `check()`）；`acceptance_plan.cjs` 是同目录的第 6 套，
 测方案页布局，按同一套 SUMMARY 口径跑，但既不需要 Dapr 也不写账本。六个脚本各自的开头注释写了

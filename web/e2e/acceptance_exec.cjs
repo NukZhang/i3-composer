@@ -11,7 +11,7 @@
 //
 // 用法：BASE=http://127.0.0.1:8080 node acceptance_exec.cjs
 //
-// 断言数：26。依赖顺序：在 v32 之后跑；自己带 RUN_TAG 建单元，可与 v26 / plan 任意顺序。
+// 断言数：28。依赖顺序：在 v32 之后跑；自己带 RUN_TAG 建单元，可与 v26 / plan 任意顺序。
 const { chromium } = require('playwright');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
 const BASE = process.env.BASE || 'http://127.0.0.1:8080';
@@ -207,6 +207,22 @@ async function healthPre(BASE) {
   const stepEvents = itemEvents.filter((e) => e.payload.data.kind === 'step' || e.payload.data.kind === 'verified');
   check('7 workflow 每一步都经总线发过事件（不是装饰品）',
     stepEvents.length >= 6, { 收到: itemEvents.length, 其中步骤: stepEvents.length });
+
+  // ---- 7.2 验收清单进账本、人验过才打得了 tag（#70）----
+  const execSt = (await api('/api/state?pbc=' + unit)).body || {};
+  const execChecks = execSt.checks || [];
+  const execHead = ((execSt.commits || [])[0] || {}).no;
+  check('7.2 交付后账本里有验收清单，并绑在 HEAD 上',
+    execChecks.length >= 5 && execChecks.every((c) => c.commit === execHead),
+    { total: execChecks.length, head: execHead, commits: execChecks.map((c) => c.commit) });
+  await role('BA');
+  const vv = [];
+  for (const c of execChecks) {
+    vv.push((await api('/api/checks/' + c.id + '/decide?pbc=' + unit, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ st: 'pass' }),
+    })).code);
+  }
+  check('7.2 BA 逐条判定通过', vv.length === execChecks.length && vv.every((x) => x === 200 || x === 201), vv);
 
   // ---- 8. 打 tag + 批次发布：部署挪到项目级 ----
   await role('SA');

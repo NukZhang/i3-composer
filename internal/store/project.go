@@ -686,26 +686,49 @@ func apply(v *View, f Fact) error {
 
 	case FactCheckDefined:
 		var p struct {
-			Items []domain.Check `json:"items"`
+			Commit string         `json:"commit"`
+			Items  []domain.Check `json:"items,omitempty"`
+			// 老事实把清单放在 checks 里，两种都认。
+			Checks []domain.Check `json:"checks,omitempty"`
 		}
 		if err := dec(&p); err != nil {
 			return err
 		}
-		for _, c := range p.Items {
+		items := append(append([]domain.Check(nil), p.Items...), p.Checks...)
+		// 带 commit 的是「整份清单」：它描述这一版要验哪几条，
+		// 顶掉旧的整份，而不是和旧条目混在一起——混着就会出现
+		// 「三条验过了、两条还是上一版的」这种谁也解释不清的清单。
+		fresh := p.Commit != ""
+		out := v.Checks
+		if fresh {
+			out = nil
+		}
+		for _, c := range items {
 			if c.ST == "" {
 				c.ST = domain.CheckTodo
 			}
+			if c.Commit == "" {
+				c.Commit = p.Commit
+			}
 			replaced := false
-			for i := range v.Checks {
-				if v.Checks[i].ID == c.ID {
-					v.Checks[i] = c
+			for i := range out {
+				if out[i].ID == c.ID {
+					// 同一条、针对同一个提交、已经判过：保留结论。
+					// 清单重出一遍不该把「验过了」打回 todo。
+					st := c.ST
+					if fresh && out[i].Commit == c.Commit && out[i].ST != domain.CheckTodo {
+						st = out[i].ST
+					}
+					c.ST = st
+					out[i] = c
 					replaced = true
 				}
 			}
 			if !replaced {
-				v.Checks = append(v.Checks, c)
+				out = append(out, c)
 			}
 		}
+		v.Checks = out
 
 	case FactCheckDecided:
 		var p struct {

@@ -99,6 +99,19 @@ func (p *Pipeline) Doc(ctx context.Context, u wf.UnitInfo, title, change string,
 	return md, nil
 }
 
+// Acceptances 把 AT 制品里的验收标准做成清单条目。
+//
+// 文档里写着 AC-1..AC-5，账本里就得有对应的五条待验——否则「文档说一套、
+// 账本里没有」：新拆出来的单元照样能打 tag（#70）。Commit 由调用方填，
+// 因为「这份 AT 属于哪个提交」只有落账那一刻才知道。
+func (p *Pipeline) Acceptances(ctx context.Context, u wf.UnitInfo, title, change string) []domain.Check {
+	out := []domain.Check{}
+	for _, a := range p.specOf(ctx, u, title, change).Acceptance() {
+		out = append(out, domain.Check{ID: a.ID, N: a.Name, G: a.Given, W: a.When, T: a.Then, ST: domain.CheckTodo})
+	}
+	return out
+}
+
 // Code 产出代码类制品的文件。
 //
 // PBC 与组合单元产出可编译的 Go 服务；Agent 单元产出的是编排定义本身

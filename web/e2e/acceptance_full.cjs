@@ -11,7 +11,7 @@
 //
 // 用法：BASE=http://127.0.0.1:8093 node acceptance_full.cjs
 //
-// 断言数：18。依赖顺序：放最后跑——它自己建单元并真部署进程，先跑会让别的套件的
+// 断言数：20。依赖顺序：放最后跑——它自己建单元并真部署进程，先跑会让别的套件的
 // 「项目下只有种子单元」类断言看到多余单元。
 const { chromium } = require('playwright');
 const CHROME = '/Users/nukzhang/Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing';
@@ -123,6 +123,21 @@ async function waitFor(fn, ms, step) {
   // ---- 9. 单元自己不部署 ----
   const deployFact = (facts.body.facts || []).find((f) => f.type === 'deploy.succeeded');
   check('9 单元交付不部署（部署属于发布批次）', !deployFact, deployFact && deployFact.payload);
+
+  // ---- 9b. 验收清单：AT 的 AC 落成 check.defined，人逐条验过才打得了 tag（#70）----
+  const stNow = (await api('/api/state?pbc=' + unitID)).body || {};
+  const acs = stNow.checks || [];
+  check('9b 交付后账本里有验收清单（每条都绑在 HEAD 上）',
+    acs.length >= 5 && acs.every((c) => c.commit === ((stNow.commits || [])[0] || {}).no),
+    { total: acs.length, commits: acs.map((c) => c.commit) });
+  await setRole('BA');
+  const verdicts = [];
+  for (const c of acs) {
+    verdicts.push((await api('/api/checks/' + c.id + '/decide?pbc=' + unitID, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ st: 'pass' }),
+    })).code);
+  }
+  check('9b BA 逐条判定通过', verdicts.length === acs.length && verdicts.every((x) => x === 200 || x === 201), verdicts);
 
   // ---- 10. 打 tag → 批次发布 ----
   await setRole('SA');

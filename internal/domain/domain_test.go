@@ -396,3 +396,37 @@ func TestHybridGatesBothSidesMustPass(t *testing.T) {
 		t.Fatal("两侧全过应可发布")
 	}
 }
+
+// 打 tag 的验收闸口：没有清单、没验完、验的是旧提交，三种都要挡；
+// 清单是 HEAD 这一版且全过才放行（#70）。
+func TestCheckBlock(t *testing.T) {
+	pass := func(id, commit string) Check {
+		return Check{ID: id, N: id, ST: CheckPass, Commit: commit}
+	}
+	cases := []struct {
+		name string
+		list []Check
+		want string
+	}{
+		{"没有清单", nil, "没有验收清单"},
+		{"还是空的", []Check{{ID: "AC-1", ST: CheckTodo, Commit: "1.0.1"}}, "还差"},
+		{"有一条不过", []Check{pass("AC-1", "1.0.1"), {ID: "AC-2", ST: CheckFail, Commit: "1.0.1"}}, "还差"},
+		{"结论看不懂按没验算", []Check{pass("AC-1", "1.0.1"), {ID: "AC-2", ST: "", Commit: "1.0.1"}}, "还差"},
+		{"全过但是旧提交", []Check{pass("AC-1", "1.0.0"), pass("AC-2", "1.0.0")}, "不是 HEAD 1.0.1"},
+		{"全过且是 HEAD", []Check{pass("AC-1", "1.0.1"), pass("AC-2", "1.0.1")}, ""},
+	}
+	for _, c := range cases {
+		got := CheckBlock(c.list, "1.0.1")
+		if c.want == "" && got != "" {
+			t.Fatalf("%s：应放行，实际挡住：%s", c.name, got)
+		}
+		if c.want != "" {
+			if got == "" {
+				t.Fatalf("%s：应挡住，实际放行", c.name)
+			}
+			if !strings.Contains(got, c.want) {
+				t.Fatalf("%s：拒绝理由应含 %q，实际 %q", c.name, c.want, got)
+			}
+		}
+	}
+}

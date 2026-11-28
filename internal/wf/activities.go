@@ -50,6 +50,8 @@ type Executor interface {
 	Doc(ctx context.Context, u UnitInfo, title, change string, t domain.Artifact) (string, error)
 	// Code 产出代码类制品的文件。
 	Code(ctx context.Context, u UnitInfo, title, change string) (map[string]string, error)
+	// Acceptances 把 AT 制品里的验收标准做成待验清单。
+	Acceptances(ctx context.Context, u UnitInfo, title, change string) []domain.Check
 	// Test 真跑测试。
 	Test(ctx context.Context, pbc, commit string, files map[string]string) (TestOut, error)
 	// Build 真构建，产出内容寻址的 digest。
@@ -121,6 +123,10 @@ func (a *Activities) Verified(ctx context.Context, in StepInput) (StepResult, er
 	}
 	if v.Test.Pass != v.Test.Total {
 		return StepResult{OK: false, Step: in.Step, Detail: fmt.Sprintf("测试未全过（%d/%d）", v.Test.Pass, v.Test.Total)}, nil
+	}
+	// 交付收了口，就把「这一版要人验哪几条」写进账本：tag 闸拿它挡（#70）。
+	if err := a.defineChecks(ctx, in, a.unitOf(ctx, in.Input), head.No); err != nil {
+		return StepResult{}, err
 	}
 	p := map[string]any{"id": in.ItemID, "version": head.No}
 	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/verified",
@@ -333,6 +339,52 @@ func (a *Activities) Converge(ctx context.Context, in StepInput) (StepResult, er
 		}
 	}
 	return StepResult{OK: false, Step: in.Step, Detail: "8 轮后仍有制品过期，依赖配置可能有环"}, nil
+}
+
+// defineChecks 把这一版 AT 里的 AC 落成待验清单，绑定到 HEAD。
+//
+// 落点选在「五步跑完」而不是生成/提交：只有到这里 HEAD 才是这一轮最终的那一版，
+// 清单绑错了提交，tag 闸就会一直说「清单是旧提交的」。
+//
+// 清单是跟着提交走的资产：整份重写、带提交号，投影按整份替换（见 store.Project）。
+// 同一个提交上重跑（Dapr 重放、再次经过）不重写——重写会把已经验过的条目打回 todo；
+// 换了提交则整份重来，上一次的「验过了」不能顺延到新版本上。
+func (a *Activities) defineChecks(ctx context.Context, in StepInput, unit UnitInfo, head string) error {
+	if a.D.Exec == nil {
+		return nil
+	}
+	facts, err := a.logOf(in.Input).Load(ctx, in.PBC)
+	if err != nil {
+		return err
+	}
+	v, err := store.Project(in.PBC, facts)
+	if err != nil {
+		return err
+	}
+	items := a.D.Exec.Acceptances(ctx, unit, in.Title, in.Type)
+	if len(items) == 0 {
+		return nil
+	}
+	if len(v.Checks) == len(items) {
+		same := true
+		for i := range items {
+			same = same && v.Checks[i].ID == items[i].ID && v.Checks[i].Commit == head
+		}
+		if same {
+			return nil
+		}
+	}
+	for i := range items {
+		items[i].Commit = head
+	}
+	if _, err := a.logOf(in.Input).AppendOp(ctx, in.PBC, in.OpID+"/checks",
+		store.FactCheckDefined, "x-qa", map[string]any{"commit": head, "items": items}); err != nil {
+		return err
+	}
+	a.publish(ctx, TopicItemChanged, map[string]any{
+		"pbc": in.PBC, "item": in.ItemID, "kind": "checks", "commit": head, "total": len(items),
+	})
+	return nil
 }
 
 // Commit 原子提交整棵树。草稿或过期则拒绝——这道判定在 domain 里。

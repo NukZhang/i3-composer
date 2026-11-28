@@ -9,13 +9,26 @@ import (
 	"github.com/zhangkun/i3-composer/internal/store"
 )
 
-// taggedUnit 造一个可打 tag 的单元：完整制品树 + 一次提交 + 测试全过 + 登记。
+// taggedUnit 造一个可打 tag 的单元：完整制品树 + 一次提交 + 测试全过 +
+// 针对这次提交的验收清单 + 登记。
+//
+// 清单不能省：没有清单就不许打 tag（#70），夹具少了这一条，
+// 后面每一个「打 tag 应成功」的用例都变成了在验错误的前提。
 func taggedUnit(t *testing.T, h *harness, id string) {
 	t.Helper()
 	ctx := t.Context()
 	seedCommit(t, h.st, id)
 	if _, err := h.st.Append(ctx, id, store.FactTestRun, "x-qa", map[string]any{
 		"commit": "1.0.1", "pass": 5, "total": 5, "by": "x-qa",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.st.Append(ctx, id, store.FactCheckDefined, "x-qa", map[string]any{
+		"commit": "1.0.1",
+		"items": []domain.Check{
+			{ID: "AC-1", N: "健康检查可用", ST: domain.CheckPass, Commit: "1.0.1"},
+			{ID: "AC-2", N: "列表可读", ST: domain.CheckPass, Commit: "1.0.1"},
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -69,10 +82,13 @@ func TestTagRecordsGateEvaluation(t *testing.T) {
 	if rv["gatesNote"] != nil {
 		t.Fatalf("有落账的闸就不该给「没有记录」的说明：%v", rv["gatesNote"])
 	}
-	// 空数组而不是 null：前端要能直接读长度。
+	// 回放要带上打 tag 那一刻的清单，并且说清它验的是哪个提交（#70）。
 	checks, ok := rv["checks"].([]any)
-	if !ok || len(checks) != 0 {
-		t.Fatalf("没有验收清单时 checks 应是空数组（不是 null），实际 %v", rv["checks"])
+	if !ok || len(checks) != 2 {
+		t.Fatalf("回放应带上当时的两条验收，实际 %v", rv["checks"])
+	}
+	if c, _ := checks[0].(map[string]any); c["commit"] != "1.0.1" {
+		t.Fatalf("回放的验收要绑定当时的提交，实际 %v", checks[0])
 	}
 	if _, ok := rv["facts"].([]any); !ok {
 		t.Fatalf("回归窗口的事实应是数组，实际 %v", rv["facts"])

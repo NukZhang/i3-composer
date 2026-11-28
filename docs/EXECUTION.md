@@ -124,11 +124,11 @@ go build -o /tmp/i3-composer-bin ./cmd/i3-composer
 
 # 3. 六套验收（v32 第一棒、full 最后；见下面的套件表）
 cd web/e2e
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs   # 53 项：四阶段 / 打 tag / 批次发布 / 整批回滚
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs  # 26 项：真测试 / 真构建 / 批次部署 / 真收发
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs  # 35 项：建单元 → 发起 → 越权 → 打 tag → 作废
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v32.cjs   # 57 项：四阶段 / 打 tag / 批次发布 / 整批回滚
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_exec.cjs  # 28 项：真测试 / 真构建 / 批次部署 / 真收发
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_flow.cjs  # 37 项：建单元 → 发起 → 越权 → 打 tag → 作废
 BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_v26.cjs   # 68 项：编排工作台 / 质量报告 / 验收台
-BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs  # 18 项：从零建单元 → 真跑五步 → 打 tag → 批次
+BASE=http://127.0.0.1:8080 RUN_TAG=fin node acceptance_full.cjs  # 20 项：从零建单元 → 真跑五步 → 打 tag → 批次
 BASE=http://127.0.0.1:8080 node acceptance_plan.cjs              # 12 项：方案页三页签的布局宽度
 ```
 
@@ -136,15 +136,15 @@ BASE=http://127.0.0.1:8080 node acceptance_plan.cjs              # 12 项：方�
 
 | 脚本 | 覆盖 | 断言 | 依赖顺序 | 进 CI |
 |---|---|---|---|---|
-| `acceptance_v32.cjs` | 四阶段、打 tag 进池、项目级批次发布与整批回滚 | 53 | **必须第一棒**：第 2 段断言项目下只有 4 个种子单元 | 否 |
-| `acceptance_exec.cjs` | 执行侧证据：真测试条数、内容摘要 digest、真进程与 `/healthz`、pub/sub 真收发 | 26 | v32 之后；自带 `RUN_TAG` 建单元 | 否 |
-| `acceptance_flow.cjs` | 写路径：建单元 → 建任务 → 发起 → 越权被拒 → 打 tag → 作废与重建 | 35 | v32 之后；自带 `RUN_TAG` | 否 |
+| `acceptance_v32.cjs` | 四阶段、打 tag 进池、项目级批次发布与整批回滚、验收清单绑提交 | 57 | **必须第一棒**：第 2 段断言项目下只有 4 个种子单元 | 否 |
+| `acceptance_exec.cjs` | 执行侧证据：真测试条数、内容摘要 digest、真进程与 `/healthz`、pub/sub 真收发、验收清单 | 28 | v32 之后；自带 `RUN_TAG` 建单元 | 否 |
+| `acceptance_flow.cjs` | 写路径：建单元 → 建任务 → 发起 → 越权被拒 → 验收 → 打 tag → 作废与重建 | 37 | v32 之后；自带 `RUN_TAG` | 否 |
 | `acceptance_v26.cjs` | v2.6 界面与 Agent 编排：digest 闸、试跑与装配、质量报告、验收台、对话拦截 | 68 | v32 之后 | 否 |
-| `acceptance_full.cjs` | 从空账本跑完整链路：建单元 → 建任务 → 五步真跑 → 打 tag → 批次 | 18 | **放最后**：会新建单元并真起进程 | 否 |
+| `acceptance_full.cjs` | 从空账本跑完整链路：建单元 → 建任务 → 五步真跑 → 打 tag → 批次 | 20 | **放最后**：会新建单元并真起进程 | 否 |
 | `acceptance_plan.cjs` | 方案页（PRD / AD / AT）预览与编辑区的布局宽度（2 个视口） | 12 | 无：只读，不写账本 | 否 |
 | `shots_v26.cjs` | 不出断言，只截图 | — | 任意 | 否 |
 
-前五套是「五套验收」（合计 200 项）；第六套 `acceptance_plan.cjs` 只测布局，不依赖 Dapr、不写账本，
+前五套是「五套验收」（合计 210 项）；第六套 `acceptance_plan.cjs` 只测布局，不依赖 Dapr、不写账本，
 以前没人跑也没有文档——现在与其它套件同口径（`SUMMARY n/n passed`），并在这张表里列明。
 断言数字以本表为准：改断言时，这里、`README.md` 的验收段、脚本开头注释三处一起改。
 

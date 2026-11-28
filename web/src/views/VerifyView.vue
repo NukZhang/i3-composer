@@ -44,13 +44,22 @@ const gatesOK = computed(() => {
 });
 const checksPass = computed(() => checks.value.length > 0 && checks.value.every((c) => c.st === 'pass'));
 const remainAccept = computed(() => checks.value.filter((c) => c.st !== 'pass').length);
-// 没有验收清单时以机器测试与闸门为准——但页面要说清这件事，不假装「全过」。
+// 清单是「这一版」的吗：改完代码重新提交后，旧清单不该继续算数（#70）。
+// 后端 CheckBlock 用的是同一条判据，页面先说清楚，别让人点了才吃 400。
+const staleAccept = computed(() => {
+  const h = head.value && head.value.no;
+  if (!h) return 0;
+  return checks.value.filter((c) => c.st === 'pass' && c.commit !== h).length;
+});
+// 没有清单不是「不用验收」：清单随 AT 的 AC 进账本，一条都没有说明还没出过 AT。
 const tagReason = computed(() => {
   if (!head.value) return '还没有提交';
   if (!head.value.digest) return 'HEAD 还没构建';
   if (!testsOK.value) return '机器测试未全过';
-  if (!gatesOK.value) return '闸门未过';
+  if (!checks.value.length) return '没有验收清单';
   if (remainAccept.value) return '还差 ' + remainAccept.value + ' 条验收未通过';
+  if (staleAccept.value) return '验收清单出自旧提交，要重出 AT 再验';
+  if (!gatesOK.value) return '闸门未过';
   return '';
 });
 const canTag = computed(() => !unitTag.value && !tagReason.value);
@@ -171,6 +180,7 @@ function pushDefect(d) {
   <div class="unitbar">
     <span class="tag" :class="kindCls(kind)" style="font-size: 9px">{{ kindText(kind) }}</span>
     <span class="muted">{{ unit.name || '' }} · 验收清单 {{ checks.length }} 条</span>
+    <span v-if="checks.length && checks[0].commit" class="small muted">· 出自提交 {{ checks[0].commit }}</span>
   </div>
 
   <div v-if="!can('acceptAT')" class="perm-note">
@@ -186,7 +196,7 @@ function pushDefect(d) {
   </div>
 
   <div v-if="!checks.length" class="card">
-    <div class="empty">这个单元还没有验收清单。清单随 AT 制品进账本，没有清单就没有「验过」这回事。</div>
+    <div class="empty">这个单元还没有验收清单。清单随 AT 制品里的验收标准（AC-1..AC-5）进账本——没有清单就不能打 tag。</div>
   </div>
 
   <template v-else>
@@ -287,7 +297,7 @@ function pushDefect(d) {
         <div class="row" style="gap: 8px; align-items: center">
           <span v-if="tagReason" class="tag t-warn" style="font-size: 9px">{{ tagReason }}</span>
           <span v-else class="tag t-ok" style="font-size: 9px">验收全过，可以打 tag</span>
-          <span v-if="!checks.length" class="small muted">这个单元还没有验收清单，打 tag 以机器测试与闸门为准。</span>
+          <span v-if="!checks.length" class="small muted">这个单元还没有验收清单：清单随 AT 的 AC 进账本，没有清单挡着不让打 tag。</span>
           <span class="spacer" style="flex: 1" />
           <button class="btn small primary" :disabled="!canTag || !can('tag')" @click="doTag">
             <span v-html="icon('tag', 11)" /> 打 tag 固化交付物

@@ -97,10 +97,11 @@ func checkSummary(cs []domain.Check) store.CheckSummary {
 
 // tagUnit 是人在验证页按下的「打 tag 固化交付物」。
 //
-// 三层前提，缺一不可：
+// 四层前提，缺一不可：
 //  1. HEAD 有真构建的 digest；
 //  2. 最近一次测试针对 HEAD 且全过；
-//  3. 闸门全过（判不了的不挡，但也不当成通过）。
+//  3. 验收清单出自 HEAD 且全验过（没有清单也算没过）；
+//  4. 闸门全过（判不了的不挡，但也不当成通过）。
 func (s *Server) tagUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	if err := Require(c.Role, ActTag); err != nil {
 		return err
@@ -140,21 +141,13 @@ func (s *Server) tagUnit(w http.ResponseWriter, r *http.Request, c reqCtx) error
 	if v.Test.Pass != v.Test.Total {
 		return fmt.Errorf("%w：测试未全过（%d/%d），不能打 tag", errBadRequest, v.Test.Pass, v.Test.Total)
 	}
-	// 验收清单存在时，它必须先全过：人验过的才算数。
-	// 没有清单的单元（新拆出来的）以机器测试与闸门为准——但页面会说清这件事。
-	if len(v.Checks) > 0 {
-		left, pass := 0, 0
-		for _, c := range v.Checks {
-			switch c.ST {
-			case domain.CheckPass:
-				pass++
-			default:
-				left++
-			}
-		}
-		if left > 0 {
-			return fmt.Errorf("%w：还差 %d 条验收未通过（%d/%d），不能打 tag", errBadRequest, left, pass, len(v.Checks))
-		}
+	// 4. 验收清单是 HEAD 这一版的，并且全验过。
+	//
+	// 「没有清单」不等于「不用验收」：清单随 AT 制品里的 AC 进账本
+	// （见 pipeline.Doc），一条都没有说明这个单元还没出过 AT——
+	// 机器测试过了也不代表人验过（#70）。
+	if block := domain.CheckBlock(v.Checks, head.No); block != "" {
+		return fmt.Errorf("%w：%s，不能打 tag", errBadRequest, block)
 	}
 	gates := s.unitGates(r.Context(), v, u)
 	if !domain.GatesPass(gates) {
