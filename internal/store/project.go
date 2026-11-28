@@ -114,16 +114,17 @@ type Deploy struct {
 }
 
 type Anno struct {
-	X         float64   `json:"x"`
-	Y         float64   `json:"y"`
-	W         float64   `json:"w"`
-	H         float64   `json:"h"`
-	Text      string    `json:"text"`
-	At        string    `json:"at"`
-	By        string    `json:"by"`
-	Round     string    `json:"round"`
-	ImportSeq int       `json:"importSeq,omitempty"`
-	Line      *AnnoLine `json:"line,omitempty"`
+	X         float64      `json:"x"`
+	Y         float64      `json:"y"`
+	W         float64      `json:"w"`
+	H         float64      `json:"h"`
+	Text      string       `json:"text"`
+	At        string       `json:"at"`
+	By        string       `json:"by"`
+	Round     string       `json:"round"`
+	ImportSeq int          `json:"importSeq,omitempty"`
+	Line      *AnnoLine    `json:"line,omitempty"`
+	Preview   *AnnoPreview `json:"preview,omitempty"`
 }
 
 type AnnoLine struct {
@@ -131,6 +132,12 @@ type AnnoLine struct {
 	Y1 float64 `json:"y1"`
 	X2 float64 `json:"x2"`
 	Y2 float64 `json:"y2"`
+}
+
+// AnnoPreview 记录交互页和滚动区域。空路径表示文档根滚动区。
+type AnnoPreview struct {
+	Route  string `json:"route"`
+	Anchor string `json:"anchor"`
 }
 
 // PrototypeImport 的来源取自事实信封，重复导入同一摘要仍各有自己的 seq。
