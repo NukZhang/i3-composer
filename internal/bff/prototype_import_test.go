@@ -603,10 +603,12 @@ func TestNativeHTMLPreviewKeepsOriginalAndScopesScriptPermission(t *testing.T) {
 	reviewStatus(t, read(route+"?pbc=another", frame), http.StatusNotFound)
 	native := read(route+"?pbc=fee", frame)
 	reviewStatus(t, native, http.StatusOK)
-	if !bytes.Equal(native.Body.Bytes(), source) ||
+	delivered := native.Body.Bytes()
+	if !bytes.Contains(delivered, nativeAnnotationScript) ||
+		!bytes.Equal(bytes.Replace(delivered, nativeAnnotationScript, nil, 1), source) ||
 		!strings.HasPrefix(native.Header().Get("Content-Disposition"), "inline") ||
 		native.Header().Get("Cache-Control") != "no-store" {
-		t.Fatal("交互预览必须提供无缓存的原件")
+		t.Fatal("交互预览只应在无缓存的原件内加入批注脚本")
 	}
 	csp := native.Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "sandbox allow-scripts allow-forms") || strings.Contains(csp, "allow-same-origin") ||
@@ -615,8 +617,8 @@ func TestNativeHTMLPreviewKeepsOriginalAndScopesScriptPermission(t *testing.T) {
 	}
 	top := read(route+"?pbc=fee", map[string]string{"Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none"})
 	reviewStatus(t, top, http.StatusOK)
-	if !strings.HasPrefix(top.Header().Get("Content-Disposition"), "attachment") {
-		t.Fatal("单独访问应按原件下载处理")
+	if !strings.HasPrefix(top.Header().Get("Content-Disposition"), "attachment") || !bytes.Equal(top.Body.Bytes(), source) {
+		t.Fatal("单独访问应下载未经改动的原件")
 	}
 	snapshotSource := read("/api/prototype-imports/1?pbc=fee", frame)
 	reviewStatus(t, snapshotSource, http.StatusOK)

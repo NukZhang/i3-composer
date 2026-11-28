@@ -512,7 +512,11 @@ function assertBoxNear(actual, expected) {
         assert.ok(saved.w > 0 && saved.h > 0 && saved.x >= 0 && saved.y >= 0 && saved.x + saved.w <= 1 && saved.y + saved.h <= 1);
         const originalPlacement = await nativeBoxInField();
         const expectedPlacement = boxFromCorners(dragStart, dragEnd);
-        originalPlacement.forEach((value, index) => near(value, expectedPlacement[index], 0.055));
+        // iframe 内的鼠标与边框按 CSS 像素取整，短输入框用固定像素误差核对。
+        originalPlacement.forEach((value, index) => {
+          const axis = index % 2 === 0 ? field.width : field.height;
+          near(value, expectedPlacement[index], 4 / axis);
+        });
         console.log('PASS 在原生入库页面框选范围，正文和当前路由及归一化坐标随批注落账');
 
         await openRoute('出库管理', outbound);
@@ -533,6 +537,7 @@ function assertBoxNear(actual, expected) {
         await note(nativeText).waitFor();
         assertBoxNear(await nativeBoxInField(), originalPlacement);
         assert.deepEqual(await findAnnotation(), saved);
+        await screenshot('issue107-native-inbound.png');
         console.log('PASS 切到出库页面隐藏批注，返回入库和刷新后恢复同一矩形与正文');
       }
     }
