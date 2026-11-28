@@ -79,6 +79,16 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3500/v1.0/healthz   # 
 
 cookie 缺失/签名不符时**默认 BA**（只读视角起点）。
 
+| 原型评审操作 | BA | PA | DA | SA | 动作 |
+|---|---|---|---|---|---|
+| 在线预览已导入文件 | ✓ | ✓ | ✓ | ✓ | `view` |
+| 导入评审原型、画线批注 | | ✓ | | | `acceptProto` |
+
+原型导入接口为 `POST /api/prototype-imports?pbc=<单元>`，附件字段为 multipart `file`。支持 PNG、JPEG、PDF 和 UTF-8 静态 HTML。每个文件上限 20 MiB，超限返回 413。
+PNG 和 JPEG 单边最多 8192 像素，总像素最多 16,777,216。可附加 `createdSeq=<登记序号>` 锁定目标单元登记，登记已更换时返回 409。
+`GET /api/state?pbc=<单元>` 返回该单元的 `protoImports` 和 `annos`。按导入序号读取预览使用 `GET /api/prototype-imports/{seq}?pbc=<单元>`。
+画线批注使用 `POST /api/annotations?pbc=<单元>`，提交 `{importSeq,line:{x1,y1,x2,y2},text}`，两端坐标按预览区域的宽高归一化。
+
 ### 3.2 读
 
 | 方法 | 路径 | 返回 |

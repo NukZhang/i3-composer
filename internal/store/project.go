@@ -25,6 +25,9 @@ type View struct {
 	Annos     []Anno                               `json:"annos"`
 	SvcVerify *domain.SvcVerify                    `json:"svcVerify,omitempty"`
 
+	// 评审原件单独投影，避免导入推进正式制品版本。
+	ProtoImports []PrototypeImport `json:"protoImports"`
+
 	// Test 是最近一次真跑测试的结果（go test 的真实输出，不是编出来的条数）。
 	Test *TestResult `json:"test,omitempty"`
 	// Events 是通过 pub/sub 收到的事件：收发闭环的证据。
@@ -111,14 +114,36 @@ type Deploy struct {
 }
 
 type Anno struct {
-	X     float64 `json:"x"`
-	Y     float64 `json:"y"`
-	W     float64 `json:"w"`
-	H     float64 `json:"h"`
-	Text  string  `json:"text"`
-	At    string  `json:"at"`
-	By    string  `json:"by"`
-	Round string  `json:"round"`
+	X         float64   `json:"x"`
+	Y         float64   `json:"y"`
+	W         float64   `json:"w"`
+	H         float64   `json:"h"`
+	Text      string    `json:"text"`
+	At        string    `json:"at"`
+	By        string    `json:"by"`
+	Round     string    `json:"round"`
+	ImportSeq int       `json:"importSeq,omitempty"`
+	Line      *AnnoLine `json:"line,omitempty"`
+}
+
+type AnnoLine struct {
+	X1 float64 `json:"x1"`
+	Y1 float64 `json:"y1"`
+	X2 float64 `json:"x2"`
+	Y2 float64 `json:"y2"`
+}
+
+// PrototypeImport 的来源取自事实信封，重复导入同一摘要仍各有自己的 seq。
+type PrototypeImport struct {
+	Seq       int    `json:"seq,omitempty"`
+	Digest    string `json:"digest"`
+	FileName  string `json:"fileName"`
+	MediaType string `json:"mediaType"`
+	Size      int64  `json:"size"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+	By        string `json:"by,omitempty"`
+	At        string `json:"at,omitempty"`
 }
 
 // Step 是执行链路的一步。
@@ -248,6 +273,7 @@ func Project(pbc string, facts []Fact) (*View, error) {
 		Binaries:       map[string]bool{},
 		Items:          map[string]*Item{},
 		checkDecisions: map[string]checkDecision{},
+		ProtoImports:   []PrototypeImport{},
 	}
 	for _, f := range facts {
 		if err := apply(v, f); err != nil {
@@ -608,6 +634,14 @@ func apply(v *View, f Fact) error {
 			it.Blocked = "发布被拒"
 			it.BlockedBy = p.By
 		}
+
+	case FactPrototypeImported:
+		var p PrototypeImport
+		if err := dec(&p); err != nil {
+			return err
+		}
+		p.Seq, p.By, p.At = f.Seq, f.Actor, f.At
+		v.ProtoImports = append(v.ProtoImports, p)
 
 	case FactAnnotationAdded:
 		var a Anno

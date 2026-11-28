@@ -56,12 +56,16 @@ func (s *Store) Put(b []byte) (string, int64, error) {
 		return "", 0, err
 	}
 	path := filepath.Join(dir, hexPart)
-	if _, err := os.Stat(path); err == nil {
-		st, _ := os.Stat(path)
+	if st, err := os.Stat(path); err == nil {
 		return d, st.Size(), nil
 	}
-	// 先写临时文件再改名：避免半个文件被当成完整产物。
-	tmp := path + ".tmp"
+	// 并发写同一摘要时，每次写入要有自己的临时路径，否则会覆盖对方尚未发布的字节。
+	tmpDir, err := os.MkdirTemp(dir, ".put-*")
+	if err != nil {
+		return "", 0, err
+	}
+	defer os.RemoveAll(tmpDir)
+	tmp := filepath.Join(tmpDir, hexPart)
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return "", 0, err
 	}
