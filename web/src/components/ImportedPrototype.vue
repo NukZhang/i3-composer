@@ -260,7 +260,7 @@ async function save() {
     </div>
     <p v-if="uploading" role="status" class="small muted import-message">正在处理原型文件…</p>
     <p v-if="uploadError" role="alert" class="import-error import-message">{{ uploadError }}</p>
-    <p v-if="!selected" class="small muted import-message">支持 PNG、JPEG、PDF 和静态 HTML，单文件上限 20 MiB。</p>
+    <p v-if="!selected" class="small muted import-message">支持 PNG、JPEG、PDF 和 HTML，单文件上限 20 MiB。</p>
 
     <template v-if="selected">
       <div class="import-controls">
