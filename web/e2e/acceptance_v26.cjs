@@ -129,6 +129,10 @@ function check(name, ok, detail) {
   }));
   check('2 构建页有 Agent 编排 / 质量报告两个新 tab',
     studio.tabs.some((t) => t.includes('Agent 编排')) && studio.tabs.some((t) => t.includes('质量报告')), studio.tabs);
+  const buildTabs = page.locator('.stage .ptabs');
+  check('2 Agent 构建页明确自动生成的是编排定义（#91）',
+    await buildTabs.getByText('自动生成 Agent 编排定义', { exact: true }).isVisible() &&
+      await buildTabs.getByText('自动生成的服务代码仅支持 Go', { exact: true }).count() === 0);
   check('2 编排工作台有 7 个节点 + 连线', studio.listItems === 7 && studio.nodes === 7 && studio.edges >= 7,
     { li: studio.listItems, node: studio.nodes, edge: studio.edges });
   check('2 节点清单可点选（节点配置面板有内容）', studio.cfg.includes('节点 ID'), studio.cfg.slice(0, 60));
