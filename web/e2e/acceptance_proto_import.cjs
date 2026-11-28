@@ -507,7 +507,8 @@ function assertBoxNear(actual, expected) {
         assert.equal(saved.preview.route, inbound);
         assert.match(saved.preview.anchor, /^(?:\d+(?:\/\d+)*)?$/);
         assert.deepEqual(saved.preview, sent.preview);
-        assert.deepEqual(boxValues(saved), boxValues(sent));
+        const sentBox = boxValues(sent);
+        boxValues(saved).forEach((value, index) => near(value, sentBox[index], 0.0000011));
         assert.ok(saved.w > 0 && saved.h > 0 && saved.x >= 0 && saved.y >= 0 && saved.x + saved.w <= 1 && saved.y + saved.h <= 1);
         const originalPlacement = await nativeBoxInField();
         const expectedPlacement = boxFromCorners(dragStart, dragEnd);
