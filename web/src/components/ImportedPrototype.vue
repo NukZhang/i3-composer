@@ -22,6 +22,7 @@ const drawButton = ref(null);
 const overlay = ref(null);
 const note = ref(null);
 const previewReady = ref(false);
+const interactive = ref(false);
 const uploading = ref(false);
 const saving = ref(false);
 const uploadError = ref('');
@@ -54,6 +55,7 @@ watch(() => selected.value?.seq, (seq) => {
   lastSeq.value = seq ?? null;
   selectionRevision++;
   previewReady.value = false;
+  interactive.value = false;
   resetDrawing();
 }, { immediate: true, flush: 'sync' });
 watch(() => props.canWrite, (allowed) => {
@@ -249,7 +251,7 @@ async function save() {
   <section v-if="canWrite || selected" aria-labelledby="prototype-import-heading" class="card imported-prototype">
     <div class="ch import-toolbar">
       <h3 id="prototype-import-heading">导入原型评审</h3>
-      <span v-if="selected" class="tag">只读 · 导入</span>
+      <span v-if="selected" class="tag">{{ interactive ? '交互预览' : '只读 · 导入' }}</span>
       <span class="spacer" />
       <template v-if="canWrite">
         <input ref="fileInput" data-testid="prototype-import-input" type="file" hidden
@@ -272,7 +274,12 @@ async function save() {
             </option>
           </select>
         </label>
-        <button v-if="canWrite" ref="drawButton" type="button" class="btn small" :class="{ primary: drawing }"
+        <button v-if="selected.mediaType === 'text/html'" type="button" class="btn small"
+          :aria-pressed="interactive" :disabled="drawing || saving"
+          data-testid="prototype-native-toggle" @click="interactive = !interactive">
+          {{ interactive ? '返回只读预览' : '交互预览' }}
+        </button>
+        <button v-if="canWrite && !interactive" ref="drawButton" type="button" class="btn small" :class="{ primary: drawing }"
           :disabled="!previewReady || saving" :aria-pressed="drawing" @click="toggleDrawing">画线批注</button>
       </div>
       <div class="small muted import-meta">
@@ -280,61 +287,74 @@ async function save() {
         <span>导入时间 {{ selected.at }}</span>
         <span v-if="selected.mediaType === 'application/pdf'">PDF 首页</span>
       </div>
-      <p v-if="drawing" id="prototype-import-draw-help" class="small muted import-message">
-        拖动画线，或用方向键移动光标、按 Enter 分别确定起点和终点。按 Esc 取消。
-      </p>
+      <iframe v-if="interactive" :key="selected.seq" :title="selected.fileName + ' 的交互预览'"
+        :src="api.nativePrototypeURL(unit, selected.seq)" class="native-preview" data-testid="prototype-native-frame"
+        sandbox="allow-scripts allow-forms" referrerpolicy="no-referrer" />
+      <div v-show="!interactive" class="review-preview">
+        <p v-if="drawing" id="prototype-import-draw-help" class="small muted import-message">
+          拖动画线，或用方向键移动光标、按 Enter 分别确定起点和终点。按 Esc 取消。
+        </p>
 
-      <PrototypeImportPreview :key="selected.seq" :unit="unit" :artifact="selected" @status="updatePreviewStatus"
-        v-slot="{ top, bottom }">
-        <svg
-          ref="overlay"
-          data-testid="prototype-import-lines"
-          class="import-lines"
-          :class="{ 'is-drawing': drawing }"
-          viewBox="0 0 1 1"
-          preserveAspectRatio="none"
-          :tabindex="drawing ? 0 : undefined"
-          :role="drawing ? 'application' : undefined"
-          :aria-hidden="drawing ? undefined : true"
-          :aria-label="drawing ? '画线批注区域' : undefined"
-          :aria-describedby="drawing ? 'prototype-import-draw-help' : undefined"
-          @pointerdown="pointerDown"
-          @pointermove="pointerMove"
-          @pointerup="pointerUp"
-          @pointercancel="cancelPointer"
-          @lostpointercapture="cancelPointer"
-          @keydown="drawWithKeyboard($event, top, bottom)"
-        >
-          <line v-for="(annotation, i) in lines" :key="i" v-bind="annotation.line" vector-effect="non-scaling-stroke" />
-          <line v-if="draft" v-bind="draft" class="draft-line" vector-effect="non-scaling-stroke" />
-          <path v-if="cursor" :d="'M ' + cursor.x + ' 0 V 1 M 0 ' + cursor.y + ' H 1'" vector-effect="non-scaling-stroke" />
-        </svg>
-      </PrototypeImportPreview>
+        <PrototypeImportPreview :key="selected.seq" :unit="unit" :artifact="selected" @status="updatePreviewStatus"
+          v-slot="{ top, bottom }">
+          <svg
+            ref="overlay"
+            data-testid="prototype-import-lines"
+            class="import-lines"
+            :class="{ 'is-drawing': drawing }"
+            viewBox="0 0 1 1"
+            preserveAspectRatio="none"
+            :tabindex="drawing ? 0 : undefined"
+            :role="drawing ? 'application' : undefined"
+            :aria-hidden="drawing ? undefined : true"
+            :aria-label="drawing ? '画线批注区域' : undefined"
+            :aria-describedby="drawing ? 'prototype-import-draw-help' : undefined"
+            @pointerdown="pointerDown"
+            @pointermove="pointerMove"
+            @pointerup="pointerUp"
+            @pointercancel="cancelPointer"
+            @lostpointercapture="cancelPointer"
+            @keydown="drawWithKeyboard($event, top, bottom)"
+          >
+            <line v-for="(annotation, i) in lines" :key="i" v-bind="annotation.line" vector-effect="non-scaling-stroke" />
+            <line v-if="draft" v-bind="draft" class="draft-line" vector-effect="non-scaling-stroke" />
+            <path v-if="cursor" :d="'M ' + cursor.x + ' 0 V 1 M 0 ' + cursor.y + ' H 1'" vector-effect="non-scaling-stroke" />
+          </svg>
+        </PrototypeImportPreview>
 
-      <form v-if="canWrite && draft && !drawing" class="import-form" @submit.prevent="save">
-        <div class="field">
-          <label for="prototype-import-note">批注意见</label>
-          <textarea id="prototype-import-note" ref="note" v-model="text" required :disabled="saving" />
-        </div>
-        <p v-if="saveError" role="alert" class="import-error import-message">{{ saveError }}</p>
-        <div class="row">
-          <button type="submit" class="btn primary small" :disabled="saving || !text.trim()">提交批注</button>
-          <button type="button" class="btn small" :disabled="saving" @click="cancelDrawing">取消</button>
-        </div>
-      </form>
+        <form v-if="canWrite && draft && !drawing" class="import-form" @submit.prevent="save">
+          <div class="field">
+            <label for="prototype-import-note">批注意见</label>
+            <textarea id="prototype-import-note" ref="note" v-model="text" required :disabled="saving" />
+          </div>
+          <p v-if="saveError" role="alert" class="import-error import-message">{{ saveError }}</p>
+          <div class="row">
+            <button type="submit" class="btn primary small" :disabled="saving || !text.trim()">提交批注</button>
+            <button type="button" class="btn small" :disabled="saving" @click="cancelDrawing">取消</button>
+          </div>
+        </form>
 
-      <ul v-if="lines.length" class="import-annotations" aria-label="导入原型批注">
-        <li v-for="(annotation, i) in lines" :key="i" class="anno-item">
-          <span>{{ annotation.text }}</span>
-          <span class="small muted">{{ annotation.by }} · {{ annotation.at }}</span>
-        </li>
-      </ul>
+        <ul v-if="lines.length" class="import-annotations" aria-label="导入原型批注">
+          <li v-for="(annotation, i) in lines" :key="i" class="anno-item">
+            <span>{{ annotation.text }}</span>
+            <span class="small muted">{{ annotation.by }} · {{ annotation.at }}</span>
+          </li>
+        </ul>
+      </div>
     </template>
   </section>
 </template>
 
 <style scoped>
 .imported-prototype { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
+.review-preview { display: contents; }
+.native-preview {
+  width: 100%;
+  height: clamp(520px, 72vh, 880px);
+  border: 1px solid var(--line-g);
+  border-radius: 8px;
+  background: #fff;
+}
 .import-toolbar { flex-wrap: wrap; margin: 0; }
 .import-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
 .import-history { width: min(100%, 340px); }

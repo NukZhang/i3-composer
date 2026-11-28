@@ -331,7 +331,7 @@ function near(actual, expected, tolerance = 0.014) {
       const image = page.getByTestId('prototype-import-snapshot');
       const snapshot = (seq) => importPath + '/' + seq + '/snapshot?pbc=' + otherUnit;
       const waitImage = async () => {
-        await image.waitFor();
+        await image.waitFor({ timeout: 21000 });
         await page.waitForFunction(() => document.querySelector('[data-testid="prototype-import-snapshot"]')?.naturalWidth === 1200);
         assert.equal(await preview.locator('iframe').count(), 0);
       };
@@ -380,8 +380,47 @@ function near(actual, expected, tolerance = 0.014) {
       await screenshot(externalHTML ? 'issue101-real-refresh.png' : 'issue101-synthetic-refresh.png');
       console.log('PASS 快照、原导入与批注坐标刷新后保持一致');
       console.log('DYNAMIC EVIDENCE', JSON.stringify({ unit: otherUnit, importSeq: importFact.seq, annotationSeq: lineFact.seq, line: after.line, pngBytes: imageBytes.length }));
+
+      const toggle = page.getByTestId('prototype-native-toggle');
+      await toggle.click();
+      const iframe = page.getByTestId('prototype-native-frame');
+      const live = iframe.contentFrame();
+      await iframe.waitFor();
+      assert.equal(await iframe.getAttribute('sandbox'), 'allow-scripts allow-forms');
+      assert.equal(await iframe.evaluate((node) => node.contentDocument), null);
+      if (externalHTML) {
+        await live.getByText('物资管理', { exact: true }).first().click();
+        await live.getByText('入库管理', { exact: true }).first().click();
+        const rows = live.locator('tbody tr').filter({ hasText: /DY-/ });
+        await rows.first().waitFor();
+        const initialRows = await rows.count();
+        const filter = live.getByPlaceholder('输入关键词搜索');
+        await filter.fill('i3-无匹配实例-105');
+        await live.getByText('查询', { exact: true }).first().click();
+        await rows.first().waitFor({ state: 'hidden' });
+        await live.getByText('重置', { exact: true }).first().click();
+        await rows.first().waitFor();
+        assert.equal(await rows.count(), initialRows);
+        await live.getByText('新建点验单', { exact: true }).first().click();
+        const field = live.locator('textarea').first();
+        await field.fill('原生 iframe 中文录入');
+        assert.equal(await field.inputValue(), '原生 iframe 中文录入');
+        await live.getByText('取消', { exact: true }).first().click();
+        await field.waitFor({ state: 'hidden' });
+        assert.equal(await rows.count(), initialRows);
+        console.log('PASS 原生 HTML 在 iframe 内直接切换菜单、筛选、打开弹窗和填写表单');
+      } else {
+        await live.getByRole('heading', { name: '材料入库看板' }).waitFor();
+        console.log('PASS 原生 HTML 在 iframe 内执行文件脚本并显示 DOM');
+      }
+      await toggle.click();
+      await note(text).waitFor();
+      (await normalizedLine()).forEach((coord, index) => near(coord, placement[index]));
+      assert.deepEqual(await (await request('GET', snapshot(imported.seq), 200)).body(), imageBytes);
+      assert.deepEqual((await request('GET', '/api/facts?pbc=' + otherUnit, 200).then((response) => response.json())).facts, dynamicFacts);
+      console.log('PASS 退出原生预览后恢复原快照与批注，预览期间账本一致');
     }
-    const count = dynamicEnabled ? 8 : 6;
+    const count = dynamicEnabled ? 10 : 6;
     console.log(`SUMMARY ${count}/${count} pass, 0 fail`);
   } finally {
     await browser.close();

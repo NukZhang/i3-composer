@@ -144,6 +144,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/prototype-imports", s.wrap(s.uploadPrototypeImport))
 	m.HandleFunc("GET /api/prototype-imports/{seq}", s.wrap(s.readPrototypeImport))
 	m.HandleFunc("GET /api/prototype-imports/{seq}/snapshot", s.wrap(s.readPrototypeSnapshot))
+	m.HandleFunc("GET /api/prototype-imports/{seq}/native", s.wrap(s.readNativePrototypeImport))
 	m.HandleFunc("POST /api/annotations", s.wrap(s.addAnnotation))
 	m.HandleFunc("POST /api/artifacts", s.wrap(s.saveDraft))
 	m.HandleFunc("GET /api/facts", s.wrap(s.facts))
