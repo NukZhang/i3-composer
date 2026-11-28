@@ -6,7 +6,7 @@ services:
       - prototype-renderer-socket:/run/prototype-renderer:ro
 
   prototype-renderer-init:
-    image: alpine:3.22
+    image: alpine:3.24
     user: "0:0"
     command: ["chown", "65532:65532", "/run/prototype-renderer"]
     network_mode: none
@@ -33,7 +33,8 @@ services:
     init: true
     cpus: 2.0
     mem_limit: 768m
-    pids_limit: 128
+    # Chromium 的浏览器、渲染进程和 GPU 线程共用这个配额。
+    pids_limit: 192
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
     volumes:

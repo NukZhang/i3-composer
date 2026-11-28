@@ -216,6 +216,8 @@ const server = http.createServer({
 });
 
 server.maxConnections = 8;
+// 客户端中途停止接收 PNG 时也要释放连接。
+server.setTimeout(15000);
 server.on('clientError', (failure, client) => {
   if (!client.writable) return client.destroy();
   const timedOut = failure.code === 'ERR_HTTP_REQUEST_TIMEOUT';
@@ -230,7 +232,7 @@ server.on('error', () => {
 
 // Docker 重启后卷里可能保留旧 socket。其余文件类型视为部署错误。
 if (lstatSync(socket, { throwIfNoEntry: false })?.isSocket()) unlinkSync(socket);
-server.listen(socket, () => {
+server.listen({ path: socket }, () => {
   chmodSync(socket, 0o660);
   console.log('prototype renderer listening');
 });

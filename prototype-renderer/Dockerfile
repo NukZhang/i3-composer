@@ -1,10 +1,10 @@
-FROM alpine:3.22 AS dependencies
+FROM alpine:3.24 AS dependencies
 RUN apk add --no-cache npm
 WORKDIR /opt/prototype-renderer
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache chromium font-noto-cjk nodejs \
     && mkdir -p /run/prototype-renderer
 WORKDIR /opt/prototype-renderer

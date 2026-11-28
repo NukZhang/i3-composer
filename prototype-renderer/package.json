@@ -6,6 +6,6 @@
     "test": "node --test render.test.cjs"
   },
   "dependencies": {
-    "playwright": "1.58.2"
+    "playwright": "1.65.1"
   }
 }
