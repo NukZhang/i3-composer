@@ -49,13 +49,13 @@ const fixture = Buffer.from(`<!doctype html><html lang="zh-CN"><meta charset="ut
 <nav><button id="menu">物资管理</button><button id="inbound" hidden>入库管理</button></nav>
 <main id="screen"><h1 id="title">工作台</h1>
   <section id="receiving" hidden>
-    <form id="filter"><input id="query" aria-label="输入关键词搜索"><button id="search" type="button">查询</button></form>
+    <form id="filter"><input id="query" aria-label="输入关键词搜索"><button id="search" type="submit">查询</button></form>
     <button id="reset">重置</button><button id="new">新建点验单</button>
     <div id="results">两条记录</div>
   </section>
 </main>
 <span id="isolation" aria-label="隔离检查"></span><span id="saved" aria-label="保存结果"></span>
-<dialog id="dialog"><h2>新建点验单</h2><form><input id="description" aria-label="点验说明"><button id="submit" type="button">保存</button></form></dialog>
+<dialog id="dialog"><h2>新建点验单</h2><form><input id="description" aria-label="点验说明"><button id="submit" type="submit">保存</button></form></dialog>
 <script>
   const byId = id => document.getElementById(id);
   byId('menu').onclick = () => { byId('inbound').hidden = false; };
@@ -65,15 +65,13 @@ const fixture = Buffer.from(`<!doctype html><html lang="zh-CN"><meta charset="ut
     byId('screen').classList.toggle('ready', !byId('receiving').hidden);
     byId('title').textContent = '入库管理';
   });
-  // 沙箱关闭浏览器的原生表单提交，本地应用通过脚本处理筛选与保存。
+  // 表单事件由原型脚本处理，沙箱仍阻断外部表单目标。
   const filter = () => {
     if (byId('query').value !== ${JSON.stringify(queryText)}) return;
     byId('results').classList.add('empty');
     byId('results').textContent = '无匹配记录';
   };
-  byId('search').onclick = filter;
-  byId('query').onkeydown = event => {
-    if (event.key !== 'Enter') return;
+  byId('filter').onsubmit = event => {
     event.preventDefault();
     filter();
   };
@@ -83,7 +81,8 @@ const fixture = Buffer.from(`<!doctype html><html lang="zh-CN"><meta charset="ut
     byId('results').textContent = '两条记录';
   };
   byId('new').onclick = () => byId('dialog').showModal();
-  byId('submit').onclick = () => {
+  byId('dialog').querySelector('form').onsubmit = event => {
+    event.preventDefault();
     if (byId('description').value !== ${JSON.stringify(formText)}) return;
     localStorage.setItem(${JSON.stringify(storageKey)}, 'sandbox');
     byId('saved').classList.add('saved');
@@ -137,17 +136,22 @@ function pixelDifference(before, after) {
       ]);
       return response;
     };
-    const upload = async (name, buffer) => {
+    const upload = async (name, buffer, dynamic = false) => {
       const emitted = await responseWhile('POST', imports,
         () => page.getByTestId('prototype-import-input').setInputFiles({ name, mimeType: 'text/html', buffer }));
       assert.equal(emitted.status(), 201, await emitted.text());
       const { seq } = await emitted.json();
-      await expectSnapshot();
+      await expectReadonly(dynamic);
       return seq;
     };
-    const expectSnapshot = async () => {
-      await snapshot.waitFor();
-      assert.equal(await page.getByTestId('prototype-import-preview').locator('iframe').count(), 0);
+    const expectReadonly = async (dynamic) => {
+      const frame = page.getByTestId('prototype-import-preview').locator('iframe');
+      if (dynamic) {
+        await snapshot.waitFor();
+        assert.equal(await frame.count(), 0);
+      } else {
+        await frame.waitFor();
+      }
     };
     const waitFrame = async (previous = '') => {
       await page.waitForFunction(({ id, previous, width, height }) => {
@@ -171,10 +175,10 @@ function pixelDifference(before, after) {
       const token = opened.headers()['x-prototype-session'];
       assert.ok(token);
       await waitFrame();
-      assert.equal(await page.getByTestId('prototype-import-preview').locator('iframe').count(), 0);
+      assert.equal(await page.getByTestId('prototype-import-preview').locator('iframe:visible').count(), 0);
       return `${imports}/${seq}/interactive/${encodeURIComponent(token)}`;
     };
-    const controls = (session) => {
+    const controls = (session, dynamic = false) => {
       const action = async (operation) => {
         const previous = await image.getAttribute('src');
         const response = await responseWhile('POST', session, operation);
@@ -198,7 +202,7 @@ function pixelDifference(before, after) {
           const stopped = await responseWhile('DELETE', session, () => close.click());
           assert.equal(stopped.status(), 204);
           await image.waitFor({ state: 'hidden' });
-          await expectSnapshot();
+          await expectReadonly(dynamic);
         },
       };
     };
@@ -209,9 +213,10 @@ function pixelDifference(before, after) {
     const row = page.locator(`.sidebar [data-unit="${unit}"]`);
     const project = page.locator('.sidebar .trow.sub').filter({ hasText: '收费与工单数字化' });
     await project.waitFor();
-    if (!await row.isVisible()) await project.click();
-    await row.click();
-    await page.locator('.sidebar .trow.sub2').filter({ hasText: '原型' }).click();
+    // 交互验收从原型页开始，准备阶段无需滚动种子项目的长侧栏。
+    if (!await row.isVisible()) await project.dispatchEvent('click');
+    await row.dispatchEvent('click');
+    await page.locator('.sidebar .trow.sub2').filter({ hasText: '原型' }).dispatchEvent('click');
 
     const seq = await upload('交互验收样例.html', fixture);
     const factsURL = '/api/facts?pbc=' + unit;
@@ -268,7 +273,9 @@ function pixelDifference(before, after) {
     console.log('PASS 隔离浏览器的网络、Cookie 和存储检查通过，关闭和重开不改变快照与账本');
 
     if (source) {
-      const real = controls(await start(await upload(basename(source), readFileSync(source))));
+      const realSeq = await upload(basename(source), readFileSync(source), true);
+      const realFacts = await (await request('GET', factsURL, 200)).json();
+      const real = controls(await start(realSeq), true);
       // 坐标由同版的无网 Chromium 以 1200×800 独立核对真实 DOM 后记录。
       const menuArea = [25, 205, 105, 84];
       const tableArea = [310, 364, 600, 150];
@@ -298,9 +305,10 @@ function pixelDifference(before, after) {
       const openDialog = await region(...dialogArea);
       await real.click(845, 511);
       assert.ok(pixelDifference(openDialog, await region(...dialogArea)) > 3000, '取消后弹窗应消失');
-      // 取消后的指针仍在台账上，移除弹窗和悬停效果会影响部分像素。
-      assert.ok(pixelDifference(inboundTable, await region(...tableArea)) < 6500, '取消后应恢复未修改的台账');
+      // 采样弹窗所在区域，避开取消后指针下方整行的悬停样式。
+      assert.ok(pixelDifference(beforeDialog, await region(...dialogArea)) < 7000, '取消后应恢复原入库页面');
       await real.end();
+      assert.deepEqual(await (await request('GET', factsURL, 200)).json(), realFacts);
       console.log('PASS 本机物资原型完成菜单导航、关键词筛选、打开点验单、中文填写和取消');
     }
     assert.deepEqual(evalErrors, []);

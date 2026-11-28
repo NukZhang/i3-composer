@@ -147,7 +147,7 @@ const server = http.createServer({
 
 server.maxConnections = 8;
 // 客户端中途停止接收 PNG 时也要释放连接。
-server.setTimeout(15000);
+server.setTimeout(20000);
 server.on('clientError', (failure, client) => {
   if (!client.writable) return client.destroy();
   const timedOut = failure.code === 'ERR_HTTP_REQUEST_TIMEOUT';

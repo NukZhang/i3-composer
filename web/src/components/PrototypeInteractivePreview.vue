@@ -12,7 +12,7 @@ const HEIGHT = 800;
 const MAX_DELTA = 1600;
 const MAX_TEXT = 512;
 const MAX_ACTIONS = 24;
-const REQUEST_TIMEOUT = 20000;
+const REQUEST_TIMEOUT = 23000;
 const KEYS = new Set([
   'Tab', 'Enter', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown',
   'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Space',

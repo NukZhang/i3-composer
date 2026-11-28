@@ -207,7 +207,7 @@ onMounted(() => {
   if (dimensions.value || error.value) return;
   timeout = setTimeout(() => {
     fail(snapshotRequested.value ? '动态 HTML 快照加载超时，请重新打开该文件' : '预览加载超时，请重新打开该文件');
-  }, 20000);
+  }, 23000);
   if (isPDF) {
     void loadPDF();
   } else if (isHTML) {

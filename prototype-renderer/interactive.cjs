@@ -17,8 +17,8 @@ let opening = 0;
 function validAction(action) {
   if (!action || typeof action !== 'object' || Array.isArray(action)) return false;
   const fields = Object.keys(action).length;
-  const isCoordinate = (value) => typeof value === 'number' && value >= 0 && value <= 1;
-  const isDelta = (value) => typeof value === 'number' && Math.abs(value) <= 3000;
+  const isCoordinate = (value) => typeof value === 'number' && value >= 0 && value < 1;
+  const isDelta = (value) => typeof value === 'number' && Math.abs(value) <= 1600;
 
   switch (action.type) {
     case 'click':
@@ -39,7 +39,8 @@ function validAction(action) {
 }
 
 function screenshot(page, timeout) {
-  return page.screenshot({ type: 'png', timeout });
+  // 只返回状态画面，避免弹窗淡入淡出时截到半透明的过渡帧。
+  return page.screenshot({ type: 'png', animations: 'disabled', timeout });
 }
 
 async function openSession(readHTML) {
@@ -47,7 +48,7 @@ async function openSession(readHTML) {
   opening++;
   try {
     const html = await readHTML();
-    const frame = await loadPage(html, viewport, viewport.height, (page, _height, timeout) => screenshot(page, timeout));
+    const frame = await loadPage(html, viewport, viewport.height, (page, _height, timeout) => screenshot(page, timeout), true);
     const id = randomBytes(16).toString('hex');
     const now = performance.now();
     const session = { id, context: frame.context, page: frame.page, opened: now, touched: now, busy: false };

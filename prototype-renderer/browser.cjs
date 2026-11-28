@@ -1,9 +1,10 @@
 const { chromium } = require('playwright');
 
 const origin = 'http://prototype.invalid/';
+const launchTimeout = 8000;
 const renderTimeout = 8000;
 
-// 允许原型自己的内联脚本、样式和数据资源，并用无法被页面移除的响应头沙箱阻止弹窗。
+// 允许原型自己的内联内容，外部资源和表单目标由响应头禁止。
 const contentPolicy = [
   "default-src 'none'",
   "script-src 'unsafe-inline'",
@@ -16,7 +17,6 @@ const contentPolicy = [
   "frame-src 'none'",
   "worker-src 'none'",
   "frame-ancestors 'none'",
-  'sandbox allow-scripts allow-same-origin',
 ].join('; ');
 
 // 只用当前截图范围内可见的文本和图像作为完成标记，跳过加载失败的图片、隐藏内容和空壳页面。
@@ -54,7 +54,7 @@ function getBrowser() {
       // 默认 Docker seccomp 禁止 Chromium 建立自己的命名空间。隔离由无网、非 root 容器承担。
       chromiumSandbox: false,
       handleSIGTERM: false,
-      timeout: 3500,
+      timeout: launchTimeout,
     });
     browserPromise = launching;
     const reset = () => { if (browserPromise === launching) browserPromise = undefined; };
@@ -109,14 +109,15 @@ async function withinDeadline(timeout, operation) {
   }
 }
 
-async function loadPage(html, viewport, limit, capture) {
-  let browser;
+async function loadPage(html, viewport, limit, capture, allowFormEvents = false) {
+  // 交互模式让本地 submit 事件运行。导航仍受 form-action 'none' 和断网约束。
+  const sandbox = 'sandbox allow-scripts allow-same-origin' + (allowFormEvents ? ' allow-forms' : '');
+  // 冷启动和页面脚本分别设限，忙时启动不占用页面自己的渲染时间。
+  const browser = await getBrowser();
   let context;
   let abandoned = false;
   try {
     return await withinDeadline(renderTimeout, async (remaining) => {
-      browser = await getBrowser();
-      if (abandoned) return;
       const isolated = await browser.newContext({
         viewport,
         locale: 'zh-CN',
@@ -144,7 +145,7 @@ async function loadPage(html, viewport, limit, capture) {
           await route.fulfill({
             headers: {
               'content-type': 'text/html; charset=utf-8',
-              'content-security-policy': contentPolicy,
+              'content-security-policy': contentPolicy + '; ' + sandbox,
               'x-content-type-options': 'nosniff',
             },
             body,
@@ -166,7 +167,7 @@ async function loadPage(html, viewport, limit, capture) {
   } catch (failure) {
     abandoned = true;
     if (context) await closeContext(context);
-    else if (browser) void closeBrowser(browser);
+    else void closeBrowser(browser);
     throw failure;
   }
 }

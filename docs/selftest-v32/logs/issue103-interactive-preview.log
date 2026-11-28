@@ -1,0 +1,54 @@
+交互原型专项（独立 Docker、真实 Dapr Pub/Sub）
+PASS 交互图片中的菜单展开并进入入库页面，另一个单元无法使用该会话
+PASS 键盘筛选改变结果，点击重置恢复原列表
+PASS 弹窗打开和退出，中文输入在沙箱中触发表单保存
+PASS 隔离浏览器的网络、Cookie 和存储检查通过，关闭和重开不改变快照与账本
+PASS 本机物资原型完成菜单导航、关键词筛选、打开点验单、中文填写和取消
+SUMMARY 5/5 pass, 0 fail
+
+原型预览兼容性与批注回放
+PASS PNG 预览、权限来源和横线批注
+PASS JPEG 预览、批注隔离和高精度坐标的真实账本回放
+PASS PDF 首页绘制、批注刷新和窗口缩放
+PASS HTML 样式、页尾滚动、批注回放，以及脚本和外部请求隔离
+PASS 历史导入保留对应批注，换单元后文件及批注隔离
+PASS 超限、错误格式、非法坐标及越权请求不落账，原型还原维持「判不了」
+PASS 动态 HTML 渲染出脚本生成的画面，工作台仅加载图片
+PASS 快照、原导入与批注坐标刷新后保持一致
+DYNAMIC EVIDENCE {"unit":"proto-formats103","importSeq":3,"annotationSeq":4,"line":{"x1":0.23,"y1":0.24,"x2":0.45,"y2":0.26},"pngBytes":96434}
+SUMMARY 8/8 pass, 0 fail
+
+Compose 渲染器隔离配置
+none readOnly=true user=65532:65532 capDrop=["ALL"] ports={}
+
+渲染器 Node 测试
+✔ renders an inline module and clips content beyond the maximum screenshot height (2317.815293ms)
+✔ rejects pages without a visible rendered marker (2612.833001ms)
+✔ blocks fetch, popups, workers and external assets even with a reachable local origin (295.030667ms)
+✔ reclaims a renderer running an unbounded inline script (8302.857629ms)
+✔ rejects inputs outside the HTML and UTF-8 body contract (4.272208ms)
+✔ keeps menu, form and scrolling state in each interactive screenshot (733.008ms)
+✔ bounds isolated sessions and serves a static screenshot with all session slots occupied (1806.544459ms)
+✔ blocks external requests, iframes and popups after user input and dismisses native prompts (342.858042ms)
+✔ recovers from one session hanging while preserving another session (5392.769711ms)
+✔ dispatches local submit events while blocking a prototype form action (262.704791ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 22252.870969
+
+平台五套回归（另一独立账本）
+--- acceptance_v32.cjs ---
+SUMMARY 70/70 passed
+--- acceptance_exec.cjs ---
+SUMMARY 38/38 passed
+--- acceptance_flow.cjs ---
+SUMMARY 33/33 passed
+--- acceptance_full.cjs ---
+SUMMARY 20/20 passed
+--- acceptance_v26.cjs ---
+SUMMARY 76/76 passed

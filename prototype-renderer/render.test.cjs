@@ -44,7 +44,7 @@ function request(body, headers = {}, url = '/render', method = 'POST') {
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
     });
     req.on('error', reject);
-    req.setTimeout(16000, () => req.destroy(new Error('renderer request timed out')));
+    req.setTimeout(22000, () => req.destroy(new Error('renderer request timed out')));
     req.end(body);
   });
 }
@@ -105,7 +105,7 @@ test('blocks fetch, popups, workers and external assets even with a reachable lo
   assert.equal(externalRequests, 0);
 });
 
-test('reclaims a renderer running an unbounded inline script', { timeout: 14000 }, async () => {
+test('reclaims a renderer running an unbounded inline script', { timeout: 20000 }, async () => {
   assert.equal((await request('<script>while (true) {}</script>')).status, 422);
   assertPNG(await request('<p>Next request</p>'), 480);
 });
@@ -271,4 +271,33 @@ test('recovers from one session hanging while preserving another session', { tim
   assertPNG(running, 800);
   assert.equal((await interactive(broken, { type: 'frame' })).status, 404);
   assertPNG(await interactive(healthy, { type: 'frame' }), 800);
+});
+
+test('dispatches local submit events while blocking a prototype form action', { timeout: 25000 }, async (t) => {
+  let hits = 0;
+  const target = http.createServer((_req, res) => { hits++; res.end('unexpected submission'); });
+  const sockets = new Set();
+  target.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+  target.listen(0, '127.0.0.1');
+  await once(target, 'listening');
+  t.after(() => new Promise((resolve) => {
+    target.close(resolve);
+    // 即使提交被 CSP 阻断，Chromium 仍可能留下未发送 HTTP 的预连接。
+    for (const socket of sockets) socket.destroy();
+  }));
+  const destination = 'http://127.0.0.1:' + target.address().port;
+  const start = await openInteractive(`<!doctype html><body style="background:red">
+    <form action="${destination}/submit" method="post">
+      <button type="submit" style="margin:20px;height:60px;width:120px">保存</button>
+    </form>
+    <script>document.querySelector('form').onsubmit = () => document.body.style.background = 'green'</script>`);
+  const url = assertStart(start);
+  t.after(() => closeInteractive(url));
+  const frame = await interactive(url, click(70, 50));
+  assertPNG(frame, 800);
+  assert.deepEqual(topLeft(frame.body), [0, 128, 0]);
+  assert.equal(hits, 0);
 });
