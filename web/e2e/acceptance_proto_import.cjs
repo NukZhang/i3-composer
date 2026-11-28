@@ -58,6 +58,18 @@ function near(actual, expected, tolerance = 0.014) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} 与 ${expected} 的差值超过 ${tolerance}`);
 }
 
+function boxFromCorners([x1, y1], [x2, y2]) {
+  return [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)];
+}
+
+function boxValues({ x, y, w, h }) {
+  return [x, y, w, h];
+}
+
+function assertBoxNear(actual, expected) {
+  actual.forEach((value, index) => near(value, expected[index]));
+}
+
 (async () => {
   await requirePubsub(base);
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH });
@@ -68,6 +80,8 @@ function near(actual, expected, tolerance = 0.014) {
     const preview = page.getByTestId('prototype-import-preview');
     const history = page.getByTestId('prototype-import-select');
     const lines = page.getByTestId('prototype-import-lines').locator('line');
+    const boxes = page.getByTestId('prototype-import-boxes').locator('rect');
+    const draw = page.getByTestId('prototype-import-draw');
     const notes = page.getByRole('list', { name: '导入原型批注' });
     const note = (text) => notes.getByText(text, { exact: true });
     const externalResponses = [];
@@ -138,15 +152,21 @@ function near(actual, expected, tolerance = 0.014) {
       }, mimeType);
       return Buffer.from(data, 'base64');
     };
-    const annotate = async (text, start, end) => {
-      await page.getByRole('button', { name: '画线批注', exact: true }).click();
-      await preview.evaluate((element) => element.scrollIntoView({ block: 'start' }));
-      const bounds = await preview.boundingBox();
-      assert.ok(bounds && bounds.width > 100 && bounds.height > 100);
+    const dragBox = async (bounds, start, end) => {
       await page.mouse.move(bounds.x + start[0] * bounds.width, bounds.y + start[1] * bounds.height);
       await page.mouse.down();
       await page.mouse.move(bounds.x + end[0] * bounds.width, bounds.y + end[1] * bounds.height, { steps: 7 });
       await page.mouse.up();
+    };
+    const annotate = async (text, start, end) => {
+      await draw.click();
+      await preview.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+      const bounds = await preview.boundingBox();
+      assert.ok(bounds && bounds.width > 100 && bounds.height > 100);
+      await dragBox(bounds, start, end);
+      return submitAnnotation(text);
+    };
+    const submitAnnotation = async (text) => {
       await page.getByLabel('批注意见', { exact: true }).fill(text);
       const [response] = await Promise.all([
         page.waitForResponse((res) => new URL(res.url()).pathname === '/api/annotations' && res.request().method() === 'POST'),
@@ -154,18 +174,23 @@ function near(actual, expected, tolerance = 0.014) {
       ]);
       assert.equal(response.status(), 201, await response.text());
       await note(text).waitFor();
+      return response.request().postDataJSON();
     };
-    const normalizedLine = async () => {
-      await lines.first().waitFor({ state: 'attached' });
-      assert.equal(await lines.count(), 1);
-      return lines.first().evaluate((line) => {
-        const bounds = line.closest('[data-testid="prototype-import-preview"]').getBoundingClientRect();
-        const transform = line.getScreenCTM();
+    const normalizedBox = async () => {
+      await boxes.first().waitFor({ state: 'attached' });
+      assert.equal(await boxes.count(), 1);
+      return boxes.first().evaluate((box) => {
+        const bounds = box.closest('[data-testid="prototype-import-preview"]').getBoundingClientRect();
+        const transform = box.getScreenCTM();
         const ratio = (x, y) => {
-          const point = new DOMPoint(x.baseVal.value, y.baseVal.value).matrixTransform(transform);
+          const point = new DOMPoint(x, y).matrixTransform(transform);
           return [(point.x - bounds.x) / bounds.width, (point.y - bounds.y) / bounds.height];
         };
-        return [...ratio(line.x1, line.y1), ...ratio(line.x2, line.y2)];
+        const x = box.x.baseVal.value;
+        const y = box.y.baseVal.value;
+        const [left, top] = ratio(x, y);
+        const [right, bottom] = ratio(x + box.width.baseVal.value, y + box.height.baseVal.value);
+        return [left, top, right - left, bottom - top];
       });
     };
     const checkImage = async (name) => {
@@ -185,20 +210,30 @@ function near(actual, expected, tolerance = 0.014) {
     const image = await upload('收费页.png', 'image/png', png);
     await checkImage('收费页');
     assert.deepEqual([image.width, image.height], [800, 430]);
-    const pngText = '横线批注：把标题放到这里';
-    const pngLine = [0.24, 0.28, 0.62, 0.28];
-    await annotate(pngText, pngLine.slice(0, 2), pngLine.slice(2));
-    (await normalizedLine()).forEach((n, i) => near(n, pngLine[i]));
+    const pngText = '矩形批注：把标题放到这里';
+    const pngStart = [0.24, 0.28];
+    const pngEnd = [0.62, 0.47];
+    const pngBox = boxFromCorners(pngStart, pngEnd);
+    const pngBody = await annotate(pngText, pngStart, pngEnd);
+    assertBoxNear(await normalizedBox(), pngBox);
+    assertBoxNear(boxValues(pngBody), pngBox);
+    assert.equal(pngBody.preview, undefined);
+    assert.equal(pngBody.line, undefined);
+    assert.equal(await lines.count(), 0);
     await screenshot('issue62-png.png');
-    console.log('PASS PNG 预览、权限来源和横线批注');
+    console.log('PASS PNG 预览、权限来源和矩形批注');
 
     const jpeg = await upload('补充评审.jpeg', 'image/jpeg', await pngOrJpeg('image/jpeg'));
     await checkImage('补充评审');
     assert.deepEqual([jpeg.width, jpeg.height], [800, 430]);
     assert.equal(await lines.count(), 0);
+    assert.equal(await boxes.count(), 0);
     const jpegText = 'JPEG 批注：核对高精度坐标回放';
     const precisionLine = { x1: 0.23999999999999999, y1: 0.28126610293847284, x2: 0.6257662921835023, y2: 0.28126610293847284 };
     await post('/api/annotations?pbc=' + unit, 201, { importSeq: jpeg.seq, text: jpegText, line: precisionLine });
+    await note(jpegText).waitFor();
+    await lines.first().waitFor({ state: 'attached' });
+    assert.equal(await boxes.count(), 0);
     const replayLine = (await state()).annos.find(({ text }) => text === jpegText).line;
     Object.keys(precisionLine).forEach((key) => near(replayLine[key], precisionLine[key], 0.000001));
     console.log('PASS JPEG 预览、批注隔离和高精度坐标的真实账本回放');
@@ -214,21 +249,23 @@ function near(actual, expected, tolerance = 0.014) {
     });
     near(await canvas.evaluate((node) => node.width / node.height), 600 / 320);
     const pdfText = 'PDF 批注：调整读数对齐';
-    const pdfLine = [0.21, 0.24, 0.59, 0.43];
-    await annotate(pdfText, pdfLine.slice(0, 2), pdfLine.slice(2));
+    const pdfStart = [0.59, 0.43];
+    const pdfEnd = [0.21, 0.24];
+    const pdfBox = boxFromCorners(pdfStart, pdfEnd);
+    await annotate(pdfText, pdfStart, pdfEnd);
     await screenshot('issue62-pdf.png');
     await showPrototype();
     await history.selectOption(String(pdf.seq));
     await note(pdfText).waitFor();
-    const beforeResize = await normalizedLine();
+    const beforeResize = await normalizedBox();
     const wide = await preview.evaluate((element) => element.getBoundingClientRect().width);
     await page.setViewportSize({ width: 1040, height: 1080 });
     await page.waitForFunction((width) => {
       const element = document.querySelector('[data-testid="prototype-import-preview"]');
       return element?.getBoundingClientRect().width < width - 10;
     }, wide);
-    (await normalizedLine()).forEach((n, i) => near(n, beforeResize[i]));
-    beforeResize.forEach((n, i) => near(n, pdfLine[i]));
+    assertBoxNear(await normalizedBox(), beforeResize);
+    assertBoxNear(beforeResize, pdfBox);
     await screenshot('issue62-pdf-resized.png');
     console.log('PASS PDF 首页绘制、批注刷新和窗口缩放');
 
@@ -254,22 +291,24 @@ function near(actual, expected, tolerance = 0.014) {
     };
     await scrollHTMLToFooter();
     const htmlText = 'HTML 批注：检查页尾位置';
-    const htmlLine = [0.24, 0.94, 0.49, 0.94];
-    await annotate(htmlText, htmlLine.slice(0, 2), htmlLine.slice(2));
-    (await normalizedLine()).forEach((n, i) => near(n, htmlLine[i]));
+    const htmlStart = [0.24, 0.92];
+    const htmlEnd = [0.49, 0.97];
+    const htmlBox = boxFromCorners(htmlStart, htmlEnd);
+    await annotate(htmlText, htmlStart, htmlEnd);
+    assertBoxNear(await normalizedBox(), htmlBox);
     await screenshot('issue62-html.png');
     await showPrototype();
     await history.selectOption(String(html.seq));
     await note(htmlText).waitFor();
     await scrollHTMLToFooter();
-    (await normalizedLine()).forEach((n, i) => near(n, htmlLine[i]));
+    assertBoxNear(await normalizedBox(), htmlBox);
     console.log('PASS HTML 样式、页尾滚动、批注回放，以及脚本和外部请求隔离');
 
     await history.selectOption(String(image.seq));
     await note(pngText).waitFor();
     assert.equal(await note(pdfText).count(), 0);
     assert.equal(await note(htmlText).count(), 0);
-    (await normalizedLine()).forEach((n, i) => near(n, pngLine[i]));
+    assertBoxNear(await normalizedBox(), pngBox);
     const original = await request('GET', readURL(image.seq), 200);
     assert.deepEqual(await original.body(), png);
     await request('GET', readURL(image.seq, otherUnit), 404);
@@ -298,21 +337,24 @@ function near(actual, expected, tolerance = 0.014) {
       form({ name: '登记已更换.png', mimeType: 'image/png', buffer: png }));
     const badLine = { importSeq: image.seq, line: { x1: 1.1, y1: 0.4, x2: 0.7, y2: 0.4 }, text: '非法坐标' };
     await post('/api/annotations?pbc=' + unit, 400, badLine);
+    const badBox = { importSeq: image.seq, x: 0.8, y: 0.4, w: 0.3, h: 0.1, text: '超出边界的矩形' };
+    await post('/api/annotations?pbc=' + unit, 400, badBox);
     await role('DA');
     await request('POST', deniedPath, 403, form({ name: '越权.png', mimeType: 'image/png', buffer: png }));
-    await post('/api/annotations?pbc=' + unit, 403, badLine);
+    await post('/api/annotations?pbc=' + unit, 403, { ...badBox, w: 0.1 });
     await showPrototype();
     await page.getByText('只读 · 导入', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: '导入原型', exact: true }).count(), 0);
-    assert.equal(await page.getByRole('button', { name: '画线批注', exact: true }).count(), 0);
+    assert.equal(await draw.count(), 0);
     const final = await state();
     const receipts = final.protoImports.filter(({ seq }) => seq > initial.seq);
     assert.deepEqual(new Set(receipts.map(({ seq }) => seq)), new Set([image.seq, jpeg.seq, pdf.seq, html.seq]));
     const annos = final.annos.filter(({ importSeq }) => [image.seq, jpeg.seq, pdf.seq, html.seq].includes(importSeq));
     assert.deepEqual(annos.map(({ text }) => text), [pngText, jpegText, pdfText, htmlText]);
-    for (const anno of annos) {
-      assert.ok(Object.values(anno.line).every((n) => n >= 0 && n <= 1));
-    }
+    assertBoxNear(boxValues(annos[0]), pngBox);
+    assert.ok(Object.values(annos[1].line).every((n) => n >= 0 && n <= 1));
+    assertBoxNear(boxValues(annos[2]), pdfBox);
+    assertBoxNear(boxValues(annos[3]), htmlBox);
     assert.deepEqual(final.versions.proto, initial.versions.proto);
     assert.deepEqual(final.gates.all.find(({ key }) => key === 'visual'), visualGate);
     const { facts } = await (await request('GET', '/api/facts?pbc=' + unit, 200)).json();
@@ -358,28 +400,28 @@ function near(actual, expected, tolerance = 0.014) {
       if (process.env.SHOTS && externalHTML) {
         writeFileSync(join(process.env.SHOTS, 'issue101-real-render.png'), imageBytes);
       }
-      const text = '动态原型评审：确认画线刷新后仍在';
+      const text = '动态原型评审：确认矩形刷新后仍在';
       await annotate(text, [0.23, 0.24], [0.45, 0.26]);
-      const placement = await normalizedLine();
+      const placement = await normalizedBox();
       const before = (await state(otherUnit)).annos.find((entry) => entry.importSeq === imported.seq && entry.text === text);
-      assert.ok(before?.line);
+      assertBoxNear(boxValues(before), placement);
       await showPrototype(otherUnit);
       await history.selectOption(String(imported.seq));
       await waitImage();
       await note(text).waitFor();
-      (await normalizedLine()).forEach((coord, index) => near(coord, placement[index]));
+      assertBoxNear(await normalizedBox(), placement);
       const after = (await state(otherUnit)).annos.find((entry) => entry.importSeq === imported.seq && entry.text === text);
       assert.deepEqual(after, before);
       assert.deepEqual(await (await request('GET', snapshot(imported.seq), 200)).body(), imageBytes);
       const { facts: dynamicFacts } = await (await request('GET', '/api/facts?pbc=' + otherUnit, 200)).json();
       const importFact = dynamicFacts.find(({ seq, type }) => seq === imported.seq && type === 'prototype.imported');
-      const lineFact = dynamicFacts.find(({ seq, type }) => seq > imported.seq && type === 'annotation.added');
+      const boxFact = dynamicFacts.find(({ seq, type }) => seq > imported.seq && type === 'annotation.added');
       assert.equal(importFact?.actor, 'PA');
-      assert.equal(lineFact?.actor, 'PA');
+      assert.equal(boxFact?.actor, 'PA');
       await note(text).scrollIntoViewIfNeeded();
       await screenshot(externalHTML ? 'issue101-real-refresh.png' : 'issue101-synthetic-refresh.png');
       console.log('PASS 快照、原导入与批注坐标刷新后保持一致');
-      console.log('DYNAMIC EVIDENCE', JSON.stringify({ unit: otherUnit, importSeq: importFact.seq, annotationSeq: lineFact.seq, line: after.line, pngBytes: imageBytes.length }));
+      console.log('DYNAMIC EVIDENCE', JSON.stringify({ unit: otherUnit, importSeq: importFact.seq, annotationSeq: boxFact.seq, box: boxValues(after), pngBytes: imageBytes.length }));
 
       const toggle = page.getByTestId('prototype-native-toggle');
       await toggle.click();
@@ -415,12 +457,85 @@ function near(actual, expected, tolerance = 0.014) {
       }
       await toggle.click();
       await note(text).waitFor();
-      (await normalizedLine()).forEach((coord, index) => near(coord, placement[index]));
+      assertBoxNear(await normalizedBox(), placement);
       assert.deepEqual(await (await request('GET', snapshot(imported.seq), 200)).body(), imageBytes);
       assert.deepEqual((await request('GET', '/api/facts?pbc=' + otherUnit, 200).then((response) => response.json())).facts, dynamicFacts);
       console.log('PASS 退出原生预览后恢复原快照与批注，预览期间账本一致');
+
+      if (externalHTML) {
+        const inbound = '#/material/inbound-hub';
+        const outbound = '#/material/outbound-hub';
+        const menu = (name) => live.getByText(name, { exact: true }).filter({ visible: true }).first();
+        const keyword = live.getByPlaceholder('输入关键词搜索', { exact: true });
+        const nativeDrawLayer = live.locator('[data-testid="prototype-native-annotation-layer"][style*="pointer-events: auto"]');
+        const nativeBoxes = live.locator('[data-testid="prototype-native-annotation-box"]:not([data-draft])');
+        const nativeText = '入库页评审：为点验单筛选范围补充说明';
+        const dragStart = [0.12, 0.13];
+        const dragEnd = [0.88, 0.84];
+        const findAnnotation = async () => (await state(otherUnit)).annos.find((a) =>
+          a.importSeq === imported.seq && a.text === nativeText);
+        const openRoute = async (name, route) => {
+          if (!await menu(name).isVisible()) await menu('物资管理').click();
+          await menu(name).click();
+          const frame = await (await iframe.elementHandle()).contentFrame();
+          await frame.waitForURL((url) => url.hash === route);
+        };
+        const nativeBoxInField = async () => {
+          await keyword.waitFor();
+          await nativeBoxes.first().waitFor();
+          assert.equal(await nativeBoxes.count(), 1);
+          const field = await keyword.boundingBox();
+          const box = await nativeBoxes.first().boundingBox();
+          assert.ok(field && box && field.width > 60 && field.height > 20);
+          return [(box.x - field.x) / field.width, (box.y - field.y) / field.height,
+            box.width / field.width, box.height / field.height];
+        };
+
+        await toggle.click();
+        await iframe.waitFor();
+        await openRoute('入库管理', inbound);
+        await keyword.scrollIntoViewIfNeeded();
+        await draw.click();
+        await nativeDrawLayer.waitFor();
+        const field = await keyword.boundingBox();
+        assert.ok(field && field.width > 60 && field.height > 20);
+        await dragBox(field, dragStart, dragEnd);
+        const sent = await submitAnnotation(nativeText);
+        const saved = await findAnnotation();
+        assert.ok(saved && !saved.line);
+        assert.equal(saved.by, 'PA');
+        assert.equal(saved.preview.route, inbound);
+        assert.match(saved.preview.anchor, /^(?:\d+(?:\/\d+)*)?$/);
+        assert.deepEqual(saved.preview, sent.preview);
+        assert.deepEqual(boxValues(saved), boxValues(sent));
+        assert.ok(saved.w > 0 && saved.h > 0 && saved.x >= 0 && saved.y >= 0 && saved.x + saved.w <= 1 && saved.y + saved.h <= 1);
+        const originalPlacement = await nativeBoxInField();
+        const expectedPlacement = boxFromCorners(dragStart, dragEnd);
+        originalPlacement.forEach((value, index) => near(value, expectedPlacement[index], 0.055));
+        console.log('PASS 在原生入库页面框选范围，正文和当前路由及归一化坐标随批注落账');
+
+        await openRoute('出库管理', outbound);
+        await nativeBoxes.first().waitFor({ state: 'hidden' });
+        await note(nativeText).waitFor({ state: 'hidden' });
+        await openRoute('入库管理', inbound);
+        await note(nativeText).waitFor();
+        assertBoxNear(await nativeBoxInField(), originalPlacement);
+
+        await showPrototype(otherUnit);
+        await history.selectOption(String(imported.seq));
+        await waitImage();
+        await note(nativeText).waitFor({ state: 'hidden' });
+        assertBoxNear(await normalizedBox(), placement);
+        await toggle.click();
+        await iframe.waitFor();
+        await openRoute('入库管理', inbound);
+        await note(nativeText).waitFor();
+        assertBoxNear(await nativeBoxInField(), originalPlacement);
+        assert.deepEqual(await findAnnotation(), saved);
+        console.log('PASS 切到出库页面隐藏批注，返回入库和刷新后恢复同一矩形与正文');
+      }
     }
-    const count = dynamicEnabled ? 10 : 6;
+    const count = dynamicEnabled ? (externalHTML ? 12 : 10) : 6;
     console.log(`SUMMARY ${count}/${count} pass, 0 fail`);
   } finally {
     await browser.close();
