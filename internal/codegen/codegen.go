@@ -33,23 +33,6 @@ type Spec struct {
 	At       string // 时间戳
 }
 
-// Plural 是资源集合名（URL 路径用）。
-func (s Spec) Plural() string {
-	switch s.UnitID {
-	case "fee":
-		return "bills"
-	case "qa":
-		return "reviews"
-	case "dun":
-		return "collections"
-	default:
-		if s.UnitID == "" {
-			return "records"
-		}
-		return s.UnitID + "s"
-	}
-}
-
 // Acceptance 是一条验收标准。
 type Acceptance struct {
 	ID    string
@@ -63,13 +46,18 @@ type Acceptance struct {
 //
 // 文档（AT）与代码（单元测试）共用同一份清单：文档里写「Then 什么」，
 // 测试里就断言什么。这样「文档说一套、代码做另一套」不会发生。
+//
+// 这里只给「这套骨架本来就能被验的」五条——健康检查、列表、幂等、统计一致、
+// 错误可读。
+// 业务口径（费率、上限、状态流转）必须来自 spec 制品，不能由模板替客户拍板（#93）。
 func (s Spec) Acceptance() []Acceptance {
+	w := s.Terms().Word
 	return []Acceptance{
 		{ID: "AC-1", Name: "健康检查可用", Given: "服务已启动", When: "请求 /healthz", Then: "返回 200 且带单元标识"},
-		{ID: "AC-2", Name: "列表可读", Given: "单元内有若干条记录", When: "请求列表接口", Then: "返回非空列表，且金额与逾期天数可读"},
+		{ID: "AC-2", Name: w + "列表可读", Given: "单元内有若干条" + w, When: "请求列表接口", Then: "返回非空列表，每条都有 id 与业务字段"},
 		{ID: "AC-3", Name: "批量生成幂等", Given: "带同一个幂等键提交两次", When: "调用生成接口", Then: "只入账一次，第二次返回同一结果"},
-		{ID: "AC-4", Name: "滞纳金封顶", Given: "逾期 400 天、金额 10000", When: "计算滞纳金", Then: "封顶在 2000（本金 20%），逾期更久也不增加"},
-		{ID: "AC-5", Name: "统计口径一致", Given: "列表非空", When: "请求统计接口", Then: "条数与金额合计与列表一致"},
+		{ID: "AC-4", Name: "统计口径一致", Given: "列表非空", When: "请求统计接口", Then: "条数与列表一致"},
+		{ID: "AC-5", Name: "错误可读", Given: "请求体不是合法 JSON", When: "调用生成接口", Then: "返回 400 且带一句原因"},
 	}
 }
 
@@ -118,7 +106,7 @@ func (s Spec) prd() string {
 
 func (s Spec) ad() string {
 	return render(adTmpl, map[string]string{
-		"UNIT": s.UnitName, "TITLE": s.Title, "AT": s.At, "PLURAL": s.Plural(),
+		"UNIT": s.UnitName, "TITLE": s.Title, "AT": s.At, "PLURAL": s.Terms().Plural,
 	})
 }
 
@@ -149,22 +137,11 @@ func (s Spec) backlog() string {
 
 // Code 生成代码类制品：一个能编译、能测试的 Go 模块。
 //
-// 关键点：它实现的正是 AT 里写的那些口径（幂等、滞纳金封顶、统计一致），
+// 关键点：它实现的是 AT 里与业务无关的那几条（健康、列表、幂等、统计一致），
 // 所以 `go test` 跑的是真实现，而不是对着空壳编出来的条数。
 func Code(s Spec) map[string]string {
-	p := s.Plural()
-	mod := "i3/" + s.UnitID
-	if s.UnitID == "" {
-		mod = "i3/unit"
-	}
-	subs := map[string]string{
-		"UNIT":   s.UnitName,
-		"TITLE":  s.Title,
-		"AT":     s.At,
-		"UNITID": s.UnitID,
-		"PLURAL": p,
-		"MOD":    mod,
-	}
+	subs := codeSubs(s)
+	subs["UNITID"] = s.UnitID
 	return map[string]string{
 		"go.mod":       render(goModTmpl, subs),
 		"main.go":      render(mainTmpl, subs),

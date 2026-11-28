@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,7 +57,7 @@ func TestAcceptanceIsSharedBetweenDocAndTests(t *testing.T) {
 	spec := Spec{UnitID: "fee", UnitName: "收费缴费", Kind: "pbc", Title: "t", At: "now"}
 	acs := spec.Acceptance()
 	if len(acs) != 5 {
-		t.Fatalf("应有 5 条验收标准，实际 %d", len(acs))
+		t.Fatalf("应有 5 条骨架验收标准，实际 %d", len(acs))
 	}
 	at := spec.at()
 	tests := Code(spec)["main_test.go"]
@@ -79,4 +80,43 @@ func contains(s, sub string) bool {
 		}
 		return false
 	})()
+}
+
+// 代码里不许出现写死的业务口径或假数据（#93）：费率、封顶、种子记录。
+func TestGeneratedCodeHasNoHardcodedBusinessRules(t *testing.T) {
+	for _, spec := range []Spec{
+		{UnitID: "fee", UnitName: "收费缴费", Kind: "pbc", Title: "批量生成缴费单", At: "11-24 10:00"},
+		{UnitID: "wo", UnitName: "运维", Kind: "pbc", Title: "登记报修工单", At: "11-24 10:00"},
+		{UnitID: "x1", UnitName: "X", Kind: "pbc", Title: "数据导出", At: "11-24 10:00"},
+	} {
+		code := Code(spec)["main.go"] + Code(spec)["main_test.go"]
+		for _, bad := range []string{"0.0005", "0.20", "滞纳金", "逾期", "A-101", "B-201", "lateFee"} {
+			if strings.Contains(code, bad) {
+				t.Fatalf("%s 的生成代码里不该出现写死的业务口径 %q", spec.Title, bad)
+			}
+		}
+	}
+}
+
+// 术语跟着标题走：同样的骨架，不同标题得到不同的资源名与字段。
+func TestTermsFollowTitle(t *testing.T) {
+	fee := Spec{UnitID: "fee", Title: "批量生成缴费单"}
+	wo := Spec{UnitID: "wo", Title: "登记报修工单"}
+	if fee.Terms().Plural != "invoices" || !fee.Terms().Amount {
+		t.Fatalf("缴费单应是 invoices 且带金额口径，实际 %+v", fee.Terms())
+	}
+	if wo.Terms().Plural != "tickets" || wo.Terms().Amount {
+		t.Fatalf("工单应是 tickets 且没有金额口径，实际 %+v", wo.Terms())
+	}
+	if strings.Contains(Code(fee)["main.go"], "/api/tickets") {
+		t.Fatal("缴费单的代码不该出现工单的路径")
+	}
+	if !strings.Contains(Code(wo)["main.go"], "/api/tickets") {
+		t.Fatal("工单的代码应当用 /api/tickets")
+	}
+	// 认不出来的标题退回通用记录，不套任何已知业务。
+	other := Spec{UnitID: "exp", Title: "数据导出"}
+	if other.Terms().Amount {
+		t.Fatalf("认不出来的标题不该假设金额口径，实际 %+v", other.Terms())
+	}
 }
