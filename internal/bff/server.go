@@ -138,6 +138,8 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/agents/{id}/publish", s.wrap(s.agentPublish))
 	m.HandleFunc("POST /api/agents/{id}/rollout", s.wrap(s.agentRollout))
 	m.HandleFunc("POST /api/agents/{id}/rollback", s.wrap(s.agentRollback))
+	m.HandleFunc("POST /api/prototype-imports", s.wrap(s.uploadPrototypeImport))
+	m.HandleFunc("GET /api/prototype-imports/{seq}", s.wrap(s.readPrototypeImport))
 	m.HandleFunc("POST /api/annotations", s.wrap(s.addAnnotation))
 	m.HandleFunc("POST /api/artifacts", s.wrap(s.saveDraft))
 	m.HandleFunc("GET /api/facts", s.wrap(s.facts))
@@ -190,6 +192,10 @@ func (s *Server) wrap(h handler) http.HandlerFunc {
 				code = http.StatusBadRequest
 			} else if errors.Is(err, errNotFound) {
 				code = http.StatusNotFound
+			} else if errors.Is(err, errTooLarge) {
+				code = http.StatusRequestEntityTooLarge
+			} else if errors.Is(err, errUnitRegistrationChanged) {
+				code = http.StatusConflict
 			}
 			slog.Warn("bff", "path", r.URL.Path, "role", role, "err", err)
 			writeJSON(w, code, map[string]any{"error": err.Error()})
@@ -200,6 +206,7 @@ func (s *Server) wrap(h handler) http.HandlerFunc {
 var (
 	errBadRequest = errors.New("请求不合法")
 	errNotFound   = errors.New("不存在")
+	errTooLarge   = errors.New("请求内容超限")
 )
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

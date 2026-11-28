@@ -54,6 +54,8 @@ const (
 	FactAnnotationAdded  = "annotation.added"
 	FactRoleSwitch       = "role.switch"
 
+	FactPrototypeImported = "prototype.imported"
+
 	// v2.3：交付单元、BRD、服务验收与 Agent 生命周期。
 	// Agent 的定义与评测走独立的 agent 日志（见 ProjectAgents），
 	// 因为它属于「数字员工」而不是某个 PBC。

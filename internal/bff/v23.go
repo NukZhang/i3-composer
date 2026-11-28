@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"sort"
@@ -35,6 +36,24 @@ func (s *Server) loadUnits(ctx context.Context) (*store.UnitsView, error) {
 		return nil, err
 	}
 	return store.ProjectUnits(facts)
+}
+
+func (s *Server) requireRegisteredUnit(ctx context.Context, pbc string) error {
+	_, err := s.registeredUnit(ctx, pbc)
+	return err
+}
+
+func (s *Server) registeredUnit(ctx context.Context, pbc string) (store.Unit, error) {
+	uv, err := s.loadUnits(ctx)
+	if err != nil {
+		return store.Unit{}, err
+	}
+	for _, unit := range uv.Units {
+		if unit.ID == pbc {
+			return unit, nil
+		}
+	}
+	return store.Unit{}, fmt.Errorf("%w：单元 %s 不存在", errNotFound, pbc)
 }
 
 func (s *Server) loadAgents(ctx context.Context) (*store.AgentsView, error) {
@@ -155,19 +174,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, c reqCtx) error {
 	}
 	// 注册表里没有的 id 是 404，和 /api/replay 一致；只有「在注册表里、日志还空」才回 200 空投影——
 	// 那才是「刚建好还没事实」，和「id 写错了」必须分得开。
-	uv, err := s.loadUnits(r.Context())
-	if err != nil {
+	if err := s.requireRegisteredUnit(r.Context(), c.PBC); err != nil {
 		return err
-	}
-	known := false
-	for _, u := range uv.Units {
-		if u.ID == c.PBC {
-			known = true
-			break
-		}
-	}
-	if !known {
-		return fmt.Errorf("%w：单元 %s 不存在", errNotFound, c.PBC)
 	}
 	v, err := s.load(r, c.PBC)
 	if err != nil {
@@ -894,12 +902,37 @@ func (s *Server) addAnnotation(w http.ResponseWriter, r *http.Request, c reqCtx)
 	if err := Require(c.Role, ActAcceptProto); err != nil {
 		return err
 	}
-	var in store.Anno
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+	var body struct {
+		store.Anno
+		ImportSeq json.RawMessage `json:"importSeq"`
+		Line      json.RawMessage `json:"line"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	if err := dec.Decode(&body); err != nil {
 		return fmt.Errorf("%w：%v", errBadRequest, err)
 	}
+	if dec.Decode(new(json.RawMessage)) != io.EOF {
+		return fmt.Errorf("%w：批注请求只接受一个 JSON 对象", errBadRequest)
+	}
+	in := body.Anno
 	if strings.TrimSpace(in.Text) == "" {
 		return fmt.Errorf("%w：批注内容不能为空", errBadRequest)
+	}
+	if body.ImportSeq != nil || body.Line != nil {
+		if err := json.Unmarshal(body.ImportSeq, &in.ImportSeq); err != nil || in.ImportSeq <= 0 {
+			return fmt.Errorf("%w：批注需要正整数导入序号", errBadRequest)
+		}
+		line, err := decodePrototypeLine(body.Line)
+		if err != nil {
+			return err
+		}
+		in = store.Anno{ImportSeq: in.ImportSeq, Line: line, Text: in.Text}
+		// 作废和落链要按同一把锁排序；旧框选继续走原有入口。
+		s.unitRegistryMu.Lock()
+		defer s.unitRegistryMu.Unlock()
+		if _, err := s.scopedPrototypeImport(r, c.PBC, in.ImportSeq); err != nil {
+			return err
+		}
 	}
 	in.By, in.At = c.Role.String(), time.Now().Format("01-02 15:04")
 	if _, err := s.Log.Append(r.Context(), c.PBC, store.FactAnnotationAdded, c.Role.String(), in); err != nil {

@@ -1,19 +1,21 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import ProtoAgentReview from '../components/ProtoAgentReview.vue';
 import ProtoDunConsole from '../components/ProtoDunConsole.vue';
 import MaterialRuntime from '../components/MaterialRuntime.vue';
+import ImportedPrototype from '../components/ImportedPrototype.vue';
 import { S, unitKind, currentAgent, currentUnit, toast, refresh } from '../store.js';
 import { icon } from '../icons.js';
 import { api } from '../api.js';
 import { latest, staleList, kindCls, kindText } from '../derive.js';
 
-const versions = computed(() => (S.state && S.state.versions) || {});
+const state = computed(() => S.state?.pbc === S.pbcId ? S.state : null);
+const versions = computed(() => state.value?.versions || {});
 const kind = computed(() => unitKind());
 const material = computed(() => currentUnit()?.profile === 'material-inbound');
 const proto = computed(() => latest(versions.value, 'proto') || {});
-const annos = computed(() => (S.state && S.state.annos) || []);
+const annos = computed(() => (state.value?.annos || []).filter((a) => !a.importSeq));
 const agent = computed(() => currentAgent());
 const stale = computed(() => staleList(versions.value).find((x) => x.t === 'proto'));
 
@@ -23,6 +25,15 @@ const start = ref(null);
 const wrap = ref(null);
 const annoText = ref('');
 const showAnno = ref(false);
+
+function resetAnno() {
+  showAnno.value = false;
+  annoText.value = '';
+  rect.value = null;
+  start.value = null;
+  annoOn.value = false;
+}
+watch(() => S.pbcId, resetAnno, { flush: 'sync' });
 
 function down(e) {
   if (!annoOn.value) return;
@@ -57,6 +68,7 @@ function up() {
   showAnno.value = true;
 }
 async function saveAnno() {
+  const unit = S.pbcId;
   const t = annoText.value.trim();
   if (!t) {
     toast('请填写意见', 'err');
@@ -64,15 +76,12 @@ async function saveAnno() {
   }
   const r = rect.value || { x: 0.3, y: 0.3, w: 0.2, h: 0.1 };
   try {
-    await api.addAnnotation({ x: r.x, y: r.y, w: r.w, h: r.h, text: t, round: '待提交' });
+    await api.addAnnotation({ x: r.x, y: r.y, w: r.w, h: r.h, text: t, round: '待提交' }, unit);
     toast('批注已记录为一条事实（annotation.added）', 'ok');
   } catch (e) {
     toast(e.message, 'err');
   }
-  showAnno.value = false;
-  annoText.value = '';
-  rect.value = null;
-  annoOn.value = false;
+  if (unit === S.pbcId) resetAnno();
   await refresh();
 }
 </script>
@@ -98,6 +107,15 @@ async function saveAnno() {
     <span class="spacer" style="flex: 1" />
     <span v-if="stale" class="muted" style="color: var(--err)">上游已变，待重算</span>
   </div>
+
+  <ImportedPrototype
+    v-if="S.pbcId"
+    :key="S.pbcId"
+    :unit="S.pbcId"
+    :imports="state?.protoImports || []"
+    :annotations="state?.annos || []"
+    :can-write="S.acts.includes('acceptProto')"
+  />
 
   <MaterialRuntime v-if="material" />
 

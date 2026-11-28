@@ -128,7 +128,10 @@ async function loadPbc() {
     S.selCommit = '';
     return;
   }
-  const st = await api.state(S.pbcId);
+  const pbc = S.pbcId;
+  const st = await api.state(pbc);
+  // 切单元时旧请求可能晚到，投影只能交给它对应的页面。
+  if (pbc !== S.pbcId) return;
   S.state = st;
   if (!S.selCommit || !(st.commits || []).some((c) => c.no === S.selCommit)) {
     S.selCommit = st.commits && st.commits.length ? st.commits[0].no : '';

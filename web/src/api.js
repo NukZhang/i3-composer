@@ -32,12 +32,20 @@ async function request(path, opts) {
 }
 
 const q = (pbc) => (pbc ? '?pbc=' + encodeURIComponent(pbc) : '');
+const prototypeImportURL = (pbc, seq) => '/api/prototype-imports/' + encodeURIComponent(seq) + q(pbc);
+export const MAX_PROTOTYPE_IMPORT_BYTES = 20 * 1024 * 1024;
 
 export const api = {
   health: () => request('/api/health'),
 
   // 读
   state: (pbc) => request('/api/state' + q(pbc)),
+  prototypeImportURL,
+  async prototypeImportFile(pbc, seq, signal) {
+    const response = await fetch(prototypeImportURL(pbc, seq), { signal });
+    if (!response.ok) throw new ApiError('原型文件读取失败（HTTP ' + response.status + '）', response.status);
+    return response.blob();
+  },
   overview: (pbc) => request('/api/overview' + q(pbc)),
   units: () => request('/api/units'),
   brd: (proj) => request('/api/brd' + (proj ? '?proj=' + encodeURIComponent(proj) : '')),
@@ -139,7 +147,14 @@ export const api = {
       body: JSON.stringify({ text }),
     }),
 
-  addAnnotation: (body) => request('/api/annotations', { method: 'POST', body: JSON.stringify(body) }),
+  importPrototype(pbc, file, createdSeq) {
+    const body = new FormData();
+    body.append('file', file);
+    // 浏览器生成 multipart boundary，不能沿用 JSON 请求头。
+    const registration = createdSeq > 0 ? '&createdSeq=' + encodeURIComponent(createdSeq) : '';
+    return request('/api/prototype-imports' + q(pbc) + registration, { method: 'POST', headers: {}, body });
+  },
+  addAnnotation: (body, pbc) => request('/api/annotations' + q(pbc), { method: 'POST', body: JSON.stringify(body) }),
   saveDraft: (pbc, body) =>
     request('/api/artifacts' + q(pbc), { method: 'POST', body: JSON.stringify(body) }),
 
