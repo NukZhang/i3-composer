@@ -32,8 +32,26 @@ async function request(path, opts) {
 }
 
 const q = (pbc) => (pbc ? '?pbc=' + encodeURIComponent(pbc) : '');
-const prototypeImportURL = (pbc, seq) => '/api/prototype-imports/' + encodeURIComponent(seq) + q(pbc);
+const prototypeImportPath = (seq) => '/api/prototype-imports/' + encodeURIComponent(seq);
+const prototypeImportURL = (pbc, seq) => prototypeImportPath(seq) + q(pbc);
+const prototypeInteractiveURL = (pbc, seq, token) =>
+  prototypeImportPath(seq) + '/interactive' + (token ? '/' + encodeURIComponent(token) : '') + q(pbc);
 export const MAX_PROTOTYPE_IMPORT_BYTES = 20 * 1024 * 1024;
+
+async function readPrototypePNG(response, label) {
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(body?.error || label + '读取失败（HTTP ' + response.status + '）', response.status);
+  }
+  if (response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() !== 'image/png') {
+    throw new ApiError(label + '响应格式无效，应为 PNG', response.status);
+  }
+  return response.blob();
+}
+
+function closePrototypeInteractive(pbc, seq, token) {
+  return fetch(prototypeInteractiveURL(pbc, seq, token), { method: 'DELETE', keepalive: true });
+}
 
 export const api = {
   health: () => request('/api/health'),
@@ -47,17 +65,31 @@ export const api = {
     return response.blob();
   },
   async prototypeImportSnapshot(pbc, seq, signal) {
-    const path = '/api/prototype-imports/' + encodeURIComponent(seq) + '/snapshot' + q(pbc);
+    const path = prototypeImportPath(seq) + '/snapshot' + q(pbc);
     const response = await fetch(path, { signal });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      throw new ApiError(body?.error || '快照读取失败（HTTP ' + response.status + '）', response.status);
-    }
-    if (response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() !== 'image/png') {
-      throw new ApiError('快照响应格式无效，应为 PNG', response.status);
-    }
-    return response.blob();
+    return readPrototypePNG(response, '快照');
   },
+  async openPrototypeInteractive(pbc, seq, signal) {
+    const response = await fetch(prototypeInteractiveURL(pbc, seq), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal,
+    });
+    const token = response.ok && response.headers.get('X-Prototype-Session');
+    try {
+      const frame = await readPrototypePNG(response, '交互画面');
+      if (!token) throw new ApiError('交互预览响应缺少会话标识', response.status);
+      return { token, frame };
+    } catch (e) {
+      if (token) void closePrototypeInteractive(pbc, seq, token).catch(() => {});
+      throw e;
+    }
+  },
+  async actPrototypeInteractive(pbc, seq, token, action, signal) {
+    const response = await fetch(prototypeInteractiveURL(pbc, seq, token), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(action), signal,
+    });
+    return readPrototypePNG(response, '交互画面');
+  },
+  closePrototypeInteractive,
   overview: (pbc) => request('/api/overview' + q(pbc)),
   units: () => request('/api/units'),
   brd: (proj) => request('/api/brd' + (proj ? '?proj=' + encodeURIComponent(proj) : '')),
