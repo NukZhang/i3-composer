@@ -160,10 +160,12 @@ function receiveNativeMessage(event) {
     return;
   }
 
-  if (!props.canWrite || !drawing.value || nativeRoute.value === null) return;
+  if (!props.canWrite || saving.value || nativeRoute.value === null) return;
   if (data.type === 'cancel') {
-    void cancelDrawing();
-  } else if (data.type === 'box' && normalizeRoute(data.route) === nativeRoute.value && validAnchor(data.anchor) && validBox(data)) {
+    const currentPage = data.route === undefined || normalizeRoute(data.route) === nativeRoute.value;
+    if (currentPage && (drawing.value || nativeReview.box)) void cancelDrawing();
+  } else if (drawing.value && data.type === 'box' && normalizeRoute(data.route) === nativeRoute.value &&
+      validAnchor(data.anchor) && validBox(data)) {
     const { x, y, w, h, anchor } = data;
     void finishBox({ x, y, w, h, preview: { route: nativeRoute.value, anchor } });
   }
