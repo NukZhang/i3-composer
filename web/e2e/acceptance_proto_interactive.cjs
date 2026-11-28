@@ -49,13 +49,13 @@ const fixture = Buffer.from(`<!doctype html><html lang="zh-CN"><meta charset="ut
 <nav><button id="menu">物资管理</button><button id="inbound" hidden>入库管理</button></nav>
 <main id="screen"><h1 id="title">工作台</h1>
   <section id="receiving" hidden>
-    <form id="filter"><input id="query" aria-label="输入关键词搜索"><button type="submit">查询</button></form>
+    <form id="filter"><input id="query" aria-label="输入关键词搜索"><button id="search" type="button">查询</button></form>
     <button id="reset">重置</button><button id="new">新建点验单</button>
     <div id="results">两条记录</div>
   </section>
 </main>
 <span id="isolation" aria-label="隔离检查"></span><span id="saved" aria-label="保存结果"></span>
-<dialog id="dialog"><h2>新建点验单</h2><form id="editor"><input id="description" aria-label="点验说明"><button type="submit">保存</button></form></dialog>
+<dialog id="dialog"><h2>新建点验单</h2><form><input id="description" aria-label="点验说明"><button id="submit" type="button">保存</button></form></dialog>
 <script>
   const byId = id => document.getElementById(id);
   byId('menu').onclick = () => { byId('inbound').hidden = false; };
@@ -65,11 +65,17 @@ const fixture = Buffer.from(`<!doctype html><html lang="zh-CN"><meta charset="ut
     byId('screen').classList.toggle('ready', !byId('receiving').hidden);
     byId('title').textContent = '入库管理';
   });
-  byId('filter').onsubmit = event => {
-    event.preventDefault();
+  // 沙箱关闭浏览器的原生表单提交，本地应用通过脚本处理筛选与保存。
+  const filter = () => {
     if (byId('query').value !== ${JSON.stringify(queryText)}) return;
     byId('results').classList.add('empty');
     byId('results').textContent = '无匹配记录';
+  };
+  byId('search').onclick = filter;
+  byId('query').onkeydown = event => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    filter();
   };
   byId('reset').onclick = () => {
     byId('query').value = '';
@@ -77,8 +83,7 @@ const fixture = Buffer.from(`<!doctype html><html lang="zh-CN"><meta charset="ut
     byId('results').textContent = '两条记录';
   };
   byId('new').onclick = () => byId('dialog').showModal();
-  byId('editor').onsubmit = event => {
-    event.preventDefault();
+  byId('submit').onclick = () => {
     if (byId('description').value !== ${JSON.stringify(formText)}) return;
     localStorage.setItem(${JSON.stringify(storageKey)}, 'sandbox');
     byId('saved').classList.add('saved');
