@@ -218,12 +218,19 @@
     if (layer && !scheduled) scheduled = requestAnimationFrame(draw);
   }
 
+  function clearClickSuppression() {
+    if (!suppressClick) return;
+    // 指针抬起后浏览器仍会派发一次 click，等这一轮事件结束再恢复原型点击。
+    setTimeout(() => { suppressClick = false; }, 0);
+  }
+
   function setDrawing(next) {
     if (drawing === next) return;
     drawing = next;
     if (!next) {
       const pointer = gesture?.pointer;
       if (pointer !== undefined && layer?.hasPointerCapture(pointer)) layer.releasePointerCapture(pointer);
+      clearClickSuppression();
       gesture = undefined;
       cursor = undefined;
       if (layer && document.activeElement === layer && previousFocus?.isConnected) {
@@ -302,10 +309,10 @@
   }
 
   function releasePointer(event) {
-    if (!drawing) return;
+    if (event.isPrimary) clearClickSuppression();
+    if (checkRoute() || !drawing) return;
     consume(event);
     if (gesture?.pointer === event.pointerId) endGesture(event.clientX, event.clientY);
-    if (event.isPrimary) setTimeout(() => { suppressClick = false; }, 0);
   }
 
   function key(event) {
