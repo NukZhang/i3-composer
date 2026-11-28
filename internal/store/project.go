@@ -698,6 +698,10 @@ func apply(v *View, f Fact) error {
 		// 带 commit 的是「整份清单」：它描述这一版要验哪几条，
 		// 顶掉旧的整份，而不是和旧条目混在一起——混着就会出现
 		// 「三条验过了、两条还是上一版的」这种谁也解释不清的清单。
+		prev := map[string]domain.Check{}
+		for _, c := range v.Checks {
+			prev[c.ID] = c
+		}
 		fresh := p.Commit != ""
 		out := v.Checks
 		if fresh {
@@ -710,16 +714,18 @@ func apply(v *View, f Fact) error {
 			if c.Commit == "" {
 				c.Commit = p.Commit
 			}
+			if fresh {
+				// 同一条、针对同一个提交、已经判过：保留结论。
+				// 清单重出一遍不该把「验过了」打回 todo。
+				if old, ok := prev[c.ID]; ok && old.Commit == c.Commit && old.ST != domain.CheckTodo {
+					c.ST = old.ST
+				}
+				out = append(out, c)
+				continue
+			}
 			replaced := false
 			for i := range out {
 				if out[i].ID == c.ID {
-					// 同一条、针对同一个提交、已经判过：保留结论。
-					// 清单重出一遍不该把「验过了」打回 todo。
-					st := c.ST
-					if fresh && out[i].Commit == c.Commit && out[i].ST != domain.CheckTodo {
-						st = out[i].ST
-					}
-					c.ST = st
 					out[i] = c
 					replaced = true
 				}

@@ -301,3 +301,65 @@ func TestRunStartedResetsPreviousRound(t *testing.T) {
 		}
 	}
 }
+
+// 带 commit 的 check.defined 是「这一版要验哪几条」的整份清单：
+// 它顶掉旧的整份，而不是和旧条目混在一起；同 ID 同提交的已判结论要保住，
+// 换提交则整份重来（#70）。
+func TestCheckDefinedWithCommitReplacesWholeList(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	v1 := map[string]any{"commit": "1.0.1", "items": []domain.Check{
+		{ID: "AC-1", N: "健康检查", ST: domain.CheckPass, Commit: "1.0.1"},
+		{ID: "AC-2", N: "列表", ST: domain.CheckTodo, Commit: "1.0.1"},
+	}}
+	if _, err := s.Append(ctx, "fee", FactCheckDefined, "x-qa", v1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append(ctx, "fee", FactCheckDecided, "BA", map[string]any{"id": "AC-2", "st": domain.CheckPass}); err != nil {
+		t.Fatal(err)
+	}
+
+	load := func() *View {
+		fs, err := s.Load(ctx, "fee")
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, err := Project("fee", fs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	v := load()
+	if len(v.Checks) != 2 || v.Checks[1].ST != domain.CheckPass {
+		t.Fatalf("先判的 AC-2 应是 pass：%+v", v.Checks)
+	}
+
+	// 同一个提交再出一次清单：AC-2 已经验过，不能被打回 todo。
+	if _, err := s.Append(ctx, "fee", FactCheckDefined, "x-qa", v1); err != nil {
+		t.Fatal(err)
+	}
+	v = load()
+	if v.Checks[1].ST != domain.CheckPass {
+		t.Fatalf("同一提交重出一遍清单不该把已判的改回 todo：%+v", v.Checks)
+	}
+
+	// 换了提交：整份重来，旧的 AC-2 结论不顺延。
+	v2 := map[string]any{"commit": "1.0.2", "items": []domain.Check{
+		{ID: "AC-1", N: "健康检查", ST: domain.CheckTodo, Commit: "1.0.2"},
+		{ID: "AC-2", N: "列表", ST: domain.CheckTodo, Commit: "1.0.2"},
+		{ID: "AC-3", N: "幂等", ST: domain.CheckTodo, Commit: "1.0.2"},
+	}}
+	if _, err := s.Append(ctx, "fee", FactCheckDefined, "x-qa", v2); err != nil {
+		t.Fatal(err)
+	}
+	v = load()
+	if len(v.Checks) != 3 {
+		t.Fatalf("新提交的清单应整份替换（3 条），实际 %d 条：%+v", len(v.Checks), v.Checks)
+	}
+	for _, c := range v.Checks {
+		if c.Commit != "1.0.2" || c.ST != domain.CheckTodo {
+			t.Fatalf("新提交的清单每条都该是 1.0.2/待验：%+v", c)
+		}
+	}
+}
