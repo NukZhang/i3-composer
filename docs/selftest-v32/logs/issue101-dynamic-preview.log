@@ -1,0 +1,42 @@
+专项容器 i3-prototype-101-final · Dapr Pub/Sub 接线正常
+实际素材在本地 Docker 只读载入，业务画面匹配原件工作台
+PASS PNG 预览、权限来源和横线批注
+PASS JPEG 预览、批注隔离和高精度坐标的真实账本回放
+PASS PDF 首页绘制、批注刷新和窗口缩放
+PASS HTML 样式、页尾滚动、批注回放，以及脚本和外部请求隔离
+PASS 历史导入保留对应批注，换单元后文件及批注隔离
+PASS 超限、错误格式、非法坐标及越权请求不落账，原型还原维持「判不了」
+PASS 动态 HTML 渲染出脚本生成的画面，工作台仅加载图片
+PASS 快照、原导入与批注坐标刷新后保持一致
+DYNAMIC EVIDENCE {"unit":"proto-issue101","importSeq":3,"annotationSeq":4,"line":{"x1":0.23,"y1":0.24,"x2":0.45,"y2":0.26},"pngBytes":96434}
+SUMMARY 8/8 pass, 0 fail
+
+渲染容器配置
+healthy 65532:65532 none readonly=true caps=["ALL"] opt=["no-new-privileges:true"] pids=192 port_bindings={}
+
+渲染器 Docker 断网测试
+✔ renders an inline module and clips content beyond the maximum screenshot height (5629.546044ms)
+✔ rejects pages without a visible rendered marker (4137.977794ms)
+✔ blocks fetch, popups, workers and external assets even with a reachable local origin (1344.558834ms)
+✔ reclaims a renderer running an unbounded inline script (9213.299046ms)
+✔ rejects inputs outside the HTML and UTF-8 body contract (11.509ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 20723.124259
+
+五套平台回归 · 独立 Compose 项目 i3-prototype-101-reg
+--- acceptance_v32.cjs ---
+SUMMARY 70/70 passed
+--- acceptance_exec.cjs ---
+SUMMARY 38/38 passed
+--- acceptance_flow.cjs ---
+SUMMARY 33/33 passed
+--- acceptance_full.cjs ---
+SUMMARY 20/20 passed
+--- acceptance_v26.cjs ---
+SUMMARY 76/76 passed

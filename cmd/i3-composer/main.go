@@ -115,6 +115,7 @@ func run() error {
 	log := store.New(dc, stateSt, ledger)
 
 	srv := bff.NewServer(log, dc, bff.NewSessions([]byte(sessKey)), wfComp)
+	srv.PrototypeRenderSocket = os.Getenv("PROTOTYPE_RENDER_SOCKET")
 	srv.WebDir = webDir
 	srv.WfName = wfName
 	srv.LocalPort = bff.PortOfAddr(addr)

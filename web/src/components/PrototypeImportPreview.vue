@@ -11,6 +11,7 @@ const emit = defineEmits(['status']);
 const HTML_WIDTH = 1200;
 const HTML_HEIGHT = 480;
 const HTML_MAX_HEIGHT = 8192;
+const SCRIPT_TYPE = /^(?:module|(?:application|text)\/(?:x-)?(?:java|ecma)script|text\/(?:javascript1\.[0-5]|jscript|livescript))$/i;
 const { mediaType, fileName, seq } = props.artifact;
 const isImage = mediaType === 'image/png' || mediaType === 'image/jpeg';
 const isPDF = mediaType === 'application/pdf';
@@ -26,6 +27,8 @@ const frameScale = ref(1);
 const frameScrollY = ref(0);
 const clipped = ref(false);
 const error = ref('');
+const snapshotRequested = ref(false);
+const snapshotURL = ref('');
 const controller = new AbortController();
 let resizeObserver;
 let timeout;
@@ -56,10 +59,15 @@ const visibleTop = computed(() => frameScrollY.value / dimensions.value.height);
 const visibleBottom = computed(() => Math.min(1, (frameScrollY.value + HTML_HEIGHT) / dimensions.value.height));
 
 function syncFrameScroll() {
-  const frame = iframe.value?.contentWindow;
-  if (!frame || !canScroll.value || !frameScale.value) return;
+  if (!canScroll.value || !frameScale.value) return;
   const max = dimensions.value.height - HTML_HEIGHT;
   const offset = Math.max(0, Math.min(max, scrollport.value.scrollTop / frameScale.value));
+  if (snapshotRequested.value) {
+    frameScrollY.value = offset;
+    return;
+  }
+  const frame = iframe.value?.contentWindow;
+  if (!frame) return;
   frame.scrollTo({ top: offset, left: 0, behavior: 'instant' });
   frameScrollY.value = Math.max(0, Math.min(max, frame.scrollY));
 }
@@ -89,17 +97,71 @@ function fail(message) {
   clipped.value = false;
   clearTimeout(timeout);
   controller.abort();
+  releaseSnapshot();
   emit('status', seq, false);
+}
+
+function releaseSnapshot() {
+  if (!snapshotURL.value) return;
+  URL.revokeObjectURL(snapshotURL.value);
+  snapshotURL.value = '';
 }
 
 function imageLoaded(event) {
   const { naturalWidth, naturalHeight } = event.currentTarget;
-  if (naturalWidth && naturalHeight) ready(naturalWidth, naturalHeight);
-  else fail('图片尺寸读取失败');
+  if (!naturalWidth || !naturalHeight) {
+    fail(snapshotRequested.value ? '动态 HTML 快照尺寸读取失败' : '图片尺寸读取失败');
+  } else if (snapshotRequested.value) {
+    // 快照与 iframe 共用固定视口，批注坐标按整页高度换算。
+    ready(HTML_WIDTH, naturalHeight * HTML_WIDTH / naturalWidth);
+  } else {
+    ready(naturalWidth, naturalHeight);
+  }
+}
+
+function hasStaticText(body) {
+  const doc = body.ownerDocument;
+  if (!body.innerText.trim()) return false;
+  // 沙箱会显示 noscript 提示。仅有这类提示时，仍应尝试渲染应用画面。
+  const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const range = doc.createRange();
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (!node.data.trim() || parent.closest('noscript, script, style')) continue;
+    range.selectNodeContents(node);
+    if (range.getClientRects().length && doc.defaultView.getComputedStyle(parent).visibility === 'visible') return true;
+  }
+  return false;
+}
+
+function needsSnapshot(doc) {
+  const body = doc.body;
+  const hasScript = Array.from(doc.scripts).some((script) => {
+    const type = script.getAttribute('type')?.trim();
+    return !script.noModule && (!type || SCRIPT_TYPE.test(type)) &&
+      (script.getAttribute('src')?.trim() || script.textContent.trim());
+  });
+  if (!body || !hasScript || hasStaticText(body)) return false;
+  const visuals = body.querySelectorAll('img, svg, canvas, input, select, textarea, button, progress, meter, hr, video');
+  return !Array.from(visuals).some((node) => {
+    if (node.closest('noscript') || (node.localName === 'img' && !node.naturalWidth)) return false;
+    const { width, height } = node.getBoundingClientRect();
+    return width && height && doc.defaultView.getComputedStyle(node).visibility === 'visible';
+  });
+}
+
+async function loadSnapshot() {
+  snapshotRequested.value = true;
+  try {
+    const file = await api.prototypeImportSnapshot(props.unit, seq, controller.signal);
+    if (!controller.signal.aborted) snapshotURL.value = URL.createObjectURL(file);
+  } catch (e) {
+    fail('动态 HTML 快照加载失败。' + e.message);
+  }
 }
 
 async function frameLoaded(event) {
-  if (controller.signal.aborted) return;
+  if (controller.signal.aborted || dimensions.value || snapshotRequested.value) return;
   const frame = event.currentTarget;
   try {
     const doc = frame.contentDocument;
@@ -107,9 +169,13 @@ async function frameLoaded(event) {
       fail('静态 HTML 预览加载失败');
       return;
     }
-    if (dimensions.value) return;
     await doc.fonts.ready;
-    if (frame.contentDocument !== doc || controller.signal.aborted) return;
+    if (frame.contentDocument !== doc || controller.signal.aborted || dimensions.value || snapshotRequested.value) return;
+    frameScale.value = preview.value.getBoundingClientRect().width / HTML_WIDTH;
+    if (needsSnapshot(doc)) {
+      void loadSnapshot();
+      return;
+    }
     // 视口宽高总是固定。滚动区按文档高度展开，100vh 后的内容不会随测量结果继续下移。
     const height = Math.max(
       doc.documentElement.scrollHeight,
@@ -117,7 +183,6 @@ async function frameLoaded(event) {
       Math.ceil(doc.body?.getBoundingClientRect().bottom || 0),
     );
     clipped.value = height > HTML_MAX_HEIGHT;
-    frameScale.value = preview.value.getBoundingClientRect().width / HTML_WIDTH;
     ready(HTML_WIDTH, Math.min(HTML_MAX_HEIGHT, Math.max(HTML_HEIGHT, height)));
   } catch {
     fail('静态 HTML 预览加载失败');
@@ -140,7 +205,9 @@ async function loadPDF() {
 
 onMounted(() => {
   if (dimensions.value || error.value) return;
-  timeout = setTimeout(() => fail('预览加载超时，请重新打开该文件'), 20000);
+  timeout = setTimeout(() => {
+    fail(snapshotRequested.value ? '动态 HTML 快照加载超时，请重新打开该文件' : '预览加载超时，请重新打开该文件');
+  }, 20000);
   if (isPDF) {
     void loadPDF();
   } else if (isHTML) {
@@ -156,13 +223,17 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearTimeout(timeout);
   controller.abort();
+  releaseSnapshot();
   resizeObserver?.disconnect();
 });
 </script>
 
 <template>
   <p v-if="error" class="preview-status" role="alert">{{ error }}</p>
-  <p v-else-if="!dimensions" class="small muted preview-status" role="status">正在加载预览…</p>
+  <p v-else-if="!dimensions" class="small muted preview-status" role="status">
+    {{ snapshotRequested ? '正在生成动态 HTML 快照…' : '正在加载预览…' }}
+  </p>
+  <p v-else-if="snapshotRequested" class="small muted preview-status">动态 HTML 只读快照 · 工作台已禁用脚本</p>
   <div
     ref="scrollport"
     :class="{ 'html-scroll': isHTML }"
@@ -183,11 +254,13 @@ onBeforeUnmount(() => {
       <img v-if="isImage && !error" :src="url" :alt="fileName" draggable="false"
         @load="imageLoaded" @error="fail('图片预览加载失败')" />
       <canvas v-else-if="isPDF" ref="canvas" role="img" :aria-label="fileName + ' 首页'" />
-      <iframe v-else-if="isHTML && !error" ref="iframe" :src="url" :title="fileName" :style="frameStyle"
+      <iframe v-else-if="isHTML && !snapshotRequested && !error" ref="iframe" :src="url" :title="fileName" :style="frameStyle"
         sandbox="allow-same-origin" referrerpolicy="no-referrer" scrolling="no" tabindex="-1" inert
         @load="frameLoaded" />
-      <div v-if="isHTML && dimensions" class="html-annotation-page" :style="annotationStyle">
-        <slot :top="visibleTop" :bottom="visibleBottom" />
+      <div v-if="isHTML && (dimensions || snapshotURL)" class="html-preview-page" :style="dimensions && annotationStyle">
+        <img v-if="snapshotURL" :src="snapshotURL" :alt="fileName + ' 的只读快照'" draggable="false"
+          data-testid="prototype-import-snapshot" @load="imageLoaded" @error="fail('动态 HTML 快照图片无法显示')" />
+        <slot v-if="dimensions" :top="visibleTop" :bottom="visibleBottom" />
       </div>
       <slot v-else-if="dimensions" :top="0" :bottom="1" />
     </div>
@@ -231,7 +304,7 @@ onBeforeUnmount(() => {
 }
 .html-scroll .import-preview { position: sticky; top: 0; }
 .html-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.html-annotation-page { position: absolute; inset: 0 0 auto; pointer-events: none; }
+.html-preview-page { position: absolute; inset: 0 0 auto; pointer-events: none; }
 .preview-status { margin: 0; }
 .preview-status[role="alert"] { color: var(--err-3); }
 </style>

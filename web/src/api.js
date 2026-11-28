@@ -46,6 +46,18 @@ export const api = {
     if (!response.ok) throw new ApiError('原型文件读取失败（HTTP ' + response.status + '）', response.status);
     return response.blob();
   },
+  async prototypeImportSnapshot(pbc, seq, signal) {
+    const path = '/api/prototype-imports/' + encodeURIComponent(seq) + '/snapshot' + q(pbc);
+    const response = await fetch(path, { signal });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new ApiError(body?.error || '快照读取失败（HTTP ' + response.status + '）', response.status);
+    }
+    if (response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase() !== 'image/png') {
+      throw new ApiError('快照响应格式无效，应为 PNG', response.status);
+    }
+    return response.blob();
+  },
   overview: (pbc) => request('/api/overview' + q(pbc)),
   units: () => request('/api/units'),
   brd: (proj) => request('/api/brd' + (proj ? '?proj=' + encodeURIComponent(proj) : '')),

@@ -38,6 +38,8 @@ type Server struct {
 	// Pipe 是执行侧：发布批次时用它真部署、回滚时用它收进程。
 	// 为 nil 时发布编排会明确报错，而不是假装发成功。
 	Pipe *pipeline.Pipeline
+	// 本地 Unix socket 只接收原件字节，渲染器与工作台不共享网络、会话或制品目录。
+	PrototypeRenderSocket string
 	// LocalPort 是本进程实际监听的端口（0 = 未知）。
 	// sidecar 把 pubsub 事件投到它配置的 app-port；两者不一致时事件会在别处落地，
 	// 验收里只看到「收到 0 条」，看不出原因。见 CheckPubsubWiring。
@@ -46,11 +48,12 @@ type Server struct {
 	// Pubsub 是启动时算出的投递地址校验结果，/api/health 原样带出。
 	Pubsub map[string]any
 
-	mu                sync.Mutex
-	subs              map[chan string]struct{} // SSE 订阅者（进程内即可：断线重连是常态）
-	materialPreviewMu sync.Mutex
-	releaseMu         sync.Mutex
-	unitRegistryMu    sync.Mutex
+	mu                  sync.Mutex
+	subs                map[chan string]struct{} // SSE 订阅者（进程内即可：断线重连是常态）
+	materialPreviewMu   sync.Mutex
+	prototypeSnapshotMu sync.Mutex
+	releaseMu           sync.Mutex
+	unitRegistryMu      sync.Mutex
 }
 
 func NewServer(log *store.Store, d *dapr.Client, sess *Sessions, comp string) *Server {
@@ -140,6 +143,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /api/agents/{id}/rollback", s.wrap(s.agentRollback))
 	m.HandleFunc("POST /api/prototype-imports", s.wrap(s.uploadPrototypeImport))
 	m.HandleFunc("GET /api/prototype-imports/{seq}", s.wrap(s.readPrototypeImport))
+	m.HandleFunc("GET /api/prototype-imports/{seq}/snapshot", s.wrap(s.readPrototypeSnapshot))
 	m.HandleFunc("POST /api/annotations", s.wrap(s.addAnnotation))
 	m.HandleFunc("POST /api/artifacts", s.wrap(s.saveDraft))
 	m.HandleFunc("GET /api/facts", s.wrap(s.facts))
@@ -196,6 +200,10 @@ func (s *Server) wrap(h handler) http.HandlerFunc {
 				code = http.StatusRequestEntityTooLarge
 			} else if errors.Is(err, errUnitRegistrationChanged) {
 				code = http.StatusConflict
+			} else if errors.Is(err, errPrototypeRendererUnavailable) {
+				code = http.StatusServiceUnavailable
+			} else if errors.Is(err, errPrototypeSnapshotFailed) {
+				code = http.StatusUnprocessableEntity
 			}
 			slog.Warn("bff", "path", r.URL.Path, "role", role, "err", err)
 			writeJSON(w, code, map[string]any{"error": err.Error()})

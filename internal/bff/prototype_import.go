@@ -304,16 +304,20 @@ func (s *Server) scopedPrototypeImport(r *http.Request, pbc string, seq int) (st
 	return store.PrototypeImport{}, fmt.Errorf("%w：此单元没有序号 %d 的原型导入", errNotFound, seq)
 }
 
-func (s *Server) readPrototypeImport(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+func (s *Server) prototypeImportForRequest(r *http.Request, c reqCtx) (store.PrototypeImport, error) {
 	if err := Require(c.Role, ActView); err != nil {
-		return err
+		return store.PrototypeImport{}, err
 	}
 	rawSeq := r.PathValue("seq")
 	seq, err := strconv.Atoi(rawSeq)
 	if err != nil || seq <= 0 || strconv.Itoa(seq) != rawSeq {
-		return fmt.Errorf("%w：需要正整数导入序号", errBadRequest)
+		return store.PrototypeImport{}, fmt.Errorf("%w：需要正整数导入序号", errBadRequest)
 	}
-	meta, err := s.scopedPrototypeImport(r, c.PBC, seq)
+	return s.scopedPrototypeImport(r, c.PBC, seq)
+}
+
+func (s *Server) readPrototypeImport(w http.ResponseWriter, r *http.Request, c reqCtx) error {
+	meta, err := s.prototypeImportForRequest(r, c)
 	if err != nil {
 		return err
 	}

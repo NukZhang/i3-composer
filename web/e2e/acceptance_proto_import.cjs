@@ -1,8 +1,8 @@
 // 用真实浏览器和独立账本验收原型导入。BASE、SHOTS 和 CHROMIUM_PATH 与其他套件一致。
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
-const { mkdirSync } = require('node:fs');
-const { join } = require('node:path');
+const { mkdirSync, readFileSync, writeFileSync } = require('node:fs');
+const { basename, join } = require('node:path');
 const { chromium } = require('playwright');
 const { requirePubsub } = require('./require_pubsub.cjs');
 
@@ -11,6 +11,8 @@ const unit = 'fee';
 const run = (process.env.RUN_TAG || Date.now().toString(36)).replace(/[^a-z0-9]/gi, '').slice(0, 18).toLowerCase();
 const otherUnit = 'proto-' + run;
 const importPath = '/api/prototype-imports';
+const dynamicEnabled = process.env.PROTOTYPE_DYNAMIC === '1';
+const externalHTML = process.env.PROTOTYPE_REVIEW_HTML;
 
 function pdfFixture() {
   const stream = (color) => {
@@ -47,6 +49,10 @@ footer { padding: 24px; background: #e9edf6; color: #142448 }</style>
 <img alt="" src="/api/health?proto-preview-egress=1">
 <script>document.querySelector('#script-status').textContent = '脚本已运行';</script>
 </html>`);
+
+const dynamicFixture = Buffer.from(`<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<style>body { margin: 0 } #app > main { background: #244a83; color: white; min-height: 560px; padding: 24px }</style>
+<div id="app"></div><script>document.querySelector('#app').innerHTML = '<main><h1>材料入库看板</h1><p>本次入库量 80.400 吨</p></main>';</script></html>`);
 
 function near(actual, expected, tolerance = 0.014) {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} 与 ${expected} 的差值超过 ${tolerance}`);
@@ -172,7 +178,7 @@ function near(actual, expected, tolerance = 0.014) {
     const initial = await state();
     const visualGate = initial.gates.all.find(({ key }) => key === 'visual');
     assert.equal(visualGate.unknown, true);
-    await post('/api/units', 201, { id: otherUnit, name: '原型隔离验收', kind: 'pbc', proj: 'p1' });
+    await post('/api/units', 201, { id: otherUnit, name: externalHTML ? '材料入库 PBC · 原型验收' : '原型隔离验收', kind: 'pbc', proj: 'p1' });
     await showPrototype();
 
     const png = await pngOrJpeg('image/png');
@@ -317,7 +323,66 @@ function near(actual, expected, tolerance = 0.014) {
     ]);
     console.log('PASS 超限、错误格式、非法坐标及越权请求不落账，原型还原维持「判不了」');
     console.log('EVIDENCE', JSON.stringify({ receipts, annos, visualGate, featureFacts }));
-    console.log('SUMMARY 6/6 pass, 0 fail');
+
+    if (dynamicEnabled) {
+      await role('PA');
+      await page.setViewportSize({ width: 1450, height: 1100 });
+      await showPrototype(otherUnit);
+      const image = page.getByTestId('prototype-import-snapshot');
+      const snapshot = (seq) => importPath + '/' + seq + '/snapshot?pbc=' + otherUnit;
+      const waitImage = async () => {
+        await image.waitFor();
+        await page.waitForFunction(() => document.querySelector('[data-testid="prototype-import-snapshot"]')?.naturalWidth === 1200);
+        assert.equal(await preview.locator('iframe').count(), 0);
+      };
+      const dynamic = await upload('动态材料看板.html', 'text/html', dynamicFixture);
+      await waitImage();
+      const pixel = await image.evaluate((node) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 1;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(node, 5, 5, 1, 1, 0, 0, 1, 1);
+        return Array.from(ctx.getImageData(0, 0, 1, 1).data);
+      });
+      assert.deepEqual(pixel, [36, 74, 131, 255]);
+      await screenshot('issue101-synthetic-preview.png');
+      await request('GET', importPath + '/' + dynamic.seq + '/snapshot?pbc=' + unit, 404);
+      console.log('PASS 动态 HTML 渲染出脚本生成的画面，工作台仅加载图片');
+
+      const source = externalHTML ? readFileSync(externalHTML) : dynamicFixture;
+      const imported = externalHTML ? await upload(basename(externalHTML), 'text/html', source) : dynamic;
+      await waitImage();
+      const shot = await request('GET', snapshot(imported.seq), 200);
+      assert.equal(shot.headers()['content-type'], 'image/png');
+      const imageBytes = await shot.body();
+      if (process.env.SHOTS && externalHTML) {
+        writeFileSync(join(process.env.SHOTS, 'issue101-real-render.png'), imageBytes);
+      }
+      const text = '动态原型评审：确认画线刷新后仍在';
+      await annotate(text, [0.23, 0.24], [0.45, 0.26]);
+      const placement = await normalizedLine();
+      const before = (await state(otherUnit)).annos.find((entry) => entry.importSeq === imported.seq && entry.text === text);
+      assert.ok(before?.line);
+      await showPrototype(otherUnit);
+      await history.selectOption(String(imported.seq));
+      await waitImage();
+      await note(text).waitFor();
+      (await normalizedLine()).forEach((coord, index) => near(coord, placement[index]));
+      const after = (await state(otherUnit)).annos.find((entry) => entry.importSeq === imported.seq && entry.text === text);
+      assert.deepEqual(after, before);
+      assert.deepEqual(await (await request('GET', snapshot(imported.seq), 200)).body(), imageBytes);
+      const { facts: dynamicFacts } = await (await request('GET', '/api/facts?pbc=' + otherUnit, 200)).json();
+      const importFact = dynamicFacts.find(({ seq, type }) => seq === imported.seq && type === 'prototype.imported');
+      const lineFact = dynamicFacts.find(({ seq, type }) => seq > imported.seq && type === 'annotation.added');
+      assert.equal(importFact?.actor, 'PA');
+      assert.equal(lineFact?.actor, 'PA');
+      await note(text).scrollIntoViewIfNeeded();
+      await screenshot(externalHTML ? 'issue101-real-refresh.png' : 'issue101-synthetic-refresh.png');
+      console.log('PASS 快照、原导入与批注坐标刷新后保持一致');
+      console.log('DYNAMIC EVIDENCE', JSON.stringify({ unit: otherUnit, importSeq: importFact.seq, annotationSeq: lineFact.seq, line: after.line, pngBytes: imageBytes.length }));
+    }
+    const count = dynamicEnabled ? 8 : 6;
+    console.log(`SUMMARY ${count}/${count} pass, 0 fail`);
   } finally {
     await browser.close();
   }
