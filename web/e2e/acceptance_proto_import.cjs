@@ -80,7 +80,7 @@ function assertBoxNear(actual, expected) {
     const preview = page.getByTestId('prototype-import-preview');
     const history = page.getByTestId('prototype-import-select');
     const lines = page.getByTestId('prototype-import-lines').locator('line');
-    const boxes = page.getByTestId('prototype-import-boxes').locator('rect');
+    const boxes = page.getByTestId('prototype-import-boxes').locator('rect:not(.draft-box)');
     const draw = page.getByTestId('prototype-import-draw');
     const notes = page.getByRole('list', { name: '导入原型批注' });
     const note = (text) => notes.getByText(text, { exact: true });
