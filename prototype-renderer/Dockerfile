@@ -9,7 +9,7 @@ RUN apk add --no-cache chromium font-noto-cjk nodejs \
     && mkdir -p /run/prototype-renderer
 WORKDIR /opt/prototype-renderer
 COPY --from=dependencies /opt/prototype-renderer/node_modules ./node_modules
-COPY server.cjs ./
+COPY browser.cjs interactive.cjs server.cjs ./
 ENV HOME=/tmp \
     CHROMIUM_PATH=/usr/bin/chromium
 USER 65532:65532
