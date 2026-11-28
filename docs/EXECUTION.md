@@ -15,7 +15,7 @@
 | workflow 编排（派活、重试、超时） | ✅ 真 | Dapr durabletask + gRPC work-item 流；历史落在 Redis `dapr.internal.default.i3-composer.workflow\|\|<实例>` |
 | 事实日志（哈希链 + etag CAS） | ✅ 真 | Redis `log:<pbc>:<seq>:<hash>`；`store.Load` 会重算哈希链，篡改即报错 |
 | 权限闸 | ✅ 真 | HMAC 签名 cookie（`i3_sess`）；越权返回 403，界面不假装成功 |
-| 制品生成 | ✅ 真 | `internal/codegen` 产出 markdown 正文 + 可编译的 Go 模块（`go.mod` / `main.go` / `main_test.go`） |
+| 制品生成 | 自动生成的服务代码仅支持 Go | 工作项产出 Markdown 制品。服务代码生成可编译的 Go 模块，测试与构建使用 Go 工具链。Agent 生成编排定义，执行结构检查并生成内容摘要。 |
 | 测试 | ✅ 真 | `go test -count=1 -v ./...` 的真实输出；不过就阻断链路（`test.run` 事实带 `failures`） |
 | 构建 | ✅ 真 | `go build -trimpath` 出二进制；digest = **二进制字节的 sha256**（内容寻址），不是树摘要拼的 |
 | 部署（发布批次） | ✅ 真 | 打 tag 进池后，由项目级批次发布启动构建产物，等 `GET /healthz` 返回 200 才记 `deploy.succeeded`。整批回滚只停止该批次启动且仍在运行的进程。 |

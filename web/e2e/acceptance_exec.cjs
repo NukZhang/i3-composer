@@ -157,6 +157,8 @@ function check(name, ok, detail) {
   // 侧栏用单元 ID 定位，避免同名运行的质量报告和摘要串账。
   const picked = await selectBuild();
   check('5.1 侧栏点中本次单元（不是同名的上一轮）', picked === unit, { expected: unit, picked });
+  check('5 构建页明确自动生成的服务代码仅支持 Go（#91）',
+    await stage.getByText('自动生成的服务代码仅支持 Go', { exact: true }).isVisible());
   await stage.locator('.ptab').filter({ hasText: '质量报告' }).click();
   // 切单元会触发一次重拉（App.vue 里 watch S.pbcId），质量报告要用新账本的
   // test / builds 才出现。固定等 900ms 会读到上一个项目的旧报告，digest 对不上——

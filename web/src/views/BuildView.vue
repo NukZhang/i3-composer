@@ -161,7 +161,7 @@ function ownerText(o) {
       <span v-html="icon('cloud', 11)" /> 启动预览
     </div>
     <div class="spacer" />
-    <span class="small muted">机器自检在这 · 人验收在「验证」</span>
+    <span class="small muted">{{ hasSvc ? '自动生成的服务代码仅支持 Go' : '自动生成 Agent 编排定义' }}</span>
   </div>
 
   <!-- Backlog（v3.2）：版本下拉 → 工作项 → 文档收在最后 -->
