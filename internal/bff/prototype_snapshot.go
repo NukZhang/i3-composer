@@ -65,9 +65,9 @@ func (s *Server) prototypeSnapshot(ctx context.Context, name string, meta store.
 	if cached, err := os.ReadFile(name); err == nil || !errors.Is(err, os.ErrNotExist) {
 		return cached, err
 	}
-	original, err := s.Pipe.Store.Get(meta.Digest)
-	if err != nil || int64(len(original)) != meta.Size || len(original) > prototypeFileLimit {
-		return nil, errors.New("读取原型原件失败，无法生成快照")
+	original, err := s.prototypeOriginalHTML(meta)
+	if err != nil {
+		return nil, err
 	}
 	result, err := renderPrototypeSnapshot(ctx, s.PrototypeRenderSocket, original)
 	if err != nil {
@@ -83,20 +83,48 @@ func (s *Server) prototypeSnapshot(ctx context.Context, name string, meta store.
 	return result, nil
 }
 
-func renderPrototypeSnapshot(ctx context.Context, socket string, original []byte) ([]byte, error) {
+func (s *Server) prototypeOriginalHTML(meta store.PrototypeImport) ([]byte, error) {
+	if s.Pipe == nil || s.Pipe.Store == nil {
+		return nil, errors.New("原件制品仓库未配置")
+	}
+	original, err := s.Pipe.Store.Get(meta.Digest)
+	if err != nil || int64(len(original)) != meta.Size || len(original) > prototypeFileLimit {
+		return nil, errors.New("读取原型原件失败")
+	}
+	return original, nil
+}
+
+func requestPrototypeRenderer(ctx context.Context, socket, method, path, mediaType string, body []byte) (*http.Response, error) {
 	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}}
 	client := &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	// 固定 URL 和内容类型，只传原件字节；工作台身份、查询参数和 Cookie 留在应用内。
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://prototype-renderer/render", bytes.NewReader(original))
+	// 只向固定的本地 socket 发送原件或动作，身份和请求查询参数留在工作台。
+	req, err := http.NewRequestWithContext(ctx, method, "http://prototype-renderer"+path, bytes.NewReader(body))
 	if err != nil {
+		return nil, err
+	}
+	if mediaType != "" {
+		req.Header.Set("Content-Type", mediaType)
+	}
+	return client.Do(req)
+}
+
+func readPrototypeRendererPNG(res *http.Response) ([]byte, error) {
+	if res.Header.Get("Content-Type") != "image/png" {
 		return nil, errPrototypeSnapshotFailed
 	}
-	req.Header.Set("Content-Type", "text/html; charset=utf-8")
-	res, err := client.Do(req)
+	result, err := io.ReadAll(io.LimitReader(res.Body, prototypeFileLimit+1))
+	if err != nil || len(result) > prototypeFileLimit {
+		return nil, errPrototypeSnapshotFailed
+	}
+	return result, nil
+}
+
+func renderPrototypeSnapshot(ctx context.Context, socket string, original []byte) ([]byte, error) {
+	res, err := requestPrototypeRenderer(ctx, socket, http.MethodPost, "/render", "text/html; charset=utf-8", original)
 	if err != nil {
 		return nil, errPrototypeRendererUnavailable
 	}
@@ -104,12 +132,12 @@ func renderPrototypeSnapshot(ctx context.Context, socket string, original []byte
 	if res.StatusCode == http.StatusServiceUnavailable {
 		return nil, errPrototypeRendererUnavailable
 	}
-	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "image/png" {
+	if res.StatusCode != http.StatusOK {
 		return nil, errPrototypeSnapshotFailed
 	}
-	result, err := io.ReadAll(io.LimitReader(res.Body, prototypeFileLimit+1))
-	if err != nil || len(result) > prototypeFileLimit {
-		return nil, errPrototypeSnapshotFailed
+	result, err := readPrototypeRendererPNG(res)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := validatePrototypeImage(result, "image/png", png.DecodeConfig, png.Decode); err != nil {
 		return nil, errPrototypeSnapshotFailed
